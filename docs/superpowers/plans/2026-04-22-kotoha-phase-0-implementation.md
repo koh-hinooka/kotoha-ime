@@ -588,12 +588,32 @@ pre-commit:
 pre-push:
   parallel: false
   commands:
+    # workspace に member crate が無い間 (M1 期間中) は Cargo 1.94+ がエラーで落ちるため
+    # manifest の妥当性だけを検証し、build / clippy / test は crates/ ディレクトリが出現
+    # してから有効化する。M2 (最初の member crate 追加) 以降は自動的に有効化される。
+    manifest-check:
+      run: cargo metadata --no-deps --format-version=1 > /dev/null
     build:
-      run: cargo build --workspace
+      run: |
+        if [ -d crates ]; then
+          cargo build --workspace
+        else
+          echo "lefthook: skip build (no crates/ yet; enforced from M2)"
+        fi
     clippy:
-      run: cargo clippy --workspace --all-targets -- -D warnings
+      run: |
+        if [ -d crates ]; then
+          cargo clippy --workspace --all-targets -- -D warnings
+        else
+          echo "lefthook: skip clippy (no crates/ yet; enforced from M2)"
+        fi
     test:
-      run: cargo test --workspace
+      run: |
+        if [ -d crates ]; then
+          cargo test --workspace
+        else
+          echo "lefthook: skip test (no crates/ yet; enforced from M2)"
+        fi
 ```
 
 - [ ] **Step 2: scripts/pre-commit-doc-naming.sh をテンプレートからコピー**
@@ -720,7 +740,12 @@ Run:
 lefthook run pre-push
 ```
 
-Expected: build / clippy / test のすべてが PASS。workspace が空なので test は 0 件で PASS。
+Expected:
+- `manifest-check` PASS (cargo metadata が exit 0)
+- `build` / `clippy` / `test` は M1 時点では `crates/` が未存在のため "skip" メッセージを表示して PASS 扱いで終了する
+- 全コマンド合計で exit 0
+
+> **注**: M2 で `crates/` ディレクトリが追加された後は、`build` / `clippy` / `test` が実際の Cargo 実行に切り替わる(lefthook.yml 側の `if [ -d crates ]` 分岐による自動切替)。
 
 - [ ] **Step 5: push**
 
@@ -730,7 +755,7 @@ Run:
 git push -u origin feature/1-project-setup
 ```
 
-Expected: branch が push される。pre-push hook が自動実行され、再度 build / clippy / test が PASS する。push 完了後に PR 作成 URL が表示される。
+Expected: branch が push され、PR 作成 URL が表示される。pre-push hook が自動実行され、manifest-check が PASS + build/clippy/test は "skip" メッセージで PASS 扱いで終了する。
 
 - [ ] **Step 6: PR 作成**
 
