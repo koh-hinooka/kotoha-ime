@@ -2,6 +2,17 @@
 
 本文書は global `~/.claude/CLAUDE.md` の規約を前提とし、Kotoha プロジェクト固有の例外・追加規約のみを記載する。
 
+## 目次
+
+- [プロジェクト概要](#プロジェクト概要)
+- [Language 例外](#language-例外)
+- [Rust 開発規約](#rust-開発規約)
+- [依存管理](#依存管理)
+- [テスト規約](#テスト規約)
+- [Phase 状態の参照](#phase-状態の参照)
+- [WBS 直接 push の例外](#wbs-直接-push-の例外)
+- [Glossary](#glossary)
+
 ## プロジェクト概要
 
 - GNOME Wayland ネイティブに動作する自作日本語 IME
@@ -21,6 +32,7 @@ global CLAUDE.md は「commit message / PR / ISSUE は日本語」だが、**Kot
 - PR タイトル / body
 - GitHub ISSUE タイトル / body
 - GitHub ラベル名
+- rustdoc / API doc(外部公開 API のドキュメントは OSS 貢献者との互換性を優先)
 
 日本語を維持する対象:
 
@@ -28,7 +40,7 @@ global CLAUDE.md は「commit message / PR / ISSUE は日本語」だが、**Kot
 - 実装計画 (`docs/superpowers/plans/`)
 - ADR (`docs/adr/`)
 - WBS (`docs/wbs/`)
-- コード内コメント(ドメイン由来のみ。API doc は英語でもよい)
+- コード内コメント(ドメイン説明など、日本語のほうが意味が通じる箇所)
 - Claude Code との対話
 
 ## Rust 開発規約
@@ -49,7 +61,7 @@ global CLAUDE.md は「commit message / PR / ISSUE は日本語」だが、**Kot
 - 単体テスト: `#[cfg(test)]` で同ファイル内
 - 統合テスト: `crates/*/tests/` 配下
 - golden テスト: `crates/*/tests/fixtures/*.tsv` を `tests/*_golden.rs` から読み込む
-- property test: `proptest` を使用
+- property test: `proptest` を dev-dependency として使用予定(M3–M4 の romaji 変換モジュールで導入)
 
 ## Phase 状態の参照
 
@@ -64,3 +76,9 @@ global CLAUDE.md は「commit message / PR / ISSUE は日本語」だが、**Kot
 
 WBS ログ(`docs/wbs/*.md`)は、対象 PR の merge 後に develop へ直接 push して OK とする。
 理由: 実装内容に影響しない純粋なメタデータ記録であり、PR レビューの対象ではないため。
+
+## Glossary
+
+ドメイン固有語彙は `docs/wiki/glossary.md` に集約する。新規ドメイン用語を specs / plans / コードで導入する際は、同ファイルにも追記して用語の一貫性を保つ。
+
+現時点(Phase 0)では用語セットが確定していないため、glossary.md は stub の状態にある。M3(romaji 変換)以降で用語が固まり次第、順次追加する。
