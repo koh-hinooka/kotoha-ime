@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    # crates/kotoha-core は M2 で追加
+    "crates/kotoha-core",
     # crates/kotoha-cli は M6 で追加
 ]
 
@@ -14,5 +14,7 @@ repository = "https://github.com/std-koh-hinooka/kotoha-ime"
 authors = ["std-koh-hinooka <koh.hinooka@student.it.com>"]
 
 [workspace.dependencies]
-# 共通 dependencies の version pinning は M2 以降で追加する。
-# 本 M1 時点では workspace members がまだ存在しないので空とする。
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
