@@ -1,5 +1,11 @@
 # Kotoha lefthook configuration
 # Origin: ~/.claude/templates/lefthook.yml.template
+# Guard model:
+# - pre-commit fmt-check: uses lefthook-native glob ("*.rs") to skip when no .rs is staged.
+# - pre-commit doc-naming: uses glob to skip when no doc files are staged.
+# - pre-push build/clippy/test: use shell guard '[ -d crates ] && [ -n "$(ls -A crates 2>/dev/null)" ]'
+#   because Cargo workspace commands cannot be skipped by lefthook glob alone (they need to inspect
+#   the full workspace). Until the first crate is added in M2, these are intentional no-ops.
 
 pre-commit:
   parallel: true
@@ -8,6 +14,7 @@ pre-commit:
       glob: "*.rs"
       run: cargo fmt --all --check
     doc-naming:
+      glob: "{docs/**/*.md,CLAUDE.md,**/CLAUDE.md}"
       run: ./scripts/pre-commit-doc-naming.sh
 
 pre-push:
@@ -20,21 +27,21 @@ pre-push:
       run: cargo metadata --no-deps --format-version=1 > /dev/null
     build:
       run: |
-        if [ -d crates ]; then
+        if [ -d crates ] && [ -n "$(ls -A crates 2>/dev/null)" ]; then
           cargo build --workspace
         else
           echo "lefthook: skip build (no crates/ yet; enforced from M2)"
         fi
     clippy:
       run: |
-        if [ -d crates ]; then
+        if [ -d crates ] && [ -n "$(ls -A crates 2>/dev/null)" ]; then
           cargo clippy --workspace --all-targets -- -D warnings
         else
           echo "lefthook: skip clippy (no crates/ yet; enforced from M2)"
         fi
     test:
       run: |
-        if [ -d crates ]; then
+        if [ -d crates ] && [ -n "$(ls -A crates 2>/dev/null)" ]; then
           cargo test --workspace
         else
           echo "lefthook: skip test (no crates/ yet; enforced from M2)"
