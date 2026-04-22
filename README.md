@@ -35,7 +35,7 @@ Cargo workspace として以下の crate を持つ:
 
 ## ライセンス
 
-MIT OR Apache-2.0 のデュアルライセンス (ライセンスファイルは実装フェーズで追加)。
+本プロジェクトは [MIT License](./LICENSE-MIT) または [Apache License 2.0](./LICENSE-APACHE) のデュアルライセンスで配布される。利用者はいずれか一方を選択できる。
 
 ## 参考実装
 
