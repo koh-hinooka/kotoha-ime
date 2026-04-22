@@ -586,7 +586,9 @@ pre-push:
 
 ### 12.2 CI
 
-GitHub Actions は global CLAUDE.md の方針により導入しない。ローカル lefthook に加え、将来は GCP Cloud Build トリガで代替する。
+Kotoha はローカル実行のデスクトップアプリケーション(日本語 IME)であり、クラウドへのデプロイは発生しない。したがって CI/CD システムは導入せず、品質ゲートはローカル lefthook のみで担保する。配布は `.deb` / `.rpm` / Flatpak / AUR 等のパッケージングで行う(Phase 5 以降で詳細化)。
+
+global CLAUDE.md の CI/CD Policy(GitHub Actions 禁止 + GCP Cloud Build Trigger で Deploy)は、クラウドデプロイを前提とする他プロジェクト向け方針である。Kotoha はローカル実行アプリのため GCP は関与しない(言及があれば削除対象)。
 
 ## 13. 成功基準 (Phase 0 完了条件)
 
