@@ -2,6 +2,7 @@
 
 <!-- Briefly describe the purpose of this PR. -->
 
+<!-- Replace [ISSUE_NUMBER] with a numeric issue id. GitHub does not auto-close on bracketed placeholders. Example: Closes #42 -->
 Closes #[ISSUE_NUMBER]
 
 ## Changes

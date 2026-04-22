@@ -61,7 +61,7 @@ global CLAUDE.md は「commit message / PR / ISSUE は日本語」だが、**Kot
 - 単体テスト: `#[cfg(test)]` で同ファイル内
 - 統合テスト: `crates/*/tests/` 配下
 - golden テスト: `crates/*/tests/fixtures/*.tsv` を `tests/*_golden.rs` から読み込む
-- property test: `proptest` を dev-dependency として使用予定(M3–M4 の romaji 変換モジュールで導入)
+- property test: `proptest` を dev-dependency として使用予定(M3 で追加し romaji 変換の property test に使用、M5 で input mode の property test にも適用)
 
 ## Phase 状態の参照
 
