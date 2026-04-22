@@ -13,7 +13,6 @@ use crate::romaji::trie::{Lookup, Trie};
 /// introduced without breaking downstream match sites inside the crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-#[allow(dead_code)] // consumed by M3a-4 RomajiConverter facade
 pub(crate) enum PushResult {
     /// Some kana was committed this step. Contains the newly committed kana.
     Committed(String),
@@ -30,14 +29,12 @@ pub(crate) enum PushResult {
 /// - `buffer` never holds a string that is itself a complete trie match;
 ///   such matches are consumed immediately by [`StateMachine::settle`].
 #[derive(Debug)]
-#[allow(dead_code)] // consumed by M3a-4 RomajiConverter facade
 pub(crate) struct StateMachine {
     trie: Trie,
     /// Pending input buffer, ASCII bytes only (push rejects non-ASCII).
     buffer: String,
 }
 
-#[allow(dead_code)] // methods consumed by M3a-4 RomajiConverter facade
 impl StateMachine {
     /// Constructs a new state machine with an empty buffer.
     ///
@@ -51,6 +48,12 @@ impl StateMachine {
     }
 
     /// Returns the current unconverted pending buffer.
+    ///
+    /// Test-only inspection accessor: the public facade in
+    /// [`crate::romaji::RomajiConverter`] does not need to read the raw
+    /// buffer, so this method is gated to test builds to keep it out of the
+    /// production surface area.
+    #[cfg(test)]
     pub(crate) fn buffer(&self) -> &str {
         &self.buffer
     }
@@ -141,7 +144,6 @@ impl StateMachine {
 }
 
 /// Consonants eligible for double-consonant sokuon.
-#[allow(dead_code)] // called by StateMachine::settle (M3a-4 facade entry)
 fn is_sokuon_consonant(b: u8) -> bool {
     matches!(
         b,
@@ -166,7 +168,6 @@ fn is_sokuon_consonant(b: u8) -> bool {
 
 /// Chars that, following bare `n`, should *not* trigger ん commit
 /// (the char might still combine with `n` into a trie-recognized form).
-#[allow(dead_code)] // called by StateMachine::settle (M3a-4 facade entry)
 fn is_n_continuation(b: u8) -> bool {
     matches!(b, b'a' | b'i' | b'u' | b'e' | b'o' | b'y' | b'n' | b'\'')
 }
