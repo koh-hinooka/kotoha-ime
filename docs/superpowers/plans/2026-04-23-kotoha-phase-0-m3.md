@@ -1422,7 +1422,7 @@ gh issue create \
 - New fixture \`crates/kotoha-core/tests/fixtures/romaji_cases.tsv\` with 200+ cases
 - New integration test \`crates/kotoha-core/tests/romaji_golden.rs\`
 - New integration test \`crates/kotoha-core/tests/romaji_property.rs\` with 2 properties:
-  - Idempotence / purity: calling \`convert(input)\` twice on the same input yields the same result (\`convert\` is a pure function with \`&self\`)
+  - Idempotence on committed output: \`convert\` is a retraction on its own committed output (re-running \`convert\` on the committed portion leaves it unchanged and produces empty pending)
   - Associativity via pending: \`convert(a + b)\` decomposes as \`convert(a)\` followed by \`convert(pending_of_a + b)\`, with committed parts concatenating and final pending matching
 - Wire \`proptest = \"1.5\"\` into workspace dependencies and crate dev-dependencies
 
@@ -1432,9 +1432,9 @@ gh issue create \
 
 ## Acceptance
 
-- cargo test -p kotoha-core --test romaji_golden PASSES 200+ cases
+- cargo test -p kotoha-core --test romaji_golden PASSES (all fixture rows asserted inside the single \`every_fixture_row_matches_converter\` test)
 - cargo test -p kotoha-core --test romaji_property PASSES 2 properties
-- workspace test total: 56+ (from M3a) + golden 200+ + property 2 = 260+
+- workspace \`#[test]\` count: 23 (M2) + 33 (M3a) + 2 (golden: fixture-size-assertion + row-by-row) + 2 (property: idempotence / associativity) = 60 tests. The golden fixture itself contains 200+ rows, all asserted inside the single row-by-row test function.
 
 ## Reference
 
@@ -1738,8 +1738,7 @@ ppe	っぺ
 ppo	っぽ	
 
 # --- hatsuon (15) ---
-na	な	
-# "na" is already above; repeat avoided — the following cover n-specific cases
+# "na" is covered in the basic gojuon section above; this section covers n-specific cases only
 nnn	ん	n
 nk	ん	k
 nm	ん	m
@@ -1816,19 +1815,8 @@ koh	こ	h
 kos	こ	s
 kyak	きゃ	k
 tsuk	つ	k
-sha		sha
-
-# Wait — `sha` is a complete rule, so the above "sha" row is wrong for the
-# pending column. Replace it with a true mid-rule tail.
-# (Re-add: use "shz" which is not a rule and whose only prefix step 's' is Partial;
-#  after 's' → Pending, 'h' → Pending on "sh", then 'z' → None → backtrack:
-#  's' is not a sokuon consonant (it is), "ss" is not in buffer so we don't commit っ,
-#  actually 's' IS a sokuon consonant and 'h' != 's', so we just drop 's' as invalid.
-#  To keep the fixture deterministic we skip this edge case here and cover it in unit tests.)
-
-# Replace the last row above: "sha" is fully converted (no pending), so fix it:
-# (The actual TSV test harness will still process "sha" correctly; this comment
-#  just notes why the fixture author chose the rows it did.)
+# pending-tail case: 'fuk' -> commits ふ (from fu), leaves k in pending (k is a potential sokuon/consonant head).
+fuk	ふ	k
 
 # --- long composite (10) ---
 konnichiwa	こんにちは	
@@ -1843,23 +1831,10 @@ nihongo	にほんご
 kyou	きょう	
 ```
 
-注: 上記 TSV の `sha` 行 (pending tails セクションの最終行) は間違っているので、fixture 作成時には削除する必要がある。正しい row 数を確保するため、代わりに次の row を使う:
+## Notes
 
-Edit fixture の該当セクションを差し替え。`pending tails (10)` セクションを以下で置き換える:
-
-```tsv
-# --- pending tails (10) ---
-k		k
-ky		ky
-s		s
-sh		sh
-kon	こ	n
-koh	こ	h
-kos	こ	s
-kyak	きゃ	k
-tsuk	つ	k
-fuk	ふ	k
-```
+- `pending tails` セクションの 10 行目 `fuk` は pending-tail ケースの代表例として採用した。初稿では `sha` を置いていたが `sha` は完全な rule (→ しゃ) で pending が空になるため矛盾しており、`fuk` (`fu` → ふ コミット、`k` が pending として残る) に差し替えた
+- `hatsuon` セクションから冒頭の `na` 行を削除した。`na` は `basic gojuon` セクションで既にカバーされている重複行だった
 
 - [ ] **Step 3: TSV の行数確認**
 
@@ -2040,10 +2015,10 @@ Expected: 1 file changed。
 
 **2 プロパティ (Spec §11.3):**
 
-1. **冪等性 (Purity):** 同じ `RomajiConverter::new()` インスタンスで `convert(input)` を 2 回呼んだ結果が一致する。`convert` は `&self` かつ内部状態を変更しないことを帰納的に検証
+1. **冪等性 (Idempotence on committed output):** `convert(input)` の committed 出力を再度 `convert` に通しても、committed 出力は変わらず、pending は空になる。ひらがなは非 ASCII のため状態機械は `Invalid` として drop するかそのまま素通しする(どちらでも committed が不変であれば property は成立)。本性質は `convert` が自身の committed 出力に対して retraction であることを固定化する
 2. **結合性 (Associativity):** 入力を区切り位置で分割して個別に `convert` した結果 (pending に注意して連結) が、元の入力全体の convert 結果と一致する (pending 境界に注意)。具体的には `convert(a + b).0` が、まず `(c1, p1) = convert(a)` の pending `p1` を prefix として `b` の前に付けた `p1 + b` を convert した結果 `(c2, p2)` と組み合わせて `c1 + c2 == convert(a + b).0` かつ `p2 == convert(a + b).1`
 
-Spec revision 1 には第 3 条件として "可逆性 (invertibility)" が列挙されていたが、romaji → かな が多対一であるため除外された(spec §11.3 参照)。本 plan 初稿で検討した「pending-ASCII invariant」による代替も、可逆性の代替としては筋違いのため採用しない。
+Spec revision 1 には第 3 条件として "可逆性 (invertibility)" が列挙されていたが、romaji → かな が多対一であるため除外された(spec §11.3 参照)。本 plan 初稿で検討した「pending-ASCII invariant」による代替も、可逆性の代替としては筋違いのため採用しない。また、初稿で採用していた `convert(input) == convert(input)` 型の純粋関数テストは、`&self` かつ内部可変性なしの実装に対しては自明に成立するため、committed 出力に対する retraction 性を主張する `prop_idempotence_on_committed` 形に強化した。
 
 - [ ] **Step 1: property test を Write で作成**
 
@@ -2053,7 +2028,7 @@ Write `crates/kotoha-core/tests/romaji_property.rs`:
 //! Property tests for RomajiConverter using proptest.
 //!
 //! Two properties (per spec §11.3):
-//! 1. Purity / idempotence: convert(input) is a pure function of input
+//! 1. Idempotence on committed output: convert is a retraction on its own committed output
 //! 2. Associativity: convert(a + b) decomposes via convert(a) and convert(pending + b)
 
 use kotoha_core::RomajiConverter;
@@ -2068,13 +2043,21 @@ fn romaji_input() -> impl Strategy<Value = String> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
 
-    /// Property 1 (purity): calling convert twice on the same input yields the same result.
+    /// Idempotence on the committed output: running `convert` on the committed portion
+    /// of a prior `convert` must leave the committed output unchanged and produce no
+    /// additional pending. Hiragana chars are non-ASCII, so when they re-enter `convert`
+    /// the state machine should either drop them (as `Invalid`) or pass them through
+    /// without change. This test locks in that `convert` is a retraction on its output.
     #[test]
-    fn prop_purity(input in romaji_input()) {
+    fn prop_idempotence_on_committed(input in romaji_input()) {
         let c = RomajiConverter::new();
-        let first = c.convert(&input);
-        let second = c.convert(&input);
-        prop_assert_eq!(first, second);
+        let (committed_first, _pending_first) = c.convert(&input);
+        let (committed_second, pending_second) = c.convert(&committed_first);
+        // The committed output should stabilize on the second pass.
+        prop_assert_eq!(committed_second, committed_first);
+        // Re-running convert on already-converted hiragana should not leave any
+        // romaji in the pending buffer.
+        prop_assert!(pending_second.is_empty());
     }
 
     /// Property 2 (associativity via pending): for inputs a and b,
@@ -2106,7 +2089,7 @@ Run:
 cargo test -p kotoha-core --test romaji_property
 ```
 
-Expected: 2 proptest cases PASS, 各 256 反復成功 (`prop_purity`、`prop_associativity_via_pending`)。
+Expected: 2 proptest cases PASS, 各 256 反復成功 (`prop_idempotence_on_committed`、`prop_associativity_via_pending`)。
 
 もし proptest が失敗 (counter-example 発見) した場合:
 
@@ -2133,7 +2116,9 @@ git add crates/kotoha-core/tests/romaji_property.rs
 git commit -m "test(kotoha-core): add romaji property tests (2 invariants)
 
 Two properties validated with proptest (256 iterations each):
-- prop_purity: convert is a pure function (&self, no mutation)
+- prop_idempotence_on_committed: convert is a retraction on its own
+  committed output (committed stabilizes on the second pass and
+  pending becomes empty)
 - prop_associativity_via_pending: convert(a+b) decomposes via
   convert(a) and convert(pending+b) such that concatenated committed
   matches the whole and final pending equals the decomposed pending
@@ -2162,7 +2147,7 @@ cargo fmt --all --check
 
 Expected:
 - build PASS
-- test: M2 の 23 + M3a の 33 + M3b の 2 (golden) + M3b の 2 (property) = 60 以上 PASS
+- workspace `#[test]` count: 23 (M2) + 33 (M3a) + 2 (golden: fixture-size-assertion + row-by-row) + 2 (property: 冪等性 / 結合性) = 60 tests。golden fixture 自体は 200 行以上を含み、単一の `every_fixture_row_matches_converter` テスト関数内で全行 assert する
 - clippy warnings ゼロ
 - fmt diff なし
 
@@ -2204,7 +2189,7 @@ Phase 0 Milestone 3 (part B): integration tests for RomajiConverter.
 - New integration test \`tests/romaji_golden.rs\` asserting every fixture row
   matches \`RomajiConverter::convert\` output
 - New integration test \`tests/romaji_property.rs\` with 2 properties:
-  purity, associativity via pending
+  idempotence on committed output, associativity via pending
 
 Total workspace test count: 60+ (23 from M2 + 33 from M3a + 2 golden + 2 property).
 
@@ -2359,7 +2344,7 @@ Spec §13 の M3 相当要件を以下のタスクが担保する:
 | §9 small forms | la/xa/lya/ltu 等 | M3a-1 (rules small-form escapes 区画)、M3b-2 (small forms 15 ケース) |
 | §11.1 単体テスト | 20 件以上 | M3a-2 + M3a-3 + M3a-4 で 33 件 |
 | §11.2 golden test | 200 件以上 | M3b-2 + M3b-3 で 220 件 |
-| §11.3 property test | 冪等性 / 結合性 の 2 条件(spec §11.3 準拠) | M3b-4 (purity / associativity) |
+| §11.3 property test | 冪等性 / 結合性 の 2 条件(spec §11.3 準拠) | M3b-4 (idempotence_on_committed / associativity) |
 
 ---
 

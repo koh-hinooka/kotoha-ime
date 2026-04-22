@@ -636,7 +636,7 @@ global CLAUDE.md の CI/CD Policy(GitHub Actions 禁止 + GCP Cloud Build Trigge
 - [ ] `tests/fixtures/mode_cases.tsv` 70 ケース以上
 - [ ] `tests/fixtures/mode_cases_karukan_diff.tsv` 10 ケース以上
 - [ ] `InputContext` 単体テスト 20 件以上
-- [ ] プロパティテスト 4 条件追加(モード系不変条件)
+- [ ] プロパティテスト 4 条件追加(モード系不変条件、総数は §11.3 参照: 既存 2 + モード系 4 = 6 条件)
 
 ## 14. 工数目安
 
