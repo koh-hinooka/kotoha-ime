@@ -33,6 +33,18 @@ Cargo workspace として以下の crate を持つ:
 
 詳細は `docs/superpowers/specs/` の各設計書を参照。
 
+## 開発環境セットアップ
+
+本プロジェクトはローカルの Git hook(lefthook)で品質ゲートを担保する。CI/CD システムは導入していないため、**clone 後は必ず `lefthook install` を実行する**。
+
+```bash
+git clone <repo-url>
+cd kotoha-ime
+lefthook install
+```
+
+`lefthook install` を忘れると pre-commit / pre-push の検査がスキップされ、フォーマット違反・文書命名規則違反・ビルド破壊を含むコミットが走ってしまうため注意。
+
 ## ライセンス
 
 本プロジェクトは [MIT License](./LICENSE-MIT) または [Apache License 2.0](./LICENSE-APACHE) のデュアルライセンスで配布される。利用者はいずれか一方を選択できる。

@@ -1055,7 +1055,14 @@ git push
 - `docs/adr/0001-input-mode-transient-vs-sticky.md`
 - `docs/adr/0002-shift-via-uppercase-char.md`
 - `docs/adr/0003-cli-line-based-commit.md`
+- `docs/adr/0004-rust-toolchain-and-publishing-policy.md` (M1 PR review からの拡張)
 - `docs/wbs/2026-04-XX-feature-N-phase0-adrs.md`(N は対応 ISSUE 番号)
+
+> **M1 PR review からの M7 追加事項**: ADR 0004 は以下を集約する設計判断を記録する。
+> - MSRV 1.80 / Edition 2021 の選定理由(lang-rust.md 推奨の Edition 2024 を採用しない判断)
+> - M1 期間中の `cargo build` 検証例外(global CLAUDE.md mandatory mitigation #1 の明示的例外扱い、Cargo 1.94+ の empty virtual workspace ハードエラーに起因)
+> - LICENSE-MIT の copyright holder に GitHub handle `std-koh-hinooka` を採用した判断
+> - `Cargo.toml` authors への公開メール `koh.hinooka@student.it.com` 埋め込み方針(crates.io publish 時の露出許容)
 
 **Files to modify:**
 
