@@ -548,9 +548,11 @@ direct	hello\nworld	hello\nworld	direct
 
 Karukan の既存挙動と Kotoha で結果が異なる入力パターンを並べ、コメントで「なぜ Kotoha はこう振る舞うか」を記載する。将来 Karukan 挙動を再現するオプションを足したくなった時の参考にもなる。
 
-### 11.3 プロパティテスト (7 条件)
+### 11.3 プロパティテスト (6 条件)
 
-既存 3 条件(冪等性 / 結合性 / 可逆性)に加えて、モード系の不変条件を `proptest` で検証する:
+既存 2 条件(冪等性 / 結合性)に加えて、モード系の不変条件を `proptest` で検証する。
+
+なお、revision 1 では可逆性(invertibility)も "既存" プロパティとして列挙していたが、romaji → かな は多対一(`ji`/`zi` → じ、`tu`/`tsu` → つ、`si`/`shi` → し、`ti`/`chi` → ち 等)であり strict な round-trip invertibility は数学的に定義不能なため、Phase 0 のプロパティ集合からは除外する。canonical romaji を定義して部分的に可逆性を回復する拡張は Phase 1 以降で検討する(ADR 候補)。
 
 | 不変条件 | 意味 |
 |---|---|
@@ -565,7 +567,7 @@ Karukan の既存挙動と Kotoha で結果が異なる入力パターンを並�
 |---|---|---|
 | 単体テスト | 50 件以上 | < 1 秒 |
 | Golden テスト | 270 ケース以上 + Karukan 差分 10 ケース | < 2 秒 |
-| プロパティテスト | 7 条件 | < 5 秒 (proptest デフォルト 256 反復) |
+| プロパティテスト | 6 条件 | < 5 秒 (proptest デフォルト 256 反復) |
 
 `cargo test --workspace` 全体で 10 秒以内に収まる想定。lefthook pre-push での実行負荷は許容範囲。
 
@@ -724,7 +726,7 @@ IBusKeyEvent { keycode: KEY_muhenkan, state: 0         } → (ユーザ設定次
   - モード管理仕様 (§8) を新設。状態遷移は `(Hiragana, Sticky)` / `(Direct, Transient)` / `(Direct, Sticky)` の 3 状態機械
   - CLI 仕様 (§10) を新設。`--mode` / `--show-mode` オプション、行単位 commit 抽象化
   - Golden テストを 200 → 270 ケースに拡張、Karukan 差分 10 ケースを新設
-  - プロパティテストを 3 → 7 条件に拡張
+  - プロパティテストを 2 → 6 条件に拡張(revision 1 の "可逆性" は多対一性のため除外、詳細は §11.3)
   - ADR 3 件 (0001, 0002, 0003) の作成を Phase 0 完了条件に追加
   - 付録 "Phase 3 想定インタフェース" を新設 (リスク #6 対応)
   - Phase 5 から「Shift 挙動設定」を除去
