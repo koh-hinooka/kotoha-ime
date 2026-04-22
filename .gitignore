@@ -16,3 +16,6 @@
 
 # lefthook
 .lefthook-local.yml
+
+# Claude Code harness (local state)
+.claude/

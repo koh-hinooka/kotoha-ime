@@ -1,0 +1,41 @@
+# Kotoha lefthook configuration
+# Origin: ~/.claude/templates/lefthook.yml.template
+
+pre-commit:
+  parallel: true
+  commands:
+    fmt-check:
+      glob: "*.rs"
+      run: cargo fmt --all --check
+    doc-naming:
+      run: ./scripts/pre-commit-doc-naming.sh
+
+pre-push:
+  parallel: false
+  commands:
+    # workspace に member crate が無い間 (M1 期間中) は Cargo 1.94+ がエラーで落ちるため
+    # manifest の妥当性だけを検証し、build / clippy / test は crates/ ディレクトリが出現
+    # してから有効化する。M2 (最初の member crate 追加) 以降は自動的に有効化される。
+    manifest-check:
+      run: cargo metadata --no-deps --format-version=1 > /dev/null
+    build:
+      run: |
+        if [ -d crates ]; then
+          cargo build --workspace
+        else
+          echo "lefthook: skip build (no crates/ yet; enforced from M2)"
+        fi
+    clippy:
+      run: |
+        if [ -d crates ]; then
+          cargo clippy --workspace --all-targets -- -D warnings
+        else
+          echo "lefthook: skip clippy (no crates/ yet; enforced from M2)"
+        fi
+    test:
+      run: |
+        if [ -d crates ]; then
+          cargo test --workspace
+        else
+          echo "lefthook: skip test (no crates/ yet; enforced from M2)"
+        fi
