@@ -6,12 +6,7 @@
 //! - proper prefix of some key (`Lookup::Partial`)
 //! - no match and no prefix (`Lookup::None`)
 //!
-//! The public-in-crate API below is currently consumed only by the unit tests
-//! in this file. The romaji state machine (`romaji::state`, added in M3a-3)
-//! will be the first non-test caller, at which point the `allow(dead_code)`
-//! attributes are removed.
-
-#![allow(dead_code)]
+//! Consumed by [`crate::romaji::state::StateMachine`].
 
 use std::collections::HashMap;
 

@@ -9,4 +9,5 @@
 //! [`ConvertStep`] are part of the external API.
 
 pub(crate) mod rules;
+pub(crate) mod state;
 pub(crate) mod trie;
