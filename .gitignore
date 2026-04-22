@@ -19,3 +19,21 @@
 
 # Claude Code harness (local state)
 .claude/
+
+# Secrets / credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+credentials.json
+service-account*.json
+*_rsa
+*_ecdsa
+*_ed25519
+id_rsa*
+id_ecdsa*
+id_ed25519*
