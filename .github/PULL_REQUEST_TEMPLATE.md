@@ -1,29 +1,30 @@
-## 概要
+## Summary
 
-<!-- PRの目的を簡潔に説明 -->
+<!-- Briefly describe the purpose of this PR. -->
 
-Closes #[ISSUE番号]
+<!-- Replace [ISSUE_NUMBER] with a numeric issue id. GitHub does not auto-close on bracketed placeholders. Example: Closes #42 -->
+Closes #[ISSUE_NUMBER]
 
-## 変更内容
+## Changes
 
 -
 
-## 動作確認
+## Verification
 
-- [ ] ユニットテスト通過
-- [ ] 既存テストに影響なし
-- [ ] ローカルで動作確認済み
+- [ ] Unit tests pass
+- [ ] No regression in existing tests
+- [ ] Verified locally
 
-## レビュー観点
+## Review focus
 
-<!-- レビュアーに特に確認してほしい点 -->
+<!-- Points you want reviewers to pay particular attention to. -->
 
-## スクリーンショット
+## Screenshots
 
-<!-- UI変更がある場合のみ -->
+<!-- Only if UI changes are involved. -->
 
-## 参照
+## References
 
-- 計画書: `docs/superpowers/plans/yyyy-MM-dd-[ブランチ名].md`
-- 仕様書: `docs/superpowers/specs/yyyy-MM-dd-[ブランチ名].md`
-- WBS: `docs/wbs/yyyy-MM-dd-[ブランチ名].md`
+- Plan: `docs/superpowers/plans/yyyy-MM-dd-[BRANCH_NAME].md`
+- Spec: `docs/superpowers/specs/yyyy-MM-dd-[BRANCH_NAME].md`
+- WBS: `docs/wbs/yyyy-MM-dd-[BRANCH_NAME].md`

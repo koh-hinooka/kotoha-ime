@@ -1,42 +1,42 @@
 ---
-name: 機能要求 / バグ報告
-about: ISSUE作成テンプレート
+name: Feature request / Bug report
+about: ISSUE creation template
 ---
 
-## 種別
+## Type
 
-- [ ] 機能要求（Feature）
-- [ ] バグ報告（Bug）
-- [ ] リファクタリング
-- [ ] ドキュメント
+- [ ] Feature
+- [ ] Bug
+- [ ] Refactoring
+- [ ] Documentation
 
-## 概要
+## Summary
 
-<!-- 問題または要求の簡潔な説明 -->
+<!-- Concise description of the problem or request. -->
 
-## 背景・動機
+## Background / Motivation
 
-<!-- なぜこの変更が必要か -->
+<!-- Why this change is needed. -->
 
-## 解決方法の概要
+## Approach overview
 
-<!-- superpowers plans/specs の要約 -->
+<!-- Summary of the relevant `docs/superpowers/plans/` or `docs/superpowers/specs/` entries. -->
 
-### 問題点
-
--
-
-### 解決方法
+### Problems
 
 -
 
-## 受け入れ条件
+### Solution
 
-- [ ] 条件1
-- [ ] 条件2
+-
 
-## 関連
+## Acceptance criteria
 
-- 計画書: `docs/superpowers/plans/yyyy-MM-dd-[ブランチ名].md`
-- 仕様書: `docs/superpowers/specs/yyyy-MM-dd-[ブランチ名].md`
-- 関連ISSUE: #
+- [ ] Criterion 1
+- [ ] Criterion 2
+
+## References
+
+- Plan: `docs/superpowers/plans/yyyy-MM-dd-[BRANCH_NAME].md`
+- Spec: `docs/superpowers/specs/yyyy-MM-dd-[BRANCH_NAME].md`
+- Related issue: #
