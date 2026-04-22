@@ -38,7 +38,7 @@ Phase 0 全体を 7 つのマイルストーンに分割する。各マイルス
 
 - GitHub repo が `kotoha-ime` 名で作成され、`main` / `develop` 両 branch が push 済み
 - `main` ブランチの default branch は `develop` に変更済み
-- Cargo workspace の `Cargo.toml` が存在し、`cargo build --workspace` が空の workspace で PASS する
+- Cargo workspace の `Cargo.toml` が存在し、`cargo metadata --no-deps --format-version=1` が exit 0 で返る(Cargo 1.94+ は空の virtual workspace の `cargo build --workspace` をハードエラー扱いするため、`cargo build --workspace PASS` の確認は最初の member crate が追加される M2 に委ねる)
 - `lefthook` が install され、pre-commit で fmt チェックとドキュメントファイル命名規則チェックが動く
 - `docs/` 配下に骨組み(`ROADMAP.md` + `adr/0000-template.md` + `wbs/template.md`)が配置されている
 - `.github/` に ISSUE / PR テンプレートが配置されている
@@ -274,15 +274,17 @@ authors = ["std-koh-hinooka <koh.hinooka@student.it.com>"]
 
 > **埋め込み値の補足**: `repository` / `authors` の値は plan 作成時に確定済み(`std-koh-hinooka` / `koh.hinooka@student.it.com`)。別の著者名・メールアドレスに変更したい場合は、Cargo.toml 作成時にこの 2 箇所を差し替える。`git config user.name` / `git config user.email` が plan の値と異なる場合も、commit 署名は git config 側が優先される(Cargo.toml の `authors` は crates.io / docs 表示用の独立した値)。
 
-- [ ] **Step 2: cargo build で空 workspace が通ることを確認**
+- [ ] **Step 2: Cargo.toml が有効な workspace manifest として parse できることを確認**
 
 Run:
 
 ```bash
-cargo build --workspace
+cargo metadata --no-deps --format-version=1 > /dev/null
 ```
 
-Expected: `Finished dev profile [unoptimized + debuginfo] target(s) in ...`。警告は `virtual workspace defaulting to resolver ...` が出る場合があるが OK。
+Expected: exit code 0。stdout には JSON が出力されるが /dev/null に流す。
+
+> **注 (Cargo 1.94 以降の挙動変更)**: `cargo build --workspace` は Cargo 1.94+ では member のない virtual workspace をハードエラー扱いする(旧 Cargo は警告のみだった)。したがって M1-4 時点では `cargo metadata` で manifest の妥当性を検証するにとどめ、`cargo build --workspace` が `Finished` を返す確認は M2(最初の member crate 追加後)に委ねる。
 
 - [ ] **Step 3: commit**
 
@@ -697,15 +699,18 @@ Expected: 変更ファイル数が 10 程度、変更行数合計が 300 を超�
 
 > **Branch Scope 例外**: LICENSE-APACHE は機械生成の定型文書であり、レビュー負荷の実質は小さい。行数超過分を除くと実質 100 行以下。PR 本文に「LICENSE ファイル 200 行を除く実質変更 XXX 行」と明記することで M1 内完結を許容する。
 
-- [ ] **Step 3: cargo build 最終確認**
+- [ ] **Step 3: workspace manifest 最終確認**
 
 Run:
 
 ```bash
-cargo build --workspace
+cargo metadata --no-deps --format-version=1 > /dev/null
+echo "exit=$?"
 ```
 
-Expected: `Finished` が表示される。
+Expected: `exit=0`。
+
+> **注**: `cargo build --workspace` は M1 時点では member crate が無いため Cargo 1.94+ でハードエラーになる。M1 の最終確認は manifest の妥当性を `cargo metadata` で確認するのみとする。`cargo build --workspace PASS` の達成は M2 以降で確認する。
 
 - [ ] **Step 4: lefthook pre-push を手動実行して検証**
 
@@ -758,7 +763,7 @@ LICENSE-APACHE (~200 lines, machine-generated) pushes the diff past the 300-line
 
 ## Test plan
 
-- [ ] cargo build --workspace passes (empty workspace)
+- [ ] cargo metadata --no-deps passes (valid workspace manifest; cargo build verification deferred to M2 since Cargo 1.94+ rejects empty virtual workspaces)
 - [ ] lefthook run pre-commit passes
 - [ ] lefthook run pre-push passes
 - [ ] doc-naming script blocks badly named doc files
@@ -869,7 +874,7 @@ git push
 - [ ] GitHub repo が存在し、main / develop が push 済み、default branch が develop
 - [ ] ISSUE #1 が close されている
 - [ ] PR が develop に merge され、feature branch が削除されている
-- [ ] `cargo build --workspace` が PASS する
+- [ ] `cargo metadata --no-deps --format-version=1` が exit 0 を返す(manifest valid 確認。`cargo build --workspace PASS` は member crate が追加される M2 以降で達成)
 - [ ] `lefthook install` 済み、pre-commit / pre-push が動作する
 - [ ] `docs/ROADMAP.md`、`docs/adr/0000-template.md`、`docs/wbs/template.md` が存在する
 - [ ] `.github/ISSUE_TEMPLATE.md`、`.github/PULL_REQUEST_TEMPLATE.md` が存在する
@@ -904,6 +909,7 @@ git push
 **Acceptance:**
 
 - `cargo build -p kotoha-core` PASS
+- `cargo build --workspace` PASS(M1 で Cargo 1.94+ 挙動変更のため延期されたチェック。member crate が追加される M2 で初めて確認可能)
 - `cargo test -p kotoha-core` で kana 単体テスト 10 件以上が PASS
 - `is_hiragana` / `is_katakana` / `hiragana_to_katakana` / `katakana_to_hiragana` が公開 API として利用可能
 - `Error` / `Result` が `#[non_exhaustive]` 付きで定義されている
