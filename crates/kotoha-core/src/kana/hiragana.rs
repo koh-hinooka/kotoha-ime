@@ -59,13 +59,19 @@ mod tests {
     }
 
     #[test]
-    fn is_hiragana_rejects_katakana_and_ascii() {
+    fn is_hiragana_rejects_katakana_ascii_and_borderlines() {
+        // Different scripts
         assert!(!is_hiragana('ア'));
         assert!(!is_hiragana('カ'));
         assert!(!is_hiragana('a'));
         assert!(!is_hiragana('1'));
         assert!(!is_hiragana('漢'));
         assert!(!is_hiragana(' '));
+        // Borderline code points just outside the supported ranges
+        // (guard against off-by-one range regressions)
+        assert!(!is_hiragana('\u{3040}')); // just below U+3041
+        assert!(!is_hiragana('\u{3097}')); // just above U+3096 (reserved)
+        assert!(!is_hiragana('\u{309C}')); // between supported sub-ranges
     }
 
     #[test]
@@ -92,5 +98,11 @@ mod tests {
     #[test]
     fn hiragana_to_katakana_small_forms() {
         assert_eq!(hiragana_to_katakana("ぁっゃゅょ"), "ァッャュョ");
+    }
+
+    #[test]
+    fn hiragana_to_katakana_repeat_marks() {
+        // U+309D..=U+309F maps to U+30FD..=U+30FF via the +0x60 offset.
+        assert_eq!(hiragana_to_katakana("ゝゞゟ"), "ヽヾヿ");
     }
 }

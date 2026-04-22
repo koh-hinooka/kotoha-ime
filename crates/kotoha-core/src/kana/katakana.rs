@@ -63,12 +63,17 @@ mod tests {
     }
 
     #[test]
-    fn is_katakana_rejects_hiragana_and_ascii() {
+    fn is_katakana_rejects_hiragana_ascii_and_borderlines() {
+        // Different scripts
         assert!(!is_katakana('あ'));
         assert!(!is_katakana('か'));
         assert!(!is_katakana('a'));
         assert!(!is_katakana('1'));
         assert!(!is_katakana('漢'));
+        // Borderline code points inside the katakana block but not in the supported ranges
+        // (guard against off-by-one regressions)
+        assert!(!is_katakana('\u{30A0}')); // katakana-hiragana double hyphen (just below U+30A1)
+        assert!(!is_katakana('\u{30FB}')); // katakana middle dot (between U+30FA and U+30FC)
     }
 
     #[test]
@@ -102,5 +107,11 @@ mod tests {
     #[test]
     fn katakana_to_hiragana_empty() {
         assert_eq!(katakana_to_hiragana(""), "");
+    }
+
+    #[test]
+    fn katakana_to_hiragana_repeat_marks() {
+        // U+30FD..=U+30FF maps to U+309D..=U+309F via the -0x60 offset.
+        assert_eq!(katakana_to_hiragana("ヽヾヿ"), "ゝゞゟ");
     }
 }
