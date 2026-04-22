@@ -16,8 +16,20 @@ pub fn is_katakana(ch: char) -> bool {
 /// Converts katakana in `s` to hiragana. Non-katakana characters pass through unchanged.
 /// Note: `ヷ`, `ヸ`, `ヹ`, `ヺ` (U+30F7..=U+30FA) and `ー` (U+30FC) have no hiragana counterpart
 /// and pass through unchanged.
-pub fn katakana_to_hiragana(_s: &str) -> String {
-    unimplemented!("implemented in Task M2-5 Step 6")
+pub fn katakana_to_hiragana(s: &str) -> String {
+    s.chars()
+        .map(|ch| {
+            // Convert only katakana that have a hiragana counterpart:
+            // - U+30A1..=U+30F6 maps to U+3041..=U+3096
+            // - U+30FD..=U+30FF maps to U+309D..=U+309F
+            // U+30F7..=U+30FA (ヷヸヹヺ) and U+30FC (ー) have no hiragana peer and pass through.
+            if matches!(ch, '\u{30A1}'..='\u{30F6}' | '\u{30FD}'..='\u{30FF}') {
+                char::from_u32(ch as u32 - 0x60).unwrap_or(ch)
+            } else {
+                ch
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -57,5 +69,38 @@ mod tests {
         assert!(!is_katakana('a'));
         assert!(!is_katakana('1'));
         assert!(!is_katakana('漢'));
+    }
+
+    #[test]
+    fn katakana_to_hiragana_basic() {
+        assert_eq!(katakana_to_hiragana("アイウエオ"), "あいうえお");
+    }
+
+    #[test]
+    fn katakana_to_hiragana_mixed() {
+        assert_eq!(katakana_to_hiragana("コンニチハ"), "こんにちは");
+    }
+
+    #[test]
+    fn katakana_to_hiragana_keeps_prolonged_mark() {
+        // U+30FC has no hiragana counterpart and must pass through unchanged.
+        assert_eq!(katakana_to_hiragana("コーヒー"), "こーひー");
+    }
+
+    #[test]
+    fn katakana_to_hiragana_keeps_v_row_without_counterpart() {
+        // U+30F7..=U+30FA have no hiragana counterpart and must pass through unchanged.
+        assert_eq!(katakana_to_hiragana("ヷヸヹヺ"), "ヷヸヹヺ");
+    }
+
+    #[test]
+    fn katakana_to_hiragana_handles_v_with_counterpart() {
+        // ヴ U+30F4 → ゔ U+3094 (within the convertible range).
+        assert_eq!(katakana_to_hiragana("ヴ"), "ゔ");
+    }
+
+    #[test]
+    fn katakana_to_hiragana_empty() {
+        assert_eq!(katakana_to_hiragana(""), "");
     }
 }

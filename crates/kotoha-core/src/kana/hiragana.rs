@@ -10,8 +10,18 @@ pub fn is_hiragana(ch: char) -> bool {
 }
 
 /// Converts hiragana in `s` to katakana. Non-hiragana characters pass through unchanged.
-pub fn hiragana_to_katakana(_s: &str) -> String {
-    unimplemented!("implemented in Task M2-5 Step 3")
+pub fn hiragana_to_katakana(s: &str) -> String {
+    s.chars()
+        .map(|ch| {
+            if is_hiragana(ch) {
+                // Hiragana → Katakana: add the fixed +0x60 offset.
+                // All 3 covered hiragana ranges land inside katakana ranges after this shift.
+                char::from_u32(ch as u32 + 0x60).unwrap_or(ch)
+            } else {
+                ch
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -56,5 +66,31 @@ mod tests {
         assert!(!is_hiragana('1'));
         assert!(!is_hiragana('漢'));
         assert!(!is_hiragana(' '));
+    }
+
+    #[test]
+    fn hiragana_to_katakana_basic() {
+        assert_eq!(hiragana_to_katakana("あいうえお"), "アイウエオ");
+    }
+
+    #[test]
+    fn hiragana_to_katakana_mixed() {
+        assert_eq!(hiragana_to_katakana("こんにちは"), "コンニチハ");
+    }
+
+    #[test]
+    fn hiragana_to_katakana_passes_through_non_hiragana() {
+        assert_eq!(hiragana_to_katakana("ABC"), "ABC");
+        assert_eq!(hiragana_to_katakana("あA1"), "アA1");
+    }
+
+    #[test]
+    fn hiragana_to_katakana_empty() {
+        assert_eq!(hiragana_to_katakana(""), "");
+    }
+
+    #[test]
+    fn hiragana_to_katakana_small_forms() {
+        assert_eq!(hiragana_to_katakana("ぁっゃゅょ"), "ァッャュョ");
     }
 }
