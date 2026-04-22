@@ -44,7 +44,7 @@ finished: 2026-04-22
 
 - M7 ADR 対象拡張: MSRV/edition 選定理由、M1 cargo build 例外、LICENSE copyright holder、Cargo.toml 公開メール埋め込み方針
 - M2 kickoff 前の lefthook 小改善 PR: `[ -d crates ]` → member 数検査に強化、無害化方式統一、doc-naming に glob 付与、pre-push test timeout、`.gitignore` にシークレットパターン追加
-- Phase 1 前: GCP Cloud Build trigger 構築を ROADMAP に追加
+- ~~Phase 1 前: GCP Cloud Build trigger 構築を ROADMAP に追加~~ → 廃止 (PR #4 で spec §12.2 改訂、Kotoha はローカル実行の日本語 IME で GCP 不要と判断)
 - .github テンプレートの英訳
 - CLAUDE.md 改善(TOC、API doc 明確化、proptest 注記、glossary stub)
 
