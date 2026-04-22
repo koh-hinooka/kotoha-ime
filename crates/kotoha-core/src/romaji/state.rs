@@ -4,11 +4,6 @@
 //! [`crate::romaji::trie::Trie`] after each pushed char. Special cases that
 //! cannot be expressed in the trie (double-consonant sokuon, bare `n` followed
 //! by non-vowel → hatsuon) are handled here.
-//!
-//! The `allow(dead_code)` attribute at file scope is removed in M3a-4 once the
-//! `RomajiConverter` facade consumes this module.
-
-#![allow(dead_code)]
 
 use crate::romaji::trie::{Lookup, Trie};
 
@@ -18,6 +13,7 @@ use crate::romaji::trie::{Lookup, Trie};
 /// introduced without breaking downstream match sites inside the crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
+#[allow(dead_code)] // consumed by M3a-4 RomajiConverter facade
 pub(crate) enum PushResult {
     /// Some kana was committed this step. Contains the newly committed kana.
     Committed(String),
@@ -34,12 +30,14 @@ pub(crate) enum PushResult {
 /// - `buffer` never holds a string that is itself a complete trie match;
 ///   such matches are consumed immediately by [`StateMachine::settle`].
 #[derive(Debug)]
+#[allow(dead_code)] // consumed by M3a-4 RomajiConverter facade
 pub(crate) struct StateMachine {
     trie: Trie,
     /// Pending input buffer, ASCII bytes only (push rejects non-ASCII).
     buffer: String,
 }
 
+#[allow(dead_code)] // methods consumed by M3a-4 RomajiConverter facade
 impl StateMachine {
     /// Constructs a new state machine with an empty buffer.
     ///
@@ -95,6 +93,16 @@ impl StateMachine {
     /// At most one visible outcome is returned per call even if multiple
     /// internal commits take place (e.g. "kk" pushed char-by-char: the second
     /// 'k' emits `Committed("っ")` and internally leaves "k" pending).
+    ///
+    /// # Preconditions
+    /// - `self.buffer` is non-empty on entry. The only caller,
+    ///   [`StateMachine::push`], enforces this by appending a char to
+    ///   `self.buffer` before calling `settle`.
+    ///
+    /// # Panics
+    /// Panics if called with an empty `self.buffer`. The fallback branch
+    /// reads the leading char via `chars().next().expect(..)`, which relies
+    /// on the precondition above.
     fn settle(&mut self) -> PushResult {
         match self.trie.lookup(&self.buffer) {
             Lookup::Match(kana) => {
@@ -133,6 +141,7 @@ impl StateMachine {
 }
 
 /// Consonants eligible for double-consonant sokuon.
+#[allow(dead_code)] // called by StateMachine::settle (M3a-4 facade entry)
 fn is_sokuon_consonant(b: u8) -> bool {
     matches!(
         b,
@@ -157,6 +166,7 @@ fn is_sokuon_consonant(b: u8) -> bool {
 
 /// Chars that, following bare `n`, should *not* trigger ん commit
 /// (the char might still combine with `n` into a trie-recognized form).
+#[allow(dead_code)] // called by StateMachine::settle (M3a-4 facade entry)
 fn is_n_continuation(b: u8) -> bool {
     matches!(b, b'a' | b'i' | b'u' | b'e' | b'o' | b'y' | b'n' | b'\'')
 }
