@@ -5,5 +5,6 @@
 
 pub mod error;
 pub mod kana;
+pub mod romaji;
 
 pub use error::{Error, Result};
