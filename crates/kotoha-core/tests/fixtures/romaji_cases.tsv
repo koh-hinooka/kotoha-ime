@@ -212,6 +212,11 @@ wha	うぁ
 whi	うぃ	
 
 # --- pending tails (10) ---
+# Normative contract: spec §9.3 pending バッファの backtrack 規則
+# (docs/superpowers/specs/2026-04-22-kotoha-phase-0-design.md).
+# Rows below verify that a pending prefix remains in the buffer after a
+# prior completion commit (Match) or when the next char does not match
+# any rule prefix (None). Do not change rows without also updating §9.3.
 k		k
 ky		ky
 s		s

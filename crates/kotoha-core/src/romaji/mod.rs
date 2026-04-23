@@ -83,6 +83,8 @@ impl RomajiConverter {
     /// This method takes `&self` and does not mutate the converter's state;
     /// it runs conversion on a temporary internal state machine.
     ///
+    /// 参照: spec §9.3 pending バッファの backtrack 規則。
+    ///
     /// # Postconditions
     /// - `self`'s pending buffer is unchanged.
     /// - The returned `pending` string contains only ASCII chars.
@@ -125,6 +127,8 @@ impl RomajiConverter {
     }
 
     /// Feeds a single char to the streaming buffer.
+    ///
+    /// 参照: spec §9.3 pending バッファの backtrack 規則。
     ///
     /// # Postconditions
     /// - On [`ConvertStep::Committed`], the returned string is the kana
@@ -184,6 +188,8 @@ impl RomajiConverter {
     /// bare-`n` hatsuon, a completed rule hiding in the residue, and the
     /// lone-`"n"` → `"ん"` special case per spec §9) plus the unresolvable
     /// ASCII tail. The buffer is empty after this call.
+    ///
+    /// 参照: spec §9.3 pending バッファの backtrack 規則。
     ///
     /// # Postconditions
     /// - The pending buffer is empty.
