@@ -4,8 +4,10 @@
 //! Later milestones add romaji conversion (M3) and input mode state machine (M4).
 
 pub mod error;
+pub mod input;
 pub mod kana;
 pub mod romaji;
 
 pub use error::{Error, Result};
+pub use input::{InputContext, InputMode, InputStep};
 pub use romaji::{ConvertStep, RomajiConverter};
