@@ -163,6 +163,65 @@ impl StateMachine {
             }
         }
     }
+
+    /// Normalizes the pending buffer to a stable form.
+    ///
+    /// After this call, the buffer is one of:
+    /// - Empty (all content was dropped as Invalid or committed).
+    /// - A trie partial prefix (stable pending, will accept more input).
+    ///
+    /// Any commits salvaged during normalization (double-consonant sokuon,
+    /// bare-`n` hatsuon, or a completed rule that was hiding in the buffer)
+    /// are accumulated into the returned string.
+    ///
+    /// # Postconditions
+    /// - `self.buffer()` is either empty or a trie partial prefix.
+    /// - The returned `String` contains any salvaged kana, in order.
+    ///
+    /// # Rationale
+    /// [`Self::settle`] stops after one visible effect per call, so a
+    /// non-matching buffer of length ≥ 2 may be left with a leading char
+    /// dropped but the rest unchanged (e.g. "byb" → "yb"). That residual
+    /// "yb" is itself non-matching and would be further reduced by a fresh
+    /// [`Self::settle`] call. Without this normalization, the pending
+    /// buffer returned by [`crate::romaji::RomajiConverter::convert`]
+    /// fails to be idempotent under re-conversion, breaking associativity.
+    pub(crate) fn normalize(&mut self) -> String {
+        let mut committed = String::new();
+        loop {
+            if self.buffer.is_empty() {
+                break;
+            }
+            match self.trie.lookup(&self.buffer) {
+                Lookup::Match(kana) => {
+                    committed.push_str(kana);
+                    self.buffer.clear();
+                    break;
+                }
+                Lookup::Partial => break,
+                Lookup::None => {
+                    if self.buffer.len() >= 2 {
+                        let bytes = self.buffer.as_bytes();
+                        let first = bytes[0];
+                        let second = bytes[1];
+                        if is_sokuon_consonant(first) && first == second {
+                            self.buffer.remove(0);
+                            committed.push('っ');
+                            continue;
+                        }
+                        if first == b'n' && !is_n_continuation(second) {
+                            self.buffer.remove(0);
+                            committed.push('ん');
+                            continue;
+                        }
+                    }
+                    // Drop leading invalid char and retry.
+                    self.buffer.remove(0);
+                }
+            }
+        }
+        committed
+    }
 }
 
 /// Consonants eligible for double-consonant sokuon.
@@ -288,5 +347,76 @@ mod tests {
         assert_eq!(sm.buffer(), "k");
         sm.reset();
         assert_eq!(sm.buffer(), "");
+    }
+
+    #[test]
+    fn normalize_stabilizes_partial_then_invalid_sequence() {
+        // "byb" leaves "yb" in buffer after the Invalid drop of leading 'b'.
+        // normalize() should further reduce "yb" to "b" (valid partial prefix).
+        let mut sm = StateMachine::new();
+        sm.push('b'); // pending "b"
+        sm.push('y'); // pending "by"
+        let _ = sm.push('b'); // Invalid drop of leading 'b', buffer = "yb"
+        assert_eq!(sm.buffer(), "yb");
+        let committed = sm.normalize();
+        assert_eq!(committed, "", "no kana should be salvaged from yb");
+        assert_eq!(sm.buffer(), "b", "yb should reduce to b after normalize");
+    }
+
+    #[test]
+    fn normalize_is_noop_after_settle_already_emitted_sokuon() {
+        // This test verifies that `normalize()` is a no-op on a trie-partial
+        // buffer ("k") AFTER `settle()` has already emitted the "っ" via
+        // the sokuon branch of push(). It does NOT exercise normalize's own
+        // sokuon salvage branch; that branch is covered indirectly via the
+        // convert-level regression tests in mod.rs (e.g. convert("byb")).
+        let mut sm = StateMachine::new();
+        sm.push('k'); // pending "k"
+        let result = sm.push('k'); // settle emits っ via sokuon, buffer="k"
+        assert_eq!(
+            result,
+            PushResult::Committed(std::borrow::Cow::Borrowed("っ"))
+        );
+        assert_eq!(sm.buffer(), "k");
+        // normalize on the remaining "k" sees a Partial prefix → no commit,
+        // no buffer change.
+        let committed = sm.normalize();
+        assert_eq!(committed, "");
+        assert_eq!(sm.buffer(), "k");
+    }
+
+    #[test]
+    fn normalize_on_empty_buffer_is_noop() {
+        let mut sm = StateMachine::new();
+        let committed = sm.normalize();
+        assert_eq!(committed, "");
+        assert_eq!(sm.buffer(), "");
+    }
+
+    #[test]
+    fn normalize_on_partial_prefix_is_noop() {
+        let mut sm = StateMachine::new();
+        sm.push('k');
+        sm.push('y'); // buffer = "ky", a partial prefix
+        let committed = sm.normalize();
+        assert_eq!(committed, "");
+        assert_eq!(sm.buffer(), "ky");
+    }
+
+    #[test]
+    fn normalize_drops_chain_of_invalid_chars() {
+        // Push chars that form a multi-step invalid chain.
+        // Start with "ky", then push 'k' which leaves "yk" after the Invalid drop
+        // (settle's fallback drops the leading char once). normalize should
+        // further drop 'y' (since "yk" is still invalid with k at tail),
+        // leaving "k" as a valid partial prefix.
+        let mut sm = StateMachine::new();
+        sm.push('k'); // "k"
+        sm.push('y'); // "ky"
+        let _ = sm.push('k'); // settle drops leading 'k', buffer = "yk"
+        assert_eq!(sm.buffer(), "yk");
+        let committed = sm.normalize();
+        assert_eq!(committed, "", "no kana salvaged from yk");
+        assert_eq!(sm.buffer(), "k", "yk should reduce to k");
     }
 }
