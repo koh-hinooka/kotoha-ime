@@ -28,6 +28,13 @@ use proptest::prelude::*;
 /// `n`+vowel syllables (`na`/`ni`/`nu`/`ne`/`no`), all of which commit or
 /// yield stable pending states that make the two properties well-defined
 /// on the current M3a implementation.
+///
+/// # TODO(M3b)
+/// Broaden to the plan-specified `[a-z\-'.,!?\[\]/]{0,12}` once the two
+/// M3a state-machine gaps are resolved:
+/// - #22: non-ASCII retraction (drop vs pass-through in `state::settle`)
+/// - #23: end-of-input buffer normalization in `convert`
+///   (e.g. `byb` → `yb` pending vs `b` pending after re-convert)
 fn romaji_input() -> impl Strategy<Value = String> {
     "[aeioun]{0,12}"
 }
