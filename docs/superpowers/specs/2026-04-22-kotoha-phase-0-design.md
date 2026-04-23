@@ -619,7 +619,7 @@ Karukan の既存挙動と Kotoha で結果が異なる入力パターンを並�
 
 既存 2 条件(冪等性 / 結合性)に加えて、モード系の不変条件を `proptest` で検証する。
 
-なお、revision 1 では可逆性(invertibility)も "既存" プロパティとして列挙していたが、romaji → かな は多対一(`ji`/`zi` → じ、`tu`/`tsu` → つ、`si`/`shi` → し、`ti`/`chi` → ち 等)であり strict な round-trip invertibility は数学的に定義不能なため、Phase 0 のプロパティ集合からは除外する。canonical romaji を定義して部分的に可逆性を回復する拡張は Phase 1 以降で検討する(ADR 候補)。
+なお、revision 1 では可逆性(invertibility)も "既存" プロパティとして列挙していたが、romaji → かな は多対一(`ji`/`zi` → じ、`tu`/`tsu` → つ、`si`/`shi` → し、`ti`/`chi` → ち 等)であり strict な round-trip invertibility は数学的に定義不能なため、Phase 0 のプロパティ集合からは除外する。canonical romaji を定義して部分的に可逆性を回復する拡張は Phase 1 以降で検討する(ADR 候補: `docs/adr/0008-canonical-romaji-and-partial-invertibility.md` — 提案ステータスの placeholder)。
 
 | 不変条件 | 意味 |
 |---|---|

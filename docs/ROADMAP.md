@@ -18,6 +18,12 @@ Kotoha プロジェクトの開発フェーズと、各フェーズの到達目�
 
 Phase 0 の詳細マイルストーン分割は `docs/superpowers/plans/2026-04-22-kotoha-phase-0-implementation.md` を参照。
 
+## Phase 1 への申し送り
+
+Phase 0 完了時に Phase 1 へ引き継ぐ設計判断事項を記録する。
+
+- **canonical romaji ADR** (`docs/adr/0008-canonical-romaji-and-partial-invertibility.md`): Phase 0 の spec §11.3 revision 2 で除外した「可逆性」プロパティについて、canonical romaji を定義して部分的可逆性を回復する拡張を Phase 1 で検討する。本 ADR はステータス「提案」の placeholder であり、Phase 1 計画開始時に 3 選択肢 (現状維持 / canonical 定義 / configuration で選択) から決定して正式 ADR に昇格する。
+
 ## 注記
 
 - Phase 5 の「Shift 挙動設定」は、設計書 revision 2 の判断により Phase 0 に前倒しされた。Phase 5 は「タイポ訂正 + 文脈リランキング」のみ。
