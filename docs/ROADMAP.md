@@ -22,7 +22,7 @@ Phase 0 の詳細マイルストーン分割は `docs/superpowers/plans/2026-04-
 
 Phase 0 完了時に Phase 1 へ引き継ぐ設計判断事項を記録する。
 
-- **canonical romaji ADR** (`docs/adr/0008-canonical-romaji-and-partial-invertibility.md`): Phase 0 の spec §11.3 revision 2 で除外した「可逆性」プロパティについて、canonical romaji を定義して部分的可逆性を回復する拡張を Phase 1 で検討する。本 ADR はステータス「提案」の placeholder であり、Phase 1 計画開始時に 3 選択肢 (現状維持 / canonical 定義 / configuration で選択) から決定して正式 ADR に昇格する。
+- **canonical romaji ADR 判定済み** (`docs/adr/0008-canonical-romaji-and-partial-invertibility.md`): 2026-04-24 の Phase 1 kick-off で選択肢 1 (canonical romaji を定義しない、現状維持) の採用を決定。本 ADR は「承認」ステータスに昇格済み。将来 canonical romaji が必要となる use case が発生した場合は、display layer で canonical 化するか、新 ADR を起こして選択肢 2 / 3 に移行する。
 
 ## 注記
 
