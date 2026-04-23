@@ -144,22 +144,50 @@ impl RomajiConverter {
 
     /// Force-finalizes the pending buffer.
     ///
-    /// Returns any kana that can still be salvaged (a lone `"n"` becomes
-    /// `"ん"` per spec §9) plus the unresolvable tail as plain ASCII. The
-    /// buffer is empty after this call.
+    /// Returns any kana that can still be salvaged (double-consonant sokuon,
+    /// bare-`n` hatsuon, a completed rule hiding in the residue, and the
+    /// lone-`"n"` → `"ん"` special case per spec §9) plus the unresolvable
+    /// ASCII tail. The buffer is empty after this call.
     ///
     /// # Postconditions
     /// - The pending buffer is empty.
-    /// - If the buffer was exactly `"n"`, the returned string is `"ん"`.
-    /// - Otherwise the returned string is the former buffer contents
-    ///   verbatim.
+    /// - The returned string is `salvaged + tail` where `salvaged` is the
+    ///   kana committed by
+    ///   [`crate::romaji::state::StateMachine::normalize`] on the buffer,
+    ///   and `tail` is the remaining ASCII (either empty or a trie partial
+    ///   prefix) read via
+    ///   [`crate::romaji::state::StateMachine::take_buffer`].
+    /// - A lone `"n"` at finalization still commits as `"ん"`; after
+    ///   normalization, a bare `"n"` survives as a trie partial prefix
+    ///   (since `"n"` is a prefix of `"na"`/`"ni"`/...), so this branch
+    ///   continues to honor the user's intent of committing `"n"` as
+    ///   hatsuon on finalization.
+    /// - The returned string may now include salvaged sokuon / hatsuon /
+    ///   rule matches beyond the lone-`"n"` case, keeping the streaming
+    ///   `push + flush` path consistent with the batch
+    ///   [`Self::convert`] contract (both stabilize pending after
+    ///   end-of-input).
     pub fn flush(&mut self) -> String {
+        // Normalize first so the terminal buffer is stable (empty /
+        // trie-partial) and any salvaged sokuon/hatsuon/completed rules
+        // are emitted as kana. This keeps the streaming `push + flush`
+        // path consistent with the batch `convert` contract (both return
+        // stable pending after end-of-input). See ISSUE #23.
+        let salvaged = self.machine.normalize();
         let tail = self.machine.take_buffer();
-        // Special case: a lone "n" at flush time becomes ん.
+        // Special case: a lone "n" at flush time becomes ん. After
+        // normalize(), a bare "n" survives as a trie Partial prefix ("n"
+        // is a prefix of "na"/"ni"/...), so this branch still handles the
+        // user's intent of "commit n as hatsuon on finalization" even
+        // though settle alone would not.
         if tail == "n" {
-            return "ん".to_string();
+            return format!("{salvaged}ん");
         }
-        tail
+        if salvaged.is_empty() {
+            tail
+        } else {
+            format!("{salvaged}{tail}")
+        }
     }
 }
 
@@ -340,6 +368,56 @@ mod tests {
         // After the fix, convert("byb") should return ("", "b") directly.
         let c = RomajiConverter::new();
         assert_eq!(c.convert("byb"), ("".to_string(), "b".to_string()));
+    }
+
+    #[test]
+    fn convert_yba_salvages_ba_as_match_after_invalid_y_drop() {
+        // After the per-char loop: push('y') buffer="y" Pending; push('b')
+        // buffer="yb" Lookup::None, settle drops leading 'y' as Invalid,
+        // buffer="b" Pending; push('a') buffer="ba" Lookup::Match "ば",
+        // commits. This path reaches the Lookup::Match branch of settle,
+        // not normalize. Verify via convert end-to-end:
+        let c = RomajiConverter::new();
+        assert_eq!(c.convert("yba"), ("ば".to_string(), "".to_string()));
+    }
+
+    #[test]
+    fn convert_byba_salvages_ba_via_normalize_match_branch() {
+        // push('b') → "b" Pending; push('y') → "by" Pending;
+        // push('b') → "byb" None, settle drops leading 'b', buffer="yb"
+        // Invalid returned; push('a') → "yba" Lookup. "yba" is not a rule,
+        // not a prefix either: "yba" → None. Sokuon/hatsuon branches:
+        // 'y'!='b' and 'y'!='n'. Drop 'y'. settle returns Invalid('y'),
+        // buffer="ba" left behind. End of for-loop. normalize() runs:
+        // "ba" Lookup::Match → commit "ば", buffer="". This reaches
+        // normalize's Lookup::Match branch and covers the salvage
+        // semantics the rustdoc promises.
+        let c = RomajiConverter::new();
+        assert_eq!(c.convert("byba"), ("ば".to_string(), "".to_string()));
+    }
+
+    #[test]
+    fn flush_normalizes_streaming_byb_residue() {
+        // Regression: the streaming push+flush path must match the batch
+        // convert path. Before this fix, push('b'); push('y'); push('b');
+        // flush() yielded "yb"; after the fix, flush() invokes normalize()
+        // first, stabilizing to "b".
+        let mut c = RomajiConverter::new();
+        let _ = c.push('b');
+        let _ = c.push('y');
+        let _ = c.push('b');
+        assert_eq!(c.flush(), "b");
+    }
+
+    #[test]
+    fn flush_salvages_rule_match_then_lone_n() {
+        // Contrived: if the buffer after the for-loop equals exactly "n",
+        // flush should still emit ん (the legacy lone-n special case).
+        // This preserves the pre-fix behavior for the most common
+        // streaming finalization pattern.
+        let mut c = RomajiConverter::new();
+        let _ = c.push('n');
+        assert_eq!(c.flush(), "ん");
     }
 
     #[test]

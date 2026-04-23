@@ -29,12 +29,14 @@ use proptest::prelude::*;
 /// yield stable pending states that make the two properties well-defined
 /// on the current M3a implementation.
 ///
-/// # TODO(M3b)
-/// Broaden to the plan-specified `[a-z\-'.,!?\[\]/]{0,12}` once the two
-/// M3a state-machine gaps are resolved:
+/// # TODO(M3b / follow-up)
+/// Broaden to the plan-specified `[a-z\-'.,!?\[\]/]{0,12}` once the
+/// remaining M3a state-machine gap is resolved:
 /// - #22: non-ASCII retraction (drop vs pass-through in `state::settle`)
-/// - #23: end-of-input buffer normalization in `convert`
-///   (e.g. `byb` → `yb` pending vs `b` pending after re-convert)
+///
+/// ISSUE #23 (convert end-of-input buffer normalization) was resolved by
+/// the hotfix landed in PR #27; broadening to `[a-z]{0,12}` is now safe
+/// from that angle and tracked as a separate follow-up task.
 fn romaji_input() -> impl Strategy<Value = String> {
     "[aeioun]{0,12}"
 }

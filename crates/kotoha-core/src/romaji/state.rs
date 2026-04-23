@@ -364,19 +364,22 @@ mod tests {
     }
 
     #[test]
-    fn normalize_salvages_sokuon_when_possible() {
-        // Set up a buffer "kk" scenario where normalize alone (without push)
-        // should still emit sokuon. Use take_buffer+re-push to build the state,
-        // or directly push 'k' then 'k'.
+    fn normalize_is_noop_after_settle_already_emitted_sokuon() {
+        // This test verifies that `normalize()` is a no-op on a trie-partial
+        // buffer ("k") AFTER `settle()` has already emitted the "っ" via
+        // the sokuon branch of push(). It does NOT exercise normalize's own
+        // sokuon salvage branch; that branch is covered indirectly via the
+        // convert-level regression tests in mod.rs (e.g. convert("byb")).
         let mut sm = StateMachine::new();
         sm.push('k'); // pending "k"
-        let result = sm.push('k'); // emits っ via sokuon branch, buffer = "k"
+        let result = sm.push('k'); // settle emits っ via sokuon, buffer="k"
         assert_eq!(
             result,
             PushResult::Committed(std::borrow::Cow::Borrowed("っ"))
         );
         assert_eq!(sm.buffer(), "k");
-        // normalize on the remaining "k" should leave it (Partial), no commit.
+        // normalize on the remaining "k" sees a Partial prefix → no commit,
+        // no buffer change.
         let committed = sm.normalize();
         assert_eq!(committed, "");
         assert_eq!(sm.buffer(), "k");
