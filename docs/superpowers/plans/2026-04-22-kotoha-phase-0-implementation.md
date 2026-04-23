@@ -26,7 +26,7 @@ Phase 0 全体を 7 つのマイルストーンに分割する。各マイルス
 | M4 | input モジュール | `input/{mod,mode,context}.rs` + 単体テスト 20 件 | 1.5〜2 日 | 概要のみ |
 | M5 | モードテスト拡張 | `mode_golden.rs` + TSV 70 件 + Karukan 差分 10 件 + property test 4 条件 | 0.8 日 | 概要のみ |
 | M6 | kotoha-cli | `romaji.rs`(`--mode` / `--show-mode`)+ phase0-smoke.sh | 0.8 日 | 概要のみ |
-| M7 | ADR + ドキュメント | ADR 3 件 + ROADMAP 反映 + WBS ログ | 1 日 | 概要のみ |
+| M7 | ADR + ドキュメント | ADR 7 件 + ROADMAP 反映 + WBS ログ | 1 日 | 概要のみ |
 
 ---
 
@@ -870,7 +870,7 @@ finished: 2026-04-XX
 
 - Cargo workspace の `[workspace.dependencies]` は M2 で `thiserror`、`anyhow`、`tracing`、`tracing-subscriber` を追加
 - lefthook の fmt-check は M2 で kotoha-core が追加されて初めて意味のある検証が走る
-- ADR 0001 / 0002 / 0003 は M7 で作成
+- ADR 0003 / 0004 / 0007 は M7 で作成 (0001 は PR #28 で、0002 は PR #35 で、0005 / 0006 は PR #45 で前倒し作成済み)
 
 ## 成果物リンク
 
@@ -1052,13 +1052,12 @@ git push
 
 **Files to create:**
 
-- `docs/adr/0001-input-mode-transient-vs-sticky.md`
-- `docs/adr/0002-shift-via-uppercase-char.md`
-- `docs/adr/0003-cli-line-based-commit.md`
-- `docs/adr/0004-rust-toolchain-and-publishing-policy.md` (M1 PR review からの拡張)
+- `docs/adr/0003-shift-via-uppercase-char.md`
+- `docs/adr/0004-cli-line-based-commit.md`
+- `docs/adr/0007-rust-toolchain-and-publishing-policy.md` (M1 PR review からの拡張、旧番号 0004)
 - `docs/wbs/2026-04-XX-feature-N-phase0-adrs.md`(N は対応 ISSUE 番号)
 
-> **M1 PR review からの M7 追加事項**: ADR 0004 は以下を集約する設計判断を記録する。
+> **M1 PR review からの M7 追加事項**: ADR 0007 は以下を集約する設計判断を記録する。
 > - MSRV 1.80 / Edition 2021 の選定理由(lang-rust.md 推奨の Edition 2024 を採用しない判断)
 > - M1 期間中の `cargo build` 検証例外(global CLAUDE.md mandatory mitigation #1 の明示的例外扱い、Cargo 1.94+ の empty virtual workspace ハードエラーに起因)
 > - LICENSE-MIT の copyright holder に GitHub handle `std-koh-hinooka` を採用した判断
@@ -1071,7 +1070,7 @@ git push
 
 **Acceptance:**
 
-- ADR 3 件が `docs/adr/` に存在する
+- ADR 7 件 (0001〜0007、ただし 0005 / 0006 は ISSUE #20 で前倒し作成、0001 / 0002 は M3-M4 で前倒し作成) が `docs/adr/` に存在する
 - 各 ADR に "Context" / "Decision" / "Consequences" が記述されている
 - README.md に `kotoha-romaji` の使用例が 5 件以上記載されている
 
