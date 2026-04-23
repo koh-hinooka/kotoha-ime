@@ -82,4 +82,4 @@ property test `prop_idempotence_on_committed` は弱化形 (`pending_second.is_e
 - PR #24 (M3b) — 本 ADR が必要となった契機。
 - PR #27 (#23 hotfix) — `convert` 終端 buffer 正規化 (本 ADR とは独立だが、兄弟的な state machine 改善)。
 - spec §9.2 (本 PR で新設) — normative 挙動の記述。
-- `crates/kotoha-core/src/romaji/state.rs:98-101` — 現行実装。
+- `crates/kotoha-core/src/romaji/state.rs:99-101` — 現行実装。
