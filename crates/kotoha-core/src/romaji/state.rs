@@ -13,8 +13,35 @@
 //! module implements it.
 
 use std::borrow::Cow;
+use std::sync::OnceLock;
 
 use crate::romaji::trie::{Lookup, Trie};
+
+/// Returns a reference to the process-wide cached [`Trie`].
+///
+/// Builds the trie from [`crate::romaji::rules::RULES`] on first call via
+/// [`OnceLock::get_or_init`] and returns the same `&'static Trie` on every
+/// subsequent call. Thread-safe by `OnceLock`'s documented contract
+/// (exactly one initializer wins, other threads block until it completes).
+///
+/// # Rationale
+/// Prior to ISSUE #19, [`StateMachine::new`] called
+/// [`Trie::from_rules`] on every construction, which happened once per
+/// [`crate::romaji::RomajiConverter::new`] and once per
+/// [`crate::romaji::RomajiConverter::convert`] call (the batch path
+/// allocates an internal `StateMachine`). The rebuild is μs-order for the
+/// current 207-entry rule table but is strictly wasted work and puts
+/// allocator pressure on any keystroke-frequency hot path (for example
+/// the Phase 3 IBus engine). Caching the trie in a `static OnceLock`
+/// eliminates all rebuild cost after the first call.
+///
+/// # Postconditions
+/// - Every call returns a reference that compares equal (by pointer) to
+///   every other call's return value within the same process.
+fn global_trie() -> &'static Trie {
+    static TRIE: OnceLock<Trie> = OnceLock::new();
+    TRIE.get_or_init(Trie::from_rules)
+}
 
 /// Outcome of feeding a single char to the state machine.
 ///
@@ -44,7 +71,10 @@ pub(crate) enum PushResult {
 ///   such matches are consumed immediately by [`StateMachine::settle`].
 #[derive(Debug)]
 pub(crate) struct StateMachine {
-    trie: Trie,
+    /// Reference to the process-wide cached trie obtained via
+    /// [`global_trie`]. The trie itself is immutable after
+    /// initialization; only the pending buffer mutates per push.
+    trie: &'static Trie,
     /// Pending input buffer, ASCII bytes only (push rejects non-ASCII).
     buffer: String,
 }
@@ -52,11 +82,14 @@ pub(crate) struct StateMachine {
 impl StateMachine {
     /// Constructs a new state machine with an empty buffer.
     ///
+    /// Takes a reference to the globally cached trie (see [`global_trie`]);
+    /// the trie is not rebuilt per construction.
+    ///
     /// # Postconditions
     /// - `self.buffer()` returns the empty string.
     pub(crate) fn new() -> Self {
         Self {
-            trie: Trie::from_rules(),
+            trie: global_trie(),
             buffer: String::new(),
         }
     }
@@ -421,5 +454,32 @@ mod tests {
         let committed = sm.normalize();
         assert_eq!(committed, "", "no kana salvaged from yk");
         assert_eq!(sm.buffer(), "k", "yk should reduce to k");
+    }
+
+    #[test]
+    fn global_trie_returns_same_instance_across_calls() {
+        // Regression for ISSUE #19: global_trie() must return the cached
+        // &'static Trie, never a freshly built one. Pointer equality is the
+        // strongest observable signal of cache behavior — a rebuilt Trie
+        // would live at a different address.
+        let ptr1 = std::ptr::from_ref(super::global_trie());
+        let ptr2 = std::ptr::from_ref(super::global_trie());
+        assert_eq!(
+            ptr1, ptr2,
+            "global_trie() must return the cached &'static Trie, not a rebuilt one"
+        );
+    }
+
+    #[test]
+    fn state_machine_new_shares_trie_with_global_cache() {
+        // Companion to the above: construct two StateMachines and confirm
+        // both hold the same &'static Trie as global_trie(). Guards against
+        // a future regression where StateMachine::new() accidentally falls
+        // back to per-call construction.
+        let sm1 = StateMachine::new();
+        let sm2 = StateMachine::new();
+        let global_ptr = std::ptr::from_ref(super::global_trie());
+        assert_eq!(std::ptr::from_ref(sm1.trie), global_ptr);
+        assert_eq!(std::ptr::from_ref(sm2.trie), global_ptr);
     }
 }
