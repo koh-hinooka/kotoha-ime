@@ -1,0 +1,20 @@
+[package]
+name = "kotoha-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Kotoha: command-line frontend for manual verification of the Kotoha Japanese IME core"
+
+[dependencies]
+kotoha-core = { path = "../kotoha-core" }
+clap = { workspace = true }
+
+[[bin]]
+name = "kotoha-romaji"
+path = "src/bin/romaji.rs"
+
+# src/lib.rs は process_line / format_line_output を unit-testable に切り出すために存在する。
+# binary 側は `use kotoha_cli::process_line;` 等でライブラリ層を参照する。
