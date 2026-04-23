@@ -18,7 +18,7 @@ spec §8 はこの観察に基づき、`(mode, origin)` タプルで状態を表
 
 `ModeOrigin::{Sticky, Transient}` は内部識別子であり、Transient origin の Direct モードのみが commit / cancel 契機で `(Hiragana, Sticky)` へ自動復帰する設計になっている。本 ADR はこの「Shift 由来 = Transient、明示トグル = Sticky」の 2 軸決定が、Phase 0 の入力モード管理レイヤーにおいて normative であることを記録する。
 
-この判断は spec §8.5 で Karukan との差分として言及されているが、ADR としての記録は本 M4a (PR #) で行う。
+この判断は spec §8.5 で Karukan との差分として言及されているが、ADR としての記録は本 M4a (ISSUE #34, PR #35) で行う。
 
 ## 検討した選択肢
 
