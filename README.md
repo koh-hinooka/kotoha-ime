@@ -23,7 +23,7 @@ Cargo workspace として以下の crate を持つ:
 
 | Phase | 内容 | 状態 |
 |---|---|---|
-| 0 | Cargo workspace + ローマ字→かな変換 + CLI | 設計完了、実装未着手 |
+| 0 | Cargo workspace + ローマ字→かな変換 + CLI | 完了 |
 | 1 | かな→漢字変換 (Zenz + llama.cpp) | 未着手 |
 | 2 | システム辞書 + ユーザ辞書 + 学習 | 未着手 |
 | 3 | IBus engine (GNOME) | 未着手 |
@@ -32,6 +32,74 @@ Cargo workspace として以下の crate を持つ:
 | 6 | 設定 UI, 辞書自動更新, 同期 | 未着手 |
 
 詳細は `docs/superpowers/specs/` の各設計書を参照。
+
+## kotoha-romaji CLI 使用例
+
+Phase 0 で実装した `kotoha-romaji` は、ローマ字→かな変換と Shift トリガによる Direct モード遷移を動作確認するための CLI である。標準入力から行単位で読み込み、行末を commit として扱う (詳細は `docs/adr/0004-cli-line-based-commit.md` と spec §10 を参照)。
+
+### ビルド
+
+```bash
+cargo build -p kotoha-cli
+# バイナリは target/debug/kotoha-romaji に生成される
+```
+
+### 基本的な使い方
+
+以下の例は `target/debug/kotoha-romaji` を `kotoha-romaji` として PATH 上で実行できる前提で記述する。
+
+1. **基本: ローマ字→ひらがな変換**
+
+    ```bash
+    $ echo "konnnichiha" | kotoha-romaji
+    こんにちは
+    ```
+
+2. **Shift トリガ: 大文字入力で Transient Direct モード**
+
+    ```bash
+    $ echo "HELLO" | kotoha-romaji
+    HELLO
+    ```
+
+3. **混在: 大文字始まりの行の後に Enter で自動復帰**
+
+    ```bash
+    $ printf "Konnichiwa\nkonnnichiha\n" | kotoha-romaji
+    Konnichiwa
+    こんにちは
+    ```
+
+4. **Sticky Direct モード (`--mode direct` で明示起動)**
+
+    ```bash
+    $ printf "hello\nworld\n" | kotoha-romaji --mode direct
+    hello
+    world
+    ```
+
+5. **モード表示 (デバッグ用、`--show-mode`)**
+
+    ```bash
+    $ printf "Hi\nkon\n" | kotoha-romaji --show-mode
+    Hi [H]
+    こん [H]
+    ```
+
+6. **Sticky Direct + モード表示**
+
+    ```bash
+    $ echo "hi" | kotoha-romaji --mode direct --show-mode
+    hi [D]
+    ```
+
+### スモークテスト
+
+Phase 0 の canonical smoke test として `scripts/phase0-smoke.sh` を提供する。上記 6 例を含む spec §13.2 の assertion を一括検証する。
+
+```bash
+./scripts/phase0-smoke.sh
+```
 
 ## 開発環境セットアップ
 
