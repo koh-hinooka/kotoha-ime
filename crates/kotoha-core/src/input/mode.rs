@@ -33,9 +33,6 @@ pub enum InputMode {
 ///
 /// Crate-private; not part of the public API. The public API exposes only
 /// `InputMode` and observable behavior.
-// NOTE: `allow(dead_code)` until `context::InputContext` (added by
-// Task M4b-4) starts consuming this enum. Removed in the M4b-4 commit.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModeOrigin {
     /// Initial state, or explicit-toggle-induced sticky mode. Persists

@@ -8,6 +8,8 @@
 //! The crate-private [`mode::ModeOrigin`] is used by `context::InputContext`
 //! to distinguish Sticky vs Transient origins per ADR 0002.
 
+pub mod context;
 pub mod mode;
 
+pub use context::{InputContext, InputStep};
 pub use mode::InputMode;
