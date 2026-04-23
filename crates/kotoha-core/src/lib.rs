@@ -11,3 +11,21 @@ pub mod romaji;
 pub use error::{Error, Result};
 pub use input::{InputContext, InputMode, InputStep};
 pub use romaji::{ConvertStep, RomajiConverter};
+
+/// Test-only accessor for the romaji rule table.
+///
+/// Returns the raw `(romaji_key, kana_value)` pairs as declared in
+/// `romaji::rules::RULES`. Exposed for integration tests that need to
+/// assert that the golden fixture (`tests/fixtures/romaji_cases.tsv`)
+/// covers every rule key, without leaking the `pub(crate)` visibility
+/// of the underlying `romaji::rules` module to downstream consumers.
+///
+/// # Stability
+/// Not part of the stable public API. The `__test_only_` prefix and
+/// `#[doc(hidden)]` attribute signal that external crates must not
+/// depend on this function; it exists solely for the `kotoha-core`
+/// integration test suite.
+#[doc(hidden)]
+pub fn __test_only_romaji_rules() -> &'static [(&'static str, &'static str)] {
+    crate::romaji::rules::RULES
+}

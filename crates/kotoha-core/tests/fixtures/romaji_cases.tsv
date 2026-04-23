@@ -244,3 +244,88 @@ onegaishimasu	おねがいします
 gakkou	がっこう	
 nihongo	にほんご	
 kyou	きょう	
+
+# --- yoon k-row extensions (kye, kyi) ---
+kyi	きぃ	
+kye	きぇ	
+
+# --- yoon s-row extensions (syi, sye, she) ---
+syi	しぃ	
+sye	しぇ	
+she	しぇ	
+
+# --- yoon t-row extensions (tyi, tye, che) ---
+tyi	ちぃ	
+tye	ちぇ	
+che	ちぇ	
+
+# --- yoon n-row extensions (nyi, nye) ---
+nyi	にぃ	
+nye	にぇ	
+
+# --- yoon h-row extensions (hyi, hye) ---
+hyi	ひぃ	
+hye	ひぇ	
+
+# --- yoon m-row extensions (myi, mye) ---
+myi	みぃ	
+mye	みぇ	
+
+# --- yoon r-row extensions (ryi, rye) ---
+ryi	りぃ	
+rye	りぇ	
+
+# --- yoon g-row extensions (gyi, gye) ---
+gyi	ぎぃ	
+gye	ぎぇ	
+
+# --- yoon z-row / j-row (zya/zyu/zyo/zye/zyi + ja/ju/je/jo) ---
+zya	じゃ	
+zyi	じぃ	
+zyu	じゅ	
+zye	じぇ	
+zyo	じょ	
+ja	じゃ	
+ju	じゅ	
+je	じぇ	
+jo	じょ	
+
+# --- yoon d-row (dya/dyi/dyu/dye/dyo) ---
+dya	ぢゃ	
+dyi	ぢぃ	
+dyu	ぢゅ	
+dye	ぢぇ	
+dyo	ぢょ	
+
+# --- yoon b-row (bya/byi/byu/bye/byo) ---
+bya	びゃ	
+byi	びぃ	
+byu	びゅ	
+bye	びぇ	
+byo	びょ	
+
+# --- yoon p-row (pya/pyi/pyu/pye/pyo) ---
+pya	ぴゃ	
+pyi	ぴぃ	
+pyu	ぴゅ	
+pye	ぴぇ	
+pyo	ぴょ	
+
+# --- extended gw-row (gwi, gwe, gwo) ---
+gwi	ぐぃ	
+gwe	ぐぇ	
+gwo	ぐぉ	
+
+# --- extended wh-row (whe, who) ---
+whe	うぇ	
+who	うぉ	
+
+# --- small-form x-prefixed kana (xya/xyu/xyo/xn/xwa/xtsu + lwa/ltsu) ---
+xya	ゃ	
+xyu	ゅ	
+xyo	ょ	
+xn	ん	
+xwa	ゎ	
+xtsu	っ	
+lwa	ゎ	
+ltsu	っ	

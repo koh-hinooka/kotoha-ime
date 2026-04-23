@@ -4,6 +4,7 @@
 //! `RomajiConverter::convert(input)` equals `(expected_committed, expected_pending)`
 //! for every non-comment, non-empty row.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -45,13 +46,31 @@ fn load_cases() -> Vec<Case> {
     cases
 }
 
+/// Ensures the golden fixture exercises every key declared in the
+/// `romaji::rules::RULES` table.
+///
+/// Without this cross-check, a newly added (or regressed) rule entry
+/// that lacks a fixture row would silently escape the
+/// `every_fixture_row_matches_converter` check, because that test
+/// only iterates the fixture — not the rule table. The check below
+/// turns the invariant "every RULES key has golden coverage" into a
+/// compile-and-run-time guard: any uncovered key is reported with
+/// its kana value to simplify adding the missing fixture row.
 #[test]
-fn fixture_has_at_least_200_cases() {
+fn every_rule_key_has_golden_coverage() {
     let cases = load_cases();
+    let fixture_inputs: HashSet<&str> = cases.iter().map(|c| c.input.as_str()).collect();
+    let rules = kotoha_core::__test_only_romaji_rules();
+    let missing: Vec<(&'static str, &'static str)> = rules
+        .iter()
+        .filter(|(k, _)| !fixture_inputs.contains(*k))
+        .copied()
+        .collect();
     assert!(
-        cases.len() >= 200,
-        "fixture must have >= 200 cases, got {}",
-        cases.len()
+        missing.is_empty(),
+        "{} rule key(s) missing from golden fixture (each entry is (romaji_key, expected_kana)): {:?}",
+        missing.len(),
+        missing
     );
 }
 
