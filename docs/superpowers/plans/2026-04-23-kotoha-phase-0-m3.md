@@ -39,7 +39,7 @@ M3 の工数見積は 3 日 (Spec §14) であり、project CLAUDE.md の Branch
 
 ## PR #1 — M3a: rules table + trie + state machine + RomajiConverter facade
 
-**Goal:** `RomajiConverter` 公開 API を完成させ、`RomajiConverter::convert("konnichiwa")` が `("こんにちは", "")` を返す状態にする。単体テスト 20 件が PASS する。
+**Goal:** `RomajiConverter` 公開 API を完成させ、`RomajiConverter::convert("konnnichiha")` が `("こんにちは", "")` を返す状態にする。また rule-faithful な動作として `RomajiConverter::convert("konnichiwa")` が `("こんいちわ", "")` を返すことも確認する。単体テスト 20 件が PASS する。
 
 ### M3a 完了条件
 
@@ -49,7 +49,8 @@ M3 の工数見積は 3 日 (Spec §14) であり、project CLAUDE.md の Branch
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` warnings ゼロ
 - [ ] `cargo fmt --all --check` diff ゼロ
 - [ ] lefthook pre-push 全 PASS
-- [ ] `RomajiConverter::convert("konnichiwa")` が `("こんにちは", "")` を返す
+- [ ] `RomajiConverter::convert("konnnichiha")` が `("こんにちは", "")` を返す(IME-standard typewriter-style 入力)
+- [ ] `RomajiConverter::convert("konnichiwa")` が `("こんいちわ", "")` を返す(rule-faithful な literal 変換)
 - [ ] WBS ログ `docs/wbs/2026-04-23-feature-N-kotoha-romaji-core.md` が develop に push 済み
 
 ### ファイル構成 (M3a)
@@ -113,7 +114,8 @@ gh issue create \
 ## Acceptance
 
 - \`cargo test -p kotoha-core --lib romaji\` passes 20+ tests
-- \`RomajiConverter::convert(\"konnichiwa\")\` returns \`(\"こんにちは\".to_string(), \"\".to_string())\`
+- \`RomajiConverter::convert(\"konnnichiha\")\` returns \`(\"こんにちは\".to_string(), \"\".to_string())\` (IME-standard typewriter-style input)
+- \`RomajiConverter::convert(\"konnichiwa\")\` returns \`(\"こんいちわ\".to_string(), \"\".to_string())\` (rule-faithful literal conversion; particle-position heuristics are out of Phase 0 scope)
 - clippy zero warnings, fmt clean
 
 ## Reference
@@ -974,11 +976,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn convert_konnichiwa() {
+    fn convert_konnnichiha_ime_standard() {
+        // IME-standard typewriter-style input: "konnnichiha" -> "こんにちは"
+        // (`nn` -> ん hatsuon, `ha` -> は particle key).
+        let c = RomajiConverter::new();
+        assert_eq!(
+            c.convert("konnnichiha"),
+            ("こんにちは".to_string(), "".to_string())
+        );
+    }
+
+    #[test]
+    fn convert_konnichiwa_rule_faithful() {
+        // Rule-faithful literal conversion: "konnichiwa" -> "こんいちわ"
+        // (`nn` consumes 2 chars as ん, `wa` -> わ). Particle-position heuristics
+        // that would turn `wa` into は are out of Phase 0 scope.
         let c = RomajiConverter::new();
         assert_eq!(
             c.convert("konnichiwa"),
-            ("こんにちは".to_string(), "".to_string())
+            ("こんいちわ".to_string(), "".to_string())
         );
     }
 
@@ -1033,10 +1049,11 @@ mod tests {
     }
 
     #[test]
-    fn push_stream_konnichiwa() {
+    fn push_stream_konnnichiha() {
+        // IME-standard typewriter-style stream input: "konnnichiha" -> "こんにちは".
         let mut c = RomajiConverter::new();
         let mut out = String::new();
-        for ch in "konnichiwa".chars() {
+        for ch in "konnnichiha".chars() {
             if let ConvertStep::Committed(s) = c.push(ch) {
                 out.push_str(&s);
             }
@@ -1132,7 +1149,7 @@ Run:
 cargo test -p kotoha-core --lib romaji::tests
 ```
 
-Expected: 16 passed (`convert_konnichiwa`、`convert_tsumugi`、`convert_n_apostrophe_ya`、`convert_nya_without_apostrophe`、`convert_trailing_consonant_is_pending`、`convert_empty_string`、`convert_sokuon_kka`、`convert_long_vowel`、`convert_does_not_mutate_self`、`push_stream_konnichiwa`、`push_returns_invalid_for_non_ascii`、`reset_clears_pending`、`flush_finalizes_lone_n_as_hatsuon`、`flush_returns_unresolvable_tail`、`flush_on_empty_buffer_is_empty`、`default_matches_new`)。
+Expected: 17 passed (`convert_konnnichiha_ime_standard`、`convert_konnichiwa_rule_faithful`、`convert_tsumugi`、`convert_n_apostrophe_ya`、`convert_nya_without_apostrophe`、`convert_trailing_consonant_is_pending`、`convert_empty_string`、`convert_sokuon_kka`、`convert_long_vowel`、`convert_does_not_mutate_self`、`push_stream_konnnichiha`、`push_returns_invalid_for_non_ascii`、`reset_clears_pending`、`flush_finalizes_lone_n_as_hatsuon`、`flush_returns_unresolvable_tail`、`flush_on_empty_buffer_is_empty`、`default_matches_new`)。
 
 - [ ] **Step 5: romaji モジュール全体のテストカウント確認**
 
@@ -1142,7 +1159,7 @@ Run:
 cargo test -p kotoha-core --lib romaji 2>&1 | tail -5
 ```
 
-Expected: `test result: ok. 33 passed; 0 failed` (trie 6 + state 11 + facade 16)。最低 20 件の目標 (spec §11.1 の romaji 分 20 件) を超過達成。
+Expected: `test result: ok. 34 passed; 0 failed` (trie 6 + state 11 + facade 17)。最低 20 件の目標 (spec §11.1 の romaji 分 20 件) を超過達成。
 
 - [ ] **Step 6: workspace 全体テスト**
 
@@ -1152,7 +1169,7 @@ Run:
 cargo test --workspace
 ```
 
-Expected: M2 の 23 件 + M3a の 33 件 = 56 件以上 PASS。
+Expected: M2 の 23 件 + M3a の 34 件 = 57 件以上 PASS。
 
 - [ ] **Step 7: clippy + fmt 確認**
 
@@ -1178,7 +1195,7 @@ git commit -m "feat(kotoha-core): add RomajiConverter public API
 - convert() is &self and does not mutate state (uses a temporary StateMachine)
 - flush() finalizes a lone 'n' as ん per spec §9
 - Default impl delegates to new()
-- 16 unit tests cover konnichiwa/tsumugi/n'ya/nya/sokuon/long-vowel,
+- 17 unit tests cover konnnichiha (IME-standard) / konnichiwa (rule-faithful) / tsumugi / n'ya / nya / sokuon / long-vowel,
   incremental push+flush workflow, reset semantics, invalid input
 - Re-exported as kotoha_core::{RomajiConverter, ConvertStep}"
 ```
@@ -1203,7 +1220,7 @@ Expected:
 - `manifest-check` PASS
 - `build` PASS
 - `clippy` PASS (warnings ゼロ)
-- `test` PASS (56 件以上)
+- `test` PASS (57 件以上)
 
 - [ ] **Step 2: push**
 
@@ -1233,9 +1250,9 @@ Phase 0 Milestone 3 (part A): implement the core romaji-to-kana conversion logic
 - \`state.rs\`: stream state machine with double-consonant sokuon and bare-n hatsuon special cases
 - \`mod.rs\`: \`RomajiConverter\` public facade with \`new/convert/push/reset/flush\` + \`ConvertStep\` enum
 - Re-exported as \`kotoha_core::{RomajiConverter, ConvertStep}\`
-- 33 unit tests (trie 6 + state 11 + facade 16) — exceeds the 20-test target
+- 34 unit tests (trie 6 + state 11 + facade 17) — exceeds the 20-test target
 
-\`RomajiConverter::convert(\"konnichiwa\")\` returns \`(\"こんにちは\", \"\")\` as required.
+\`RomajiConverter::convert(\"konnnichiha\")\` returns \`(\"こんにちは\", \"\")\` (IME-standard typewriter-style input). \`RomajiConverter::convert(\"konnichiwa\")\` returns \`(\"こんいちわ\", \"\")\` (rule-faithful literal conversion; particle-position heuristics are out of Phase 0 scope).
 
 ## Out of Scope
 
@@ -1252,11 +1269,12 @@ Phase 0 Milestone 3 (part A): implement the core romaji-to-kana conversion logic
 ## Test plan
 
 - [ ] cargo build --workspace passes
-- [ ] cargo test --workspace passes (56+ unit tests: 23 from M2 + 33 from M3a)
+- [ ] cargo test --workspace passes (57+ unit tests: 23 from M2 + 34 from M3a)
 - [ ] cargo clippy --workspace --all-targets -- -D warnings: zero warnings
 - [ ] cargo fmt --all --check: no diff
 - [ ] lefthook pre-push all commands PASS
-- [ ] RomajiConverter::convert("konnichiwa") == ("こんにちは", "")
+- [ ] RomajiConverter::convert("konnnichiha") == ("こんにちは", "") (IME-standard typewriter-style input)
+- [ ] RomajiConverter::convert("konnichiwa") == ("こんいちわ", "") (rule-faithful literal conversion)
 EOS
 )"
 ```
@@ -1329,7 +1347,7 @@ finished: 2026-04-XX
 - `crates/kotoha-core/src/romaji/state.rs` — stream state machine (sokuon + hatsuon 特殊処理)
 - `crates/kotoha-core/src/romaji/mod.rs` — `RomajiConverter` facade + `ConvertStep` enum
 - `crates/kotoha-core/src/lib.rs` — `pub mod romaji;` + `pub use romaji::{ConvertStep, RomajiConverter};`
-- 単体テスト 33 件 (trie 6 + state 11 + facade 16)
+- 単体テスト 34 件 (trie 6 + state 11 + facade 17)
 
 ## つまずき
 
@@ -1529,7 +1547,7 @@ Run:
 cargo test -p kotoha-core
 ```
 
-Expected: 56 件 (M2 の 23 + M3a の 33) PASS。
+Expected: 57 件 (M2 の 23 + M3a の 34) PASS。
 
 - [ ] **Step 5: commit**
 
@@ -1577,7 +1595,7 @@ Expected: 2 files changed。
 | 小字 (la/xa/ltu 等) | 15 |
 | 拡張音 (fa/va/tsa/kwa) | 20 |
 | pending 残り (kon → こ + n、kya 途中 ky → "" + ky 等) | 10 |
-| 長文複合 (konnichiwa、tsumugi、arigatou 等) | 10 |
+| 長文複合 (konnnichiha、tsumugi、arigatou 等) | 10 |
 
 - [ ] **Step 1: `crates/kotoha-core/tests/fixtures/` ディレクトリ作成**
 
@@ -1819,7 +1837,11 @@ tsuk	つ	k
 fuk	ふ	k
 
 # --- long composite (10) ---
-konnichiwa	こんにちは	
+# IME-standard typewriter-style input for "こんにちは" uses `ha` for the particle.
+konnnichiha	こんにちは	
+# Rule-faithful literal conversion of "konnichiwa" yields "こんいちわ"
+# (particle-position heuristics are out of Phase 0 scope).
+konnichiwa	こんいちわ	
 tsumugi	つむぎ	
 arigatou	ありがとう	
 sayounara	さようなら	
@@ -1859,7 +1881,7 @@ Covers vowels, gojuon, dakuten, handakuten, yoon, sokuon,
 hatsuon (including n'a / n'ya / nk-style non-vowel continuations),
 long vowel mark, punctuation symbols, small forms (la/xa/lya/ltu),
 extended sounds (fa/va/tsa/kwa/wha), mid-rule pending tails,
-and long composite words (konnichiwa / tsumugi / arigatou / etc.).
+and long composite words (konnnichiha / tsumugi / arigatou / etc.).
 
 Karukan-derived, Shift-specific rows omitted."
 ```
@@ -2321,12 +2343,13 @@ Spec §13 の M3 相当要件を以下のタスクが担保する:
 | Success criterion | 担保タスク |
 |---|---|
 | `cargo build --workspace` PASS | M3a-4 Step 6 + M3b-5 Step 1 |
-| `cargo test --workspace` PASS | M3a-4 Step 6 (56 件) + M3b-5 Step 1 (60+ 件) |
+| `cargo test --workspace` PASS | M3a-4 Step 6 (57 件) + M3b-5 Step 1 (60+ 件) |
 | `cargo clippy --workspace -- -D warnings` warnings ゼロ | M3a-4 Step 7 + M3b-5 Step 1 |
 | `cargo fmt --all --check` diff ゼロ | M3a-4 Step 7 + M3b-5 Step 1 |
 | lefthook pre-push 動作確認 | M3a-5 Step 1 + M3b-5 Step 2 |
-| `RomajiConverter::convert("konnichiwa")` が `("こんにちは", "")` を返す | M3a-4 Step 4 (`convert_konnichiwa` unit test) + M3b-3 (golden fixture `konnichiwa` row) |
-| romaji 単体テスト 20 件以上 | M3a-4 Step 5 で 33 件実装 |
+| `RomajiConverter::convert("konnnichiha")` が `("こんにちは", "")` を返す(IME-standard typewriter-style 入力) | M3a-4 Step 4 (`convert_konnnichiha_ime_standard` unit test) + M3b-3 (golden fixture `konnnichiha` row) |
+| `RomajiConverter::convert("konnichiwa")` が `("こんいちわ", "")` を返す(rule-faithful な literal 変換) | M3a-4 Step 4 (`convert_konnichiwa_rule_faithful` unit test) + M3b-3 (golden fixture `konnichiwa` row) |
+| romaji 単体テスト 20 件以上 | M3a-4 Step 5 で 34 件実装 |
 | golden test 200 件以上 | M3b-2 + M3b-3 で 220 件実装 |
 | property test 2 条件 PASS | M3b-4 で 2 条件実装 |
 
@@ -2342,7 +2365,7 @@ Spec §13 の M3 相当要件を以下のタスクが担保する:
 | §9 n-treatment | n + 母音 / n + 子音 / nn / n' の 4 パターン | M3a-3 (`push_bare_n_then_consonant_emits_hatsuon` / `push_nn_commits_n_explicitly` / `push_n_apostrophe_commits_n`)、M3a-4 (`convert_n_apostrophe_ya` / `convert_nya_without_apostrophe` / `flush_finalizes_lone_n_as_hatsuon`)、M3b-2 (hatsuon 15 ケース) |
 | §9 long vowel | `-` → `ー` | M3a-3 (`push_long_vowel_mark`)、M3a-4 (`convert_long_vowel`)、M3b-2 (long vowel セクション) |
 | §9 small forms | la/xa/lya/ltu 等 | M3a-1 (rules small-form escapes 区画)、M3b-2 (small forms 15 ケース) |
-| §11.1 単体テスト | 20 件以上 | M3a-2 + M3a-3 + M3a-4 で 33 件 |
+| §11.1 単体テスト | 20 件以上 | M3a-2 + M3a-3 + M3a-4 で 34 件 |
 | §11.2 golden test | 200 件以上 | M3b-2 + M3b-3 で 220 件 |
 | §11.3 property test | 冪等性 / 結合性 の 2 条件(spec §11.3 準拠) | M3b-4 (idempotence_on_committed / associativity) |
 
@@ -2367,6 +2390,7 @@ Spec §13 の M3 相当要件を以下のタスクが担保する:
 6. **修正した箇所**:
    - 初稿で TSV の `sha` 行を pending tails セクションに入れていたが、`sha` は完全な rule なので pending が空になる矛盾を発見 → `fuk` に差し替えた
    - property test は spec §11.3 revision 2 に合わせて 2 条件(冪等性 / 結合性)に絞り込んだ。本 plan の初稿で検討していた「pending-ASCII invariant」による第 3 プロパティは採用しない(詳細は Task M3b-4 冒頭および冒頭の addendum note を参照)
+   - **M3a-4 alignment (2026-04-23)**: M3a-1 で commit した rule table は Karukan 互換の 1:1 打鍵 → かな mapping を採用するため、literal な `konnichiwa` は rule-faithful に `こんいちわ` と変換される(`wa` rule で わ がそのまま出る)。一方、IME-standard typewriter-style convention(Mozc / Google IME / MS-IME)では「こんにちは」を入力するには `konnnichiha` と打鍵する(`nn` で ん の hatsuon、`ha` で particle の は)。旧 spec / 旧 plan は `konnichiwa → こんにちは` を前提としていたが、particle-position heuristics(`wa` → `は` の位置依存変換)は Phase 0 スコープ外のため、入力例を `konnnichiha → こんにちは`(IME-standard)と `konnichiwa → こんいちわ`(rule-faithful)の 2 本立てに修正した。該当箇所: spec §9.1(新設)、§11.2 TSV 例、§13.2 CLI 使用例 / 完了条件、plan M3a Goal / 完了条件 / ISSUE Acceptance / unit test(`convert_konnnichiha_ime_standard` + `convert_konnichiwa_rule_faithful` に分割)、PR body、TSV golden fixture、Success criteria 表。
 
 ---
 

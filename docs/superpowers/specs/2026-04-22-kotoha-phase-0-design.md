@@ -422,6 +422,14 @@ Phase 0 でカバーするローマ字変換規則:
 
 具体的なルール表は `src/romaji/rules.rs` に `const RULES: &[(&str, &str)]` の形で宣言する。初期ルールセットは Karukan の `karukan-engine/src/romaji/rules.rs` から移植する (MIT/Apache-2.0 ライセンス下で可能)。
 
+### 9.1 ローマ字入力 convention 注記
+
+本 IME の rule table は Karukan 互換の 1:1 打鍵 → かな mapping を採用する。particle の「は」は `ha` キー、「を」は `wo` キー、「へ」は `he` キーで入力する(Mozc / Google IME / MS-IME と同じ typewriter-style convention)。
+
+したがって、挨拶「こんにちは」を入力するには `konnnichiha` と打鍵する(`nn` で ん の hatsuon を 1 度挟み、`ha` で particle の は を出す)。literal な `konnichiwa` は rule-faithful に `こんいちわ` と変換される(`nn` rule で ん が 2 文字消費、`wa` で わ がそのまま出る)。
+
+particle の位置を見て `wa` → `は` に変換する heuristic は、かな漢字変換層(Phase 1 以降)の責務とする。Phase 0 の `RomajiConverter` は heuristic-free な pure rule transformer とする。
+
 ## 10. CLI 仕様
 
 Phase 0 の CLI `kotoha-romaji` は動作確認とデバッグが目的である。モード切替ロジック全体の網羅的検証は golden test / unit test に委ね、CLI は最小限の入出力ツールに徹する。
@@ -450,7 +458,7 @@ OPTIONS:
 
 ```bash
 # 基本: ひらがな変換
-$ echo "konnichiwa" | kotoha-romaji
+$ echo "konnnichiha" | kotoha-romaji
 こんにちは
 
 # Shift トリガ: 大文字入力で Transient Direct
@@ -458,7 +466,7 @@ $ echo "HELLO" | kotoha-romaji
 HELLO
 
 # 混在: Shift 後 Enter で自動復帰
-$ printf "Konnichiwa\nkonnichiwa\n" | kotoha-romaji
+$ printf "Konnichiwa\nkonnnichiha\n" | kotoha-romaji
 Konnichiwa
 こんにちは
 
@@ -519,9 +527,9 @@ hi [D]
 ```
 # columns: initial_mode TAB input TAB expected_output TAB final_mode
 # input / expected_output 内の改行は \n でエスケープ
-hiragana	konnichiwa	こんにちは	hiragana
+hiragana	konnnichiha	こんにちは	hiragana
 hiragana	HELLO	HELLO	hiragana
-hiragana	Konnichiwa\nkonnichiwa	Konnichiwa\nこんにちは	hiragana
+hiragana	Konnichiwa\nkonnnichiha	Konnichiwa\nこんにちは	hiragana
 direct	hello	hello	direct
 direct	hello\nworld	hello\nworld	direct
 ```
@@ -606,7 +614,7 @@ global CLAUDE.md の CI/CD Policy(GitHub Actions 禁止 + GCP Cloud Build Trigge
 
 ローマ字→かな変換 (既存):
 
-- [ ] `echo "konnichiwa" | kotoha-romaji` → `こんにちは`
+- [ ] `echo "konnnichiha" | kotoha-romaji` → `こんにちは`
 - [ ] `echo "tsumugi" | kotoha-romaji` → `つむぎ`
 - [ ] `echo "n'ya" | kotoha-romaji` → `んや`
 - [ ] `echo "nya" | kotoha-romaji` → `にゃ`
@@ -614,9 +622,9 @@ global CLAUDE.md の CI/CD Policy(GitHub Actions 禁止 + GCP Cloud Build Trigge
 モード管理 (新規):
 
 - [ ] **Shift トリガ**: `echo "HELLO" | kotoha-romaji` → `HELLO`
-- [ ] **Transient 自動復帰**: `printf "Ko\nkonnichiwa\n" | kotoha-romaji` が 1 行目 `Ko`、2 行目 `こんにちは`
+- [ ] **Transient 自動復帰**: `printf "Ko\nkonnnichiha\n" | kotoha-romaji` が 1 行目 `Ko`、2 行目 `こんにちは`
 - [ ] **Sticky Direct 持続**: `printf "hello\nworld\n" | kotoha-romaji --mode direct` が両行とも英字
-- [ ] **混在**: `printf "Konnichiwa\nkonnichiwa\n" | kotoha-romaji` が `Konnichiwa\nこんにちは`
+- [ ] **混在**: `printf "Konnichiwa\nkonnnichiha\n" | kotoha-romaji` が `Konnichiwa\nこんにちは`
 - [ ] **モード表示**: `echo "Hi" | kotoha-romaji --show-mode` が `Hi [H]`
 - [ ] **Sticky モード表示**: `echo "hi" | kotoha-romaji --mode direct --show-mode` が `hi [D]`
 
