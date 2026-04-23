@@ -86,6 +86,9 @@ impl RomajiConverter {
     /// # Postconditions
     /// - `self`'s pending buffer is unchanged.
     /// - The returned `pending` string contains only ASCII chars.
+    /// - The returned `pending` string is in a stable form: it is either empty
+    ///   or a trie partial prefix. Re-feeding it to [`Self::convert`] yields
+    ///   `("", pending)` again (idempotence). See ISSUE #23.
     ///
     /// # Examples
     /// ```
@@ -108,6 +111,11 @@ impl RomajiConverter {
                 PushResult::Invalid(_) => {}
             }
         }
+        // Normalize the terminal buffer so the returned `pending` is idempotent
+        // under a fresh `convert` call. Without this step, partial-then-invalid
+        // transitions (e.g. "byb" → "yb") leak unstable pending values, breaking
+        // associativity. See ISSUE #23.
+        out.push_str(&tmp.normalize());
         let pending = tmp.take_buffer();
         (out, pending)
     }
@@ -323,5 +331,37 @@ mod tests {
         let a = RomajiConverter::default();
         let b = RomajiConverter::new();
         assert_eq!(a.convert("a"), b.convert("a"));
+    }
+
+    #[test]
+    fn convert_byb_returns_stable_pending() {
+        // Regression for #23: convert("byb") previously returned ("", "yb"),
+        // but convert("yb") returns ("", "b"), violating associativity.
+        // After the fix, convert("byb") should return ("", "b") directly.
+        let c = RomajiConverter::new();
+        assert_eq!(c.convert("byb"), ("".to_string(), "b".to_string()));
+    }
+
+    #[test]
+    fn convert_pending_is_idempotent_under_reconvert() {
+        // Property-style regression for #23: for any input, re-converting the
+        // pending buffer returned by convert should yield the same pending
+        // (with empty committed prefix). Test on a handful of previously-fragile
+        // alphabet inputs.
+        let c = RomajiConverter::new();
+        for input in ["byb", "kyk", "byk", "abb"].iter() {
+            let (_, pending) = c.convert(input);
+            let (committed2, pending2) = c.convert(&pending);
+            assert_eq!(
+                committed2, "",
+                "re-converting {:?} pending={:?} should emit no new committed",
+                input, pending
+            );
+            assert_eq!(
+                pending2, pending,
+                "re-converting {:?} pending={:?} should stabilize",
+                input, pending
+            );
+        }
     }
 }
