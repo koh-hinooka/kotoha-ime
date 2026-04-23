@@ -16,6 +16,10 @@ pre-commit:
     doc-naming:
       glob: "{docs/**/*.md,CLAUDE.md,**/CLAUDE.md}"
       run: ./scripts/pre-commit-doc-naming.sh
+    # pre-commit-doc-naming.sh の awk ロジック (特に mawk での exit code 挙動) が
+    # サイレントに壊れていた経緯があるため、常時自己テストを走らせて再発を防ぐ。
+    doc-naming-self-test:
+      run: bash ./scripts/tests/test-doc-naming.sh
 
 pre-push:
   parallel: false

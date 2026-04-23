@@ -108,13 +108,20 @@ check_claude_md_progress() {
       echo "エラー: git diff --cached -- $file が失敗しました" >&2
       exit 1
     }
+    # mawk (Ubuntu/Debian 標準) では、ブロック内の `exit 0` の後でも END ブロックが
+    # 実行され、その END が `exit 1` を返すと違反シグナルが上書きされてしまう。
+    # gawk / mawk 双方で同じ挙動になる `found=1 ... exit !found` パターンを採用する。
+    #
+    # TOC 除外: 目次やインラインリンクの行 `- [ラベル](#アンカー)` は進捗情報では
+    # ないためフィルタで弾く。括弧内がちょうど `[...](#...)` の形をとる場合に限定し、
+    # `[x]` / `[ ]` のチェックボックス検出を壊さないよう注意する。
     if echo "$diff_output" | LC_ALL=C.UTF-8 awk '
-      /^\+/ && !/^\+\+\+/ && !/→/ {
+      /^\+/ && !/^\+\+\+/ && !/→/ && !/^\+[[:space:]]*-?[[:space:]]*\[[^][]+\]\(#[^()]+\)[[:space:]]*$/ {
         gsub(/`[^`]*`/, "")
         line = tolower($0)
-        if (line ~ /(todo|wbs|進捗|タスク一覧|完了率|[0-9]+%|■|□|☑|☐|\[x\]|\[ \])/) exit 0
+        if (line ~ /(todo|wbs|進捗|タスク一覧|完了率|[0-9]+%|■|□|☑|☐|\[x\]|\[ \])/) found = 1
       }
-      END { exit 1 }
+      END { exit !found }
     '; then
       ERRORS+=("CLAUDE.mdに進捗情報の疑い: $file (進捗管理はdocs/wbs/を使用してください)")
     fi
