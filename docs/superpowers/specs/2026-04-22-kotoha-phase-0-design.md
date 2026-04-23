@@ -430,6 +430,16 @@ Phase 0 でカバーするローマ字変換規則:
 
 particle の位置を見て `wa` → `は` に変換する heuristic は、かな漢字変換層(Phase 1 以降)の責務とする。Phase 0 の `RomajiConverter` は heuristic-free な pure rule transformer とする。
 
+### 9.2 非 ASCII 入力の取り扱い
+
+`StateMachine::push` は先頭ガードにより非 ASCII 文字 (`ch.is_ascii() == false`) を受け取ると、内部バッファを変更せず `PushResult::Invalid(ch)` を返す。`RomajiConverter::convert` / `push` / `flush` はこの挙動を継承する。
+
+この決定の normative 根拠と代替選択肢は `docs/adr/0001-non-ascii-retraction-policy.md` を参照のこと。要約:
+
+- `RomajiConverter::convert` は「ASCII ローマ字 → かな」の変換関数であり、非 ASCII 入力は契約外である。
+- かな出力を再度 `convert` に通しても、非 ASCII 文字はすべて drop されるため、新たな romaji pending は生成されない (property test `prop_idempotence_on_committed` の弱化形不変条件)。
+- 強い retraction `convert(convert(x).committed).committed == convert(x).committed` は契約外とし、上位層 (かな漢字変換層) でもこの再入力を前提とした設計は避ける。
+
 ## 10. CLI 仕様
 
 Phase 0 の CLI `kotoha-romaji` は動作確認とデバッグが目的である。モード切替ロジック全体の網羅的検証は golden test / unit test に委ね、CLI は最小限の入出力ツールに徹する。
