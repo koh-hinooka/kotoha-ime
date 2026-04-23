@@ -14,9 +14,17 @@
 /// Romaji → kana rule entries.
 ///
 /// # Invariants
-/// - Every key contains only ASCII bytes
-/// - Every value contains only valid hiragana code points (plus `ー` for long vowels)
-/// - Entries are unique on the key (no two entries share the same romaji sequence)
+/// - Every key is a non-empty ASCII byte string (enforced by
+///   `rules_keys_are_all_ascii`).
+/// - Keys are unique across the table (enforced by `rules_keys_are_unique`).
+/// - Every value character is drawn from one of: the hiragana block
+///   (U+3041..=U+309F), the katakana-block long-vowel mark ー (U+30FC)
+///   and separator ・ (U+30FB), CJK Symbols and Punctuation
+///   (U+3000..=U+303F, e.g. 、。「」), the fullwidth ASCII punctuation
+///   subset (U+FF01..=U+FF5E, e.g. ！？), or the two ASCII passthroughs
+///   `!` (U+0021) and `?` (U+003F) that the current table preserves in
+///   their halfwidth form. This is enforced by
+///   `rules_values_are_valid_kana_or_punctuation`.
 pub(crate) const RULES: &[(&str, &str)] = &[
     // ----- basic gojuon (5 vowels + 45 CV + n) -----
     ("a", "あ"),
@@ -236,3 +244,75 @@ pub(crate) const RULES: &[(&str, &str)] = &[
     ("]", "」"),
     ("/", "・"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::RULES;
+    use std::collections::HashSet;
+
+    /// Invariant: every rule key must be pure ASCII (the state machine
+    /// guards on this at the input layer; here we enforce it at build time).
+    #[test]
+    fn rules_keys_are_all_ascii() {
+        for (key, _) in RULES.iter() {
+            assert!(!key.is_empty(), "rule with empty key is not allowed");
+            assert!(
+                key.is_ascii(),
+                "rule key {:?} contains non-ASCII characters",
+                key
+            );
+        }
+    }
+
+    /// Invariant: rule keys are unique. Duplicates would silently overwrite
+    /// each other in the trie, masking the earlier entry.
+    #[test]
+    fn rules_keys_are_unique() {
+        let keys: HashSet<&str> = RULES.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            keys.len(),
+            RULES.len(),
+            "duplicate rule key detected (RULES has {} entries but {} unique keys)",
+            RULES.len(),
+            keys.len()
+        );
+    }
+
+    /// Invariant: every rule value contains only characters from one of:
+    /// - Hiragana block: U+3041..=U+309F
+    /// - Katakana block punctuation: U+30FB (・), and the long-vowel mark U+30FC (ー)
+    /// - CJK Symbols and Punctuation: U+3000..=U+303F (、。「」etc.)
+    /// - Fullwidth ASCII punctuation subset: U+FF01..=U+FF5E (！？etc.)
+    /// - ASCII punctuation retained as-is: `!` (U+0021) and `?` (U+003F)
+    ///
+    /// Phase 0 does not emit katakana kana themselves, only the `ー` long-vowel
+    /// mark and `・` separator from the katakana block. The two ASCII
+    /// punctuation passthroughs (`!` and `?`) match the existing rule table,
+    /// which intentionally preserves halfwidth `!?` rather than converting to
+    /// their fullwidth forms.
+    #[test]
+    fn rules_values_are_valid_kana_or_punctuation() {
+        for (key, value) in RULES.iter() {
+            for ch in value.chars() {
+                let code = ch as u32;
+                let in_hiragana = (0x3041..=0x309F).contains(&code);
+                let is_long_mark_or_dot = code == 0x30FC || code == 0x30FB;
+                let is_cjk_punctuation = (0x3000..=0x303F).contains(&code);
+                let is_fullwidth_ascii_punctuation = (0xFF01..=0xFF5E).contains(&code);
+                let is_ascii_passthrough = code == 0x0021 || code == 0x003F;
+                assert!(
+                    in_hiragana
+                        || is_long_mark_or_dot
+                        || is_cjk_punctuation
+                        || is_fullwidth_ascii_punctuation
+                        || is_ascii_passthrough,
+                    "rule ({:?} -> {:?}) contains char {:?} (U+{:04X}) outside the allowed value ranges",
+                    key,
+                    value,
+                    ch,
+                    code
+                );
+            }
+        }
+    }
+}

@@ -12,6 +12,8 @@ pub(crate) mod rules;
 pub(crate) mod state;
 pub(crate) mod trie;
 
+use std::borrow::Cow;
+
 use crate::romaji::state::{PushResult, StateMachine};
 
 /// Outcome of a single-char [`RomajiConverter::push`] call.
@@ -19,11 +21,15 @@ use crate::romaji::state::{PushResult, StateMachine};
 /// Marked `#[non_exhaustive]` so additional variants may be introduced
 /// (for example a future "emitted punctuation" or "would-commit-on-flush"
 /// outcome) without breaking external match sites.
+///
+/// Use `Cow<'static, str>` so that common commit values (from the static
+/// rule table) are zero-allocation. Rarely-needed owned strings (from
+/// future computed-commit paths) go through `Cow::Owned`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConvertStep {
     /// Some kana was committed in this step. Contains the newly committed kana.
-    Committed(String),
+    Committed(Cow<'static, str>),
     /// The char was absorbed into the pending buffer; nothing committed.
     Pending,
     /// The char is outside the supported alphabet here and was discarded.
@@ -289,7 +295,7 @@ mod tests {
         assert_eq!(c.push('k'), ConvertStep::Pending);
         c.reset();
         // After reset, pushing 'a' commits 'あ' not 'か'.
-        assert_eq!(c.push('a'), ConvertStep::Committed("あ".to_string()));
+        assert_eq!(c.push('a'), ConvertStep::Committed(Cow::Borrowed("あ")));
     }
 
     #[test]

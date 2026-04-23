@@ -4,6 +4,14 @@
 //! [`crate::romaji::trie::Trie`] after each pushed char. Special cases that
 //! cannot be expressed in the trie (double-consonant sokuon, bare `n` followed
 //! by non-vowel → hatsuon) are handled here.
+//!
+//! The pending-buffer backtrack rule implemented in [`StateMachine::settle`]
+//! (sokuon double-consonant, bare-`n` hatsuon, single-char invalid peel-off)
+//! is currently documented only in this module's source. See ISSUE #15 for
+//! the tracking of a normative description in the project spec
+//! (§9.1 / §9.2 pending-buffer backtrack rule).
+
+use std::borrow::Cow;
 
 use crate::romaji::trie::{Lookup, Trie};
 
@@ -15,7 +23,12 @@ use crate::romaji::trie::{Lookup, Trie};
 #[non_exhaustive]
 pub(crate) enum PushResult {
     /// Some kana was committed this step. Contains the newly committed kana.
-    Committed(String),
+    ///
+    /// Uses `Cow<'static, str>` so that common commit values (coming from the
+    /// static rule table and the `"っ"` / `"ん"` literals) are zero-allocation.
+    /// Rarely-needed owned strings (from future computed-commit paths, should
+    /// any appear) would go through `Cow::Owned`.
+    Committed(Cow<'static, str>),
     /// The input was absorbed into the pending buffer; nothing committed yet.
     Pending,
     /// The input was rejected (no rule or prefix matches this char here).
@@ -106,12 +119,21 @@ impl StateMachine {
     /// Panics if called with an empty `self.buffer`. The fallback branch
     /// reads the leading char via `chars().next().expect(..)`, which relies
     /// on the precondition above.
+    ///
+    /// # Normative spec
+    /// The backtrack rule implemented here (sokuon double-consonant,
+    /// bare-`n` hatsuon, single-char invalid peel-off) is currently
+    /// documented only in this function's source. A normative description
+    /// for the project spec is tracked in ISSUE #15 (spec §9.1 / §9.2
+    /// pending-buffer backtrack rule). Do not change this function's
+    /// behavior without updating the plan to match.
     fn settle(&mut self) -> PushResult {
         match self.trie.lookup(&self.buffer) {
             Lookup::Match(kana) => {
-                let out = kana.to_string();
+                // `kana` is `&'static str` from the rule table, so the Cow
+                // stays Borrowed and no allocation takes place.
                 self.buffer.clear();
-                PushResult::Committed(out)
+                PushResult::Committed(Cow::Borrowed(kana))
             }
             Lookup::Partial => PushResult::Pending,
             Lookup::None => {
@@ -124,14 +146,14 @@ impl StateMachine {
                     // Double-consonant sokuon: e.g. "kk" → commit っ, keep "k".
                     if is_sokuon_consonant(first) && first == second {
                         self.buffer.remove(0);
-                        return PushResult::Committed("っ".to_string());
+                        return PushResult::Committed(Cow::Borrowed("っ"));
                     }
 
                     // Bare n followed by non-vowel, non-y, non-n, non-':
                     // commit ん, keep the second char for the next push.
                     if first == b'n' && !is_n_continuation(second) {
                         self.buffer.remove(0);
-                        return PushResult::Committed("ん".to_string());
+                        return PushResult::Committed(Cow::Borrowed("ん"));
                     }
                 }
                 // Fallback: drop the leading char as invalid.
@@ -179,7 +201,7 @@ mod tests {
     #[test]
     fn push_single_vowel_commits_immediately() {
         let mut sm = StateMachine::new();
-        assert_eq!(sm.push('a'), PushResult::Committed("あ".to_string()));
+        assert_eq!(sm.push('a'), PushResult::Committed(Cow::Borrowed("あ")));
         assert_eq!(sm.buffer(), "");
     }
 
@@ -188,7 +210,7 @@ mod tests {
         let mut sm = StateMachine::new();
         assert_eq!(sm.push('k'), PushResult::Pending);
         assert_eq!(sm.buffer(), "k");
-        assert_eq!(sm.push('a'), PushResult::Committed("か".to_string()));
+        assert_eq!(sm.push('a'), PushResult::Committed(Cow::Borrowed("か")));
         assert_eq!(sm.buffer(), "");
     }
 
@@ -197,7 +219,7 @@ mod tests {
         let mut sm = StateMachine::new();
         assert_eq!(sm.push('k'), PushResult::Pending);
         assert_eq!(sm.push('y'), PushResult::Pending);
-        assert_eq!(sm.push('a'), PushResult::Committed("きゃ".to_string()));
+        assert_eq!(sm.push('a'), PushResult::Committed(Cow::Borrowed("きゃ")));
     }
 
     #[test]
@@ -205,9 +227,9 @@ mod tests {
         let mut sm = StateMachine::new();
         assert_eq!(sm.push('k'), PushResult::Pending);
         // Second 'k' triggers sokuon: commit っ, keep one 'k' pending.
-        assert_eq!(sm.push('k'), PushResult::Committed("っ".to_string()));
+        assert_eq!(sm.push('k'), PushResult::Committed(Cow::Borrowed("っ")));
         assert_eq!(sm.buffer(), "k");
-        assert_eq!(sm.push('a'), PushResult::Committed("か".to_string()));
+        assert_eq!(sm.push('a'), PushResult::Committed(Cow::Borrowed("か")));
     }
 
     #[test]
@@ -216,7 +238,7 @@ mod tests {
         assert_eq!(sm.push('n'), PushResult::Pending);
         // 'k' is not in the n-continuation set and "nk" is not a trie prefix →
         // commit ん, keep 'k'.
-        assert_eq!(sm.push('k'), PushResult::Committed("ん".to_string()));
+        assert_eq!(sm.push('k'), PushResult::Committed(Cow::Borrowed("ん")));
         assert_eq!(sm.buffer(), "k");
     }
 
@@ -225,7 +247,7 @@ mod tests {
         let mut sm = StateMachine::new();
         assert_eq!(sm.push('n'), PushResult::Pending);
         // "nn" is an explicit rule → commit ん, buffer empty.
-        assert_eq!(sm.push('n'), PushResult::Committed("ん".to_string()));
+        assert_eq!(sm.push('n'), PushResult::Committed(Cow::Borrowed("ん")));
         assert_eq!(sm.buffer(), "");
     }
 
@@ -234,14 +256,14 @@ mod tests {
         let mut sm = StateMachine::new();
         assert_eq!(sm.push('n'), PushResult::Pending);
         // "n'" is an explicit rule → commit ん.
-        assert_eq!(sm.push('\''), PushResult::Committed("ん".to_string()));
+        assert_eq!(sm.push('\''), PushResult::Committed(Cow::Borrowed("ん")));
         assert_eq!(sm.buffer(), "");
     }
 
     #[test]
     fn push_long_vowel_mark() {
         let mut sm = StateMachine::new();
-        assert_eq!(sm.push('-'), PushResult::Committed("ー".to_string()));
+        assert_eq!(sm.push('-'), PushResult::Committed(Cow::Borrowed("ー")));
     }
 
     #[test]
