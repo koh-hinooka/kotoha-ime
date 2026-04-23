@@ -9,5 +9,5 @@ pub mod kana;
 pub mod romaji;
 
 pub use error::{Error, Result};
-pub use input::InputMode;
+pub use input::{InputContext, InputMode, InputStep};
 pub use romaji::{ConvertStep, RomajiConverter};
