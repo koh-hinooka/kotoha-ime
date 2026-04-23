@@ -1,0 +1,16 @@
+# Kotoha input mode golden fixture — Karukan differential (10 cases)
+# Format: initial_mode<TAB>input<TAB>expected_output<TAB>final_mode
+# Each row documents a case where Kotoha's Transient auto-return differs from
+# Karukan's Sticky-by-default behavior. ADR 0002 / spec §8.5 pin the rationale.
+# Inline trailing '# ...' comments are stripped by the runner.
+
+hiragana	A\nkon\n	A\nこん\n	hiragana	# Kotoha: Transient Direct on 'A' auto-returns after \n. Karukan would stay Direct, yielding A\nkon\n.
+hiragana	H\nhiragana\n	H\nひらがな\n	hiragana	# After H commits, Kotoha resumes Hiragana. Karukan would output H\nhiragana (all direct).
+hiragana	Hi\nkonnnichiha\n	Hi\nこんにちは\n	hiragana	# Single-word greeting flow; Karukan would require explicit toggle after "Hi".
+hiragana	URL\nwatashi\n	URL\nわたし\n	hiragana	# 3-letter uppercase token; Karukan would leave Direct after URL and output URL\nwatashi.
+hiragana	Hi\nHELLO\nkonnnichiha\n	Hi\nHELLO\nこんにちは\n	hiragana	# Multiple Shift-trigger segments interleaved with Hiragana resumption; Karukan would stay Direct after the first Hi.
+hiragana	Ko\nka\n	Ko\nか\n	hiragana	# Capitalized token followed by lowercase romaji; Karukan would output Ko\nka (ka stays direct).
+hiragana	X\ny\n	X\ny\n	hiragana	# After X commits Kotoha returns to Hiragana-Sticky; 'y' enters the romaji buffer as a partial prefix and flush preserves it. The observable line output coincides with Karukan's Direct-y output, but Kotoha's final mode is Hiragana while Karukan would still be Direct — next input would diverge.
+hiragana	Q\n\nka\n	Q\n\nか\n	hiragana	# Empty line between Shift-trigger and Hiragana input still auto-returns on the first \n. Karukan would need explicit toggle.
+hiragana	Sakura\n	Sakura\n	hiragana	# Capitalized noun remains all-Direct in both Kotoha and Karukan within the line, but Kotoha returns to Hiragana after \n.
+hiragana	Abc\nka\n	Abc\nか\n	hiragana	# After Abc commits and auto-returns, 'ka' → か. Karukan would output Abc\nka with 'ka' still in direct mode.

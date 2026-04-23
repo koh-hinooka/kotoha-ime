@@ -1,0 +1,97 @@
+# Kotoha input mode golden fixture (70 cases)
+# Format: initial_mode<TAB>input<TAB>expected_output<TAB>final_mode
+# Columns are TAB-separated. '\n' inside input / expected_output means a commit() boundary.
+# Comments start with '#'. Empty lines are ignored.
+# See spec §11.2 coverage table and ADR 0002 for the normative behavior.
+
+# --- category 1: Sticky Hiragana basic (10) ---
+hiragana	a\n	あ\n	hiragana
+hiragana	ka\n	か\n	hiragana
+hiragana	kya\n	きゃ\n	hiragana
+hiragana	konnnichiha\n	こんにちは\n	hiragana
+hiragana	tsumugi\n	つむぎ\n	hiragana
+hiragana	arigatou\n	ありがとう\n	hiragana
+hiragana	n'ya\n	んや\n	hiragana
+hiragana	kka\n	っか\n	hiragana
+hiragana	sakura\n	さくら\n	hiragana
+hiragana	-a-\n	ーあー\n	hiragana
+
+# --- category 2: Shift trigger single (15) ---
+hiragana	A\n	A\n	hiragana
+hiragana	H\n	H\n	hiragana
+hiragana	Z\n	Z\n	hiragana
+hiragana	Hi\n	Hi\n	hiragana
+hiragana	Ab\n	Ab\n	hiragana
+hiragana	Kon\n	Kon\n	hiragana
+hiragana	HELLO\n	HELLO\n	hiragana
+hiragana	World\n	World\n	hiragana
+hiragana	ABC\n	ABC\n	hiragana
+hiragana	X1\n	X1\n	hiragana
+hiragana	X-Y\n	X-Y\n	hiragana
+hiragana	A!\n	A!\n	hiragana
+hiragana	Qx\n	Qx\n	hiragana
+hiragana	Ja\n	Ja\n	hiragana
+hiragana	Za\n	Za\n	hiragana
+
+# --- category 3: Transient auto-return (10) ---
+hiragana	Hi\nkonnnichiha\n	Hi\nこんにちは\n	hiragana
+hiragana	Konnichiwa\nkonnnichiha\n	Konnichiwa\nこんにちは\n	hiragana
+hiragana	A\nka\n	A\nか\n	hiragana
+hiragana	Hi\nhi\n	Hi\nひ\n	hiragana
+hiragana	HELLO\narigatou\n	HELLO\nありがとう\n	hiragana
+hiragana	X\nya\n	X\nや\n	hiragana
+hiragana	Ab\ntsumugi\n	Ab\nつむぎ\n	hiragana
+hiragana	Konbanwa\nsakura\n	Konbanwa\nさくら\n	hiragana
+hiragana	Q\nkya\n	Q\nきゃ\n	hiragana
+hiragana	Wayland\nka\n	Wayland\nか\n	hiragana
+
+# --- category 4: Sticky Direct persistence (10) ---
+direct	hello\n	hello\n	direct
+direct	world\n	world\n	direct
+direct	hello\nworld\n	hello\nworld\n	direct
+direct	abc123\n	abc123\n	direct
+direct	Hi\n	Hi\n	direct
+direct	HELLO\n	HELLO\n	direct
+direct	foo\nbar\nbaz\n	foo\nbar\nbaz\n	direct
+direct	a-b-c\n	a-b-c\n	direct
+direct	x!y?\n	x!y?\n	direct
+direct	MixedCase\n	MixedCase\n	direct
+
+# --- category 5: toggle transitions (10) ---
+# Mode changes recorded in final_mode.
+hiragana	ka\n	か\n	hiragana
+direct	abc\n	abc\n	direct
+hiragana	\n	\n	hiragana
+direct	\n	\n	direct
+hiragana	a\nb\nc\n	あ\nb\nc\n	hiragana
+direct	a\nb\nc\n	a\nb\nc\n	direct
+hiragana	ko\n	こ\n	hiragana
+direct	KO\n	KO\n	direct
+hiragana	ku\nke\nko\n	く\nけ\nこ\n	hiragana
+direct	ku\nke\nko\n	ku\nke\nko\n	direct
+
+# --- category 6: Transient→Sticky promotion (5, default flag=false) ---
+# With flag=false (Phase 0 default), a toggle in Transient falls back to Hiragana.
+# The runner drives toggle_mode via the TSV convention: any letter 'T' alone
+# (uppercase T not followed by other chars before \n) is treated as Shift trigger
+# only (not as toggle). There is no toggle representation inside the input string
+# at Phase 0; these rows exercise the Transient→commit auto-return path instead,
+# which is the primary observable consequence of the (Transient, flag=false)
+# policy.
+hiragana	T\nka\n	T\nか\n	hiragana
+hiragana	T\nki\n	T\nき\n	hiragana
+hiragana	T\nku\n	T\nく\n	hiragana
+hiragana	T\nke\n	T\nけ\n	hiragana
+hiragana	T\nko\n	T\nこ\n	hiragana
+
+# --- category 7: edge cases (10) ---
+hiragana	\n	\n	hiragana
+hiragana	\n\n\n	\n\n\n	hiragana
+hiragana	a\n\n\n	あ\n\n\n	hiragana
+hiragana	kon\n	こん\n	hiragana
+hiragana	n\n	ん\n	hiragana
+hiragana	k\n	k\n	hiragana
+hiragana	by\n	by\n	hiragana
+hiragana	ky\n	ky\n	hiragana
+hiragana	kkkkka\n	っっっっか\n	hiragana
+hiragana	!?.,\n	!?。、\n	hiragana
