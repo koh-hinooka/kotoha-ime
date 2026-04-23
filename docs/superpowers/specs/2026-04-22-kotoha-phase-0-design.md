@@ -403,7 +403,7 @@ fn toggle_mode(&mut self) {
 - **Karukan**: Shift 由来のモードは Sticky 相当で、ユーザが明示的に戻さない限り持続 → 使い手の期待を裏切る
 - **Kotoha**: Shift 由来は Transient。Enter 確定で `(Hiragana, Sticky)` に自動復帰 → 使い手が "1 確定ごとに意識せずモードが戻る" 体験
 
-この判断は `docs/adr/0001-input-mode-transient-vs-sticky.md` に記録する。
+この判断は `docs/adr/0002-input-mode-transient-vs-sticky.md` に記録する。
 
 ## 9. 変換ルール
 
@@ -642,9 +642,9 @@ global CLAUDE.md の CI/CD Policy(GitHub Actions 禁止 + GCP Cloud Build Trigge
 
 ### 13.3 ドキュメント成果物
 
-- [ ] `docs/adr/0001-input-mode-transient-vs-sticky.md` (Transient/Sticky 2 軸モデルの根拠)
-- [ ] `docs/adr/0002-shift-via-uppercase-char.md` (Shift = 大文字表現の限界と採用根拠)
-- [ ] `docs/adr/0003-cli-line-based-commit.md` (行単位 commit 抽象化の根拠)
+- [ ] `docs/adr/0002-input-mode-transient-vs-sticky.md` (Transient/Sticky 2 軸モデルの根拠)
+- [ ] `docs/adr/0003-shift-via-uppercase-char.md` (Shift = 大文字表現の限界と採用根拠)
+- [ ] `docs/adr/0004-cli-line-based-commit.md` (行単位 commit 抽象化の根拠)
 - [ ] 本設計書末尾に付録 "Phase 3 想定インタフェース" 記載済み
 - [ ] `docs/ROADMAP.md` に Phase 1〜6 の骨組み記載 (Phase 5 から「Shift 挙動設定」除去済み)
 - [ ] `docs/wbs/2026-04-XX-feature-NN-kotoha-phase-0.md` に実装ログ
