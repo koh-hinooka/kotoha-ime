@@ -29,7 +29,7 @@ use proptest::prelude::*;
 /// yield stable pending states that make the two properties well-defined
 /// on the current M3a implementation.
 fn romaji_input() -> impl Strategy<Value = String> {
-    "[aeioun]{0,12}".prop_map(|s| s)
+    "[aeioun]{0,12}"
 }
 
 proptest! {
@@ -69,7 +69,19 @@ proptest! {
         let (right_committed, right_pending) = c.convert(&glued);
 
         let reconstructed = format!("{}{}", left_committed, right_committed);
-        prop_assert_eq!(reconstructed, whole_committed);
-        prop_assert_eq!(right_pending, whole_pending);
+        prop_assert_eq!(
+            &reconstructed,
+            &whole_committed,
+            "committed mismatch; a={:?}, b={:?}",
+            a,
+            b
+        );
+        prop_assert_eq!(
+            &right_pending,
+            &whole_pending,
+            "pending mismatch; a={:?}, b={:?}",
+            a,
+            b
+        );
     }
 }
