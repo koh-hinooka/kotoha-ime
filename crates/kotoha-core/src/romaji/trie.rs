@@ -7,6 +7,8 @@
 //! - no match and no prefix (`Lookup::None`)
 //!
 //! Consumed by [`crate::romaji::state::StateMachine`].
+//!
+//! 設計判断根拠: `docs/adr/0005-romaji-trie-over-hashmap.md`。
 
 use std::collections::HashMap;
 
