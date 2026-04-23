@@ -110,11 +110,15 @@ impl RomajiConverter {
                 PushResult::Pending => {}
                 PushResult::Invalid(_) => {}
             }
+            // Mid-stream normalize: settle may leave a residue in the buffer
+            // (e.g. after dropping a leading Invalid char), and that residue
+            // can itself be a complete rule (e.g. "!") that would otherwise
+            // be lost on the next push. See ISSUE #29.
+            out.push_str(&tmp.normalize());
         }
-        // Normalize the terminal buffer so the returned `pending` is idempotent
-        // under a fresh `convert` call. Without this step, partial-then-invalid
-        // transitions (e.g. "byb" → "yb") leak unstable pending values, breaking
-        // associativity. See ISSUE #23.
+        // EOF normalize is now redundant (the loop above keeps the buffer
+        // stable after every push) but kept as defense-in-depth. See ISSUE
+        // #23 for the original buffer-normalization rationale.
         out.push_str(&tmp.normalize());
         let pending = tmp.take_buffer();
         (out, pending)
@@ -441,5 +445,44 @@ mod tests {
                 input, pending
             );
         }
+    }
+
+    #[test]
+    fn convert_commits_punctuation_after_partial_invalid_transition() {
+        // Regression for #29: a partial consonant followed by punctuation
+        // followed by a vowel should commit the punctuation, not drop it.
+        // Before the fix: "b!a" returned ("あ", "") — the "!" was silently dropped
+        // because the mid-stream residue wasn't normalized.
+        let c = RomajiConverter::new();
+        assert_eq!(c.convert("b!a"), ("!あ".to_string(), "".to_string()));
+        assert_eq!(c.convert("b?a"), ("?あ".to_string(), "".to_string()));
+        assert_eq!(c.convert("b.a"), ("。あ".to_string(), "".to_string()));
+        assert_eq!(c.convert("b,a"), ("、あ".to_string(), "".to_string()));
+        assert_eq!(c.convert("b-a"), ("ーあ".to_string(), "".to_string()));
+        assert_eq!(c.convert("b/a"), ("・あ".to_string(), "".to_string()));
+        assert_eq!(c.convert("b[a"), ("「あ".to_string(), "".to_string()));
+        assert_eq!(c.convert("b]a"), ("」あ".to_string(), "".to_string()));
+    }
+
+    #[test]
+    fn convert_associative_across_partial_punctuation_split() {
+        // Regression for #29: split-and-glue evaluation around
+        // partial-consonant + punctuation must match whole evaluation.
+        let c = RomajiConverter::new();
+
+        // Input "b!a", split at 2 ("b!" + "a")
+        let whole = c.convert("b!a");
+        let (lc, lp) = c.convert("b!");
+        let glued = format!("{}{}", lp, "a");
+        let (rc, rp) = c.convert(&glued);
+        assert_eq!(format!("{}{}", lc, rc), whole.0);
+        assert_eq!(rp, whole.1);
+
+        // Input "b!a", split at 1 ("b" + "!a")
+        let (lc, lp) = c.convert("b");
+        let glued = format!("{}{}", lp, "!a");
+        let (rc, rp) = c.convert(&glued);
+        assert_eq!(format!("{}{}", lc, rc), whole.0);
+        assert_eq!(rp, whole.1);
     }
 }
