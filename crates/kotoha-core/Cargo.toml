@@ -11,3 +11,6 @@ description = "Kotoha: core library for a Japanese IME (conversion, input mode m
 [dependencies]
 thiserror = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
