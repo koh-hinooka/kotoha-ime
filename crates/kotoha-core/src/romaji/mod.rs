@@ -22,6 +22,8 @@ use crate::romaji::state::{PushResult, StateMachine};
 /// (for example a future "emitted punctuation" or "would-commit-on-flush"
 /// outcome) without breaking external match sites.
 ///
+/// `#[non_exhaustive]` 採用根拠: `docs/adr/0006-non-exhaustive-on-streaming-enums.md`。
+///
 /// Use `Cow<'static, str>` so that common commit values (from the static
 /// rule table) are zero-allocation. Rarely-needed owned strings (from
 /// future computed-commit paths) go through `Cow::Owned`.
