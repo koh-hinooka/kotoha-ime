@@ -121,7 +121,7 @@ kotoha-ime/
 ├── docs/
 │   ├── superpowers/{specs,plans}/
 │   ├── wiki/
-│   ├── adr/                                      # 0001, 0002, 0003 を Phase 0 で作成
+│   ├── adr/                                      # 0001, 0002, 0003, 0004 を Phase 0 で作成
 │   ├── wbs/
 │   └── ROADMAP.md
 ├── scripts/
@@ -669,7 +669,7 @@ global CLAUDE.md の CI/CD Policy(GitHub Actions 禁止 + GCP Cloud Build Trigge
 | **`input` モジュール (新規)** | **1.5〜2 日** |
 | golden test + property test (mode_cases + Karukan 差分 + property 拡張含む) | 1.5 日 |
 | `kotoha-cli` (`kotoha-romaji` コマンド、mode オプション含む) | 0.8 日 |
-| **ADR 作成 (0001, 0002, 0003)** | **0.3 日** |
+| **ADR 作成 (0001, 0002, 0003, 0004)** | **0.4 日** |
 | ドキュメント整備 (ROADMAP, ARCHITECTURE, scripts/phase0-smoke.sh 等) | 0.7 日 |
 | 合計 | **約 9〜10 日** |
 
@@ -745,7 +745,7 @@ IBusKeyEvent { keycode: KEY_muhenkan, state: 0         } → (ユーザ設定次
   - CLI 仕様 (§10) を新設。`--mode` / `--show-mode` オプション、行単位 commit 抽象化
   - Golden テストを 200 → 270 ケースに拡張、Karukan 差分 10 ケースを新設
   - プロパティテストを 2 → 6 条件に拡張(revision 1 の "可逆性" は多対一性のため除外、詳細は §11.3)
-  - ADR 3 件 (0001, 0002, 0003) の作成を Phase 0 完了条件に追加
+  - ADR 4 件 (0001, 0002, 0003, 0004) の作成を Phase 0 完了条件に追加
   - 付録 "Phase 3 想定インタフェース" を新設 (リスク #6 対応)
   - Phase 5 から「Shift 挙動設定」を除去
   - 工数目安 6〜7 日 → 9〜10 日 (暦上 2〜3 週 → 3〜4 週)
