@@ -208,6 +208,10 @@ impl InputContext {
     pub fn toggle_mode(&mut self) {
         match self.mode {
             InputMode::Hiragana => {
+                // Clear the outgoing Hiragana pending buffer to mirror
+                // `set_mode` (invariant: Direct mode implies the converter's
+                // pending buffer is empty).
+                self.converter.reset();
                 self.mode = InputMode::Direct;
                 self.origin = ModeOrigin::Sticky;
             }
