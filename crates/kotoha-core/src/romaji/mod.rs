@@ -146,6 +146,38 @@ impl RomajiConverter {
         self.machine.reset();
     }
 
+    /// Normalizes the pending buffer into a stable form and returns any
+    /// salvaged kana as an owned `String`.
+    ///
+    /// Intended to be called by
+    /// [`crate::input::context::InputContext`] immediately after each
+    /// [`Self::push`] in Hiragana streaming mode so that the pending
+    /// buffer remains idempotent under re-conversion (matching the
+    /// stability that [`Self::convert`] already provides in batch mode).
+    /// Without this normalization, a mid-stream invalid-char drop can
+    /// leave a residue in the buffer that a subsequent `push` would
+    /// silently lose (PR #30 / ISSUE #29 follow-up for the streaming
+    /// path).
+    ///
+    /// # Postconditions
+    /// - The returned `String` contains only valid hiragana (plus `ー`
+    ///   for long vowels, `っ` for sokuon, `ん` for hatsuon).
+    /// - After this call, the pending buffer is either empty or a trie
+    ///   partial prefix (stable form).
+    ///
+    /// # Examples
+    /// ```
+    /// use kotoha_core::RomajiConverter;
+    /// let mut c = RomajiConverter::new();
+    /// let _ = c.push('b'); // pending = "b"
+    /// let _ = c.push('!'); // settle drops leading 'b', buffer = "!"
+    /// // "!" is itself a complete rule that push left unsettled.
+    /// assert_eq!(c.normalize_pending(), "!");
+    /// ```
+    pub fn normalize_pending(&mut self) -> String {
+        self.machine.normalize()
+    }
+
     /// Force-finalizes the pending buffer.
     ///
     /// Returns any kana that can still be salvaged (double-consonant sokuon,
