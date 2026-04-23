@@ -106,6 +106,30 @@ run_case "case5: backtick-quoted \`todo\` (clean via gsub)" 1 \
  existing
 +Use the \`todo\` tool"
 
+# Case 6: 追加行が無い diff (削除のみ) → 違反なし (exit 1)
+run_case "case6: deletion-only diff (clean)" 1 \
+  "--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -1,2 +1,1 @@
+ existing
+-old content"
+
+# Case 7: 削除行に TODO があっても、追加行でなければ違反なし (exit 1)
+run_case "case7: -TODO removed (clean; only + lines count)" 1 \
+  "--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -1,2 +1,1 @@
+ existing
+-TODO: old task we removed"
+
+# Case 8: 既存の '→' 除外パターン (矢印を含む行) → 違反なし (exit 1)
+run_case "case8: arrow → line stays exempt" 1 \
+  "--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -1,1 +1,2 @@
+ existing
++flow step → TODO"
+
 echo "------------------------------------------"
 echo " PASS=$PASS  FAIL=$FAIL"
 echo "=========================================="
