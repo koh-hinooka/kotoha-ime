@@ -1,0 +1,241 @@
+# Kotoha romaji → kana golden fixture
+# Format: romaji_input<TAB>expected_committed<TAB>expected_pending
+# Comments start with '#'. Empty lines are ignored.
+# Derived from Karukan rule set (MIT/Apache-2.0) with Shift-specific cases omitted.
+
+# --- vowels (5) ---
+a	あ	
+i	い	
+u	う	
+e	え	
+o	お	
+
+# --- basic gojuon CV (45) ---
+ka	か	
+ki	き	
+ku	く	
+ke	け	
+ko	こ	
+sa	さ	
+si	し	
+su	す	
+se	せ	
+so	そ	
+ta	た	
+ti	ち	
+tu	つ	
+te	て	
+to	と	
+na	な	
+ni	に	
+nu	ぬ	
+ne	ね	
+no	の	
+ha	は	
+hi	ひ	
+hu	ふ	
+he	へ	
+ho	ほ	
+ma	ま	
+mi	み	
+mu	む	
+me	め	
+mo	も	
+ya	や	
+yu	ゆ	
+yo	よ	
+ra	ら	
+ri	り	
+ru	る	
+re	れ	
+ro	ろ	
+wa	わ	
+wo	を	
+wi	ゐ	
+we	ゑ	
+# 5 hebon-style variants treated here
+shi	し	
+chi	ち	
+tsu	つ	
+fu	ふ	
+ji	じ	
+
+# --- dakuten (20) ---
+ga	が	
+gi	ぎ	
+gu	ぐ	
+ge	げ	
+go	ご	
+za	ざ	
+zi	じ	
+zu	ず	
+ze	ぜ	
+zo	ぞ	
+da	だ	
+di	ぢ	
+du	づ	
+de	で	
+do	ど	
+ba	ば	
+bi	び	
+bu	ぶ	
+be	べ	
+bo	ぼ	
+
+# --- handakuten (5) ---
+pa	ぱ	
+pi	ぴ	
+pu	ぷ	
+pe	ぺ	
+po	ぽ	
+
+# --- yoon (30) ---
+kya	きゃ	
+kyu	きゅ	
+kyo	きょ	
+sya	しゃ	
+syu	しゅ	
+syo	しょ	
+sha	しゃ	
+shu	しゅ	
+sho	しょ	
+tya	ちゃ	
+tyu	ちゅ	
+tyo	ちょ	
+cha	ちゃ	
+chu	ちゅ	
+cho	ちょ	
+nya	にゃ	
+nyu	にゅ	
+nyo	にょ	
+hya	ひゃ	
+hyu	ひゅ	
+hyo	ひょ	
+mya	みゃ	
+myu	みゅ	
+myo	みょ	
+rya	りゃ	
+ryu	りゅ	
+ryo	りょ	
+gya	ぎゃ	
+gyu	ぎゅ	
+gyo	ぎょ	
+
+# --- sokuon (20) ---
+kka	っか	
+kki	っき	
+kku	っく	
+kke	っけ	
+kko	っこ	
+ssa	っさ	
+ssi	っし	
+ssu	っす	
+sse	っせ	
+sso	っそ	
+tta	った	
+tti	っち	
+ttu	っつ	
+tte	って	
+tto	っと	
+ppa	っぱ	
+ppi	っぴ	
+ppu	っぷ	
+ppe	っぺ	
+ppo	っぽ	
+
+# --- hatsuon (15) ---
+# "na" is covered in the basic gojuon section above; this section covers n-specific cases only
+nnn	ん	n
+nk	ん	k
+nm	ん	m
+ns	ん	s
+nt	ん	t
+np	ん	p
+nb	ん	b
+ng	ん	g
+nr	ん	r
+nz	ん	z
+nn	ん	
+n'	ん	
+n'a	んあ	
+n'ya	んや	
+
+# --- long vowel + symbols (10) ---
+-	ー	
+a-	あー	
+ko-hi-	こーひー	
+.	。	
+,	、	
+?	?	
+!	!	
+[	「	
+]	」	
+/	・	
+
+# --- small forms (15) ---
+la	ぁ	
+li	ぃ	
+lu	ぅ	
+le	ぇ	
+lo	ぉ	
+xa	ぁ	
+xi	ぃ	
+xu	ぅ	
+xe	ぇ	
+xo	ぉ	
+lya	ゃ	
+lyu	ゅ	
+lyo	ょ	
+ltu	っ	
+xtu	っ	
+
+# --- extended sounds (20) ---
+fa	ふぁ	
+fi	ふぃ	
+fe	ふぇ	
+fo	ふぉ	
+va	ゔぁ	
+vi	ゔぃ	
+vu	ゔ	
+ve	ゔぇ	
+vo	ゔぉ	
+tsa	つぁ	
+tsi	つぃ	
+tse	つぇ	
+tso	つぉ	
+kwa	くぁ	
+kwi	くぃ	
+kwe	くぇ	
+kwo	くぉ	
+gwa	ぐぁ	
+wha	うぁ	
+whi	うぃ	
+
+# --- pending tails (10) ---
+k		k
+ky		ky
+s		s
+sh		sh
+kon	こ	n
+koh	こ	h
+kos	こ	s
+kyak	きゃ	k
+tsuk	つ	k
+# pending-tail case: 'fuk' -> commits ふ (from fu), leaves k in pending (k is a potential sokuon/consonant head).
+fuk	ふ	k
+
+# --- long composite (10) ---
+# IME-standard typewriter-style input for "こんにちは" uses `ha` for the particle.
+konnnichiha	こんにちは	
+# Rule-faithful literal conversion of "konnichiwa" yields "こんいちわ"
+# (particle-position heuristics are out of Phase 0 scope).
+konnichiwa	こんいちわ	
+tsumugi	つむぎ	
+arigatou	ありがとう	
+sayounara	さようなら	
+ohayou	おはよう	
+ittekimasu	いってきます	
+onegaishimasu	おねがいします	
+gakkou	がっこう	
+nihongo	にほんご	
+kyou	きょう	

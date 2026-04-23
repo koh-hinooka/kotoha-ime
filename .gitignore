@@ -37,3 +37,6 @@ service-account*.json
 id_rsa*
 id_ecdsa*
 id_ed25519*
+
+# proptest failure seeds (policy: do not commit — reproduce via test re-run)
+**/proptest-regressions/
