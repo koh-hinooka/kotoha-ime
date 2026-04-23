@@ -2175,34 +2175,7 @@ Expected: 70 (コメント行と空行を除いた有効行数)。
 
 - [ ] **Step 1: `mode_cases_karukan_diff.tsv` を Write で新規作成**
 
-Write ツールで `crates/kotoha-core/tests/fixtures/mode_cases_karukan_diff.tsv` を以下の内容で作成:
-
-```tsv
-# Kotoha input mode golden fixture — Karukan differential (10 cases)
-# Format: initial_mode<TAB>input<TAB>expected_output<TAB>final_mode
-# Each row documents a case where Kotoha's Transient auto-return differs from
-# Karukan's Sticky-by-default behavior. ADR 0002 / spec §8.5 pin the rationale.
-# Inline trailing '# ...' comments are stripped by the runner.
-
-hiragana	A\nkon\n	A\nこん\n	hiragana	# Kotoha: Transient Direct on 'A' auto-returns after \n. Karukan would stay Direct, yielding A\nkon\n.
-hiragana	H\nhiragana\n	H\nひらがな\n	hiragana	# After H commits, Kotoha resumes Hiragana. Karukan would output H\nhiragana (all direct).
-hiragana	Hi\nkonnnichiha\n	Hi\nこんにちは\n	hiragana	# Single-word greeting flow; Karukan would require explicit toggle after "Hi".
-hiragana	URL\nwatashi\n	URL\nわたし\n	hiragana	# 3-letter uppercase token; Karukan would leave Direct after URL and output URL\nwatashi.
-hiragana	Hi\nHELLO\nkonnnichiha\n	Hi\nHELLO\nこんにちは\n	hiragana	# Multiple Shift-trigger segments interleaved with Hiragana resumption; Karukan would stay Direct after the first Hi.
-hiragana	Ko\nka\n	Ko\nか\n	hiragana	# Capitalized token followed by lowercase romaji; Karukan would output Ko\nka (ka stays direct).
-hiragana	X\ny\n	X\n\n	hiragana	# After X commits, 'y' is a Hiragana partial prefix (pending, not yet resolvable); flush drops it. Karukan would output X\ny (y stays direct).
-hiragana	Q\n\nka\n	Q\n\nか\n	hiragana	# Empty line between Shift-trigger and Hiragana input still auto-returns on the first \n. Karukan would need explicit toggle.
-hiragana	Sakura\n	Sakura\n	hiragana	# Capitalized noun remains all-Direct in both Kotoha and Karukan within the line, but Kotoha returns to Hiragana after \n (no-op effect here since no next input, but final_mode=hiragana matters).
-hiragana	Abc\ndef\n	Abc\nでf\n	hiragana	# Kotoha: 'd' is pending after auto-return; 'e' → 'で'; 'f' pending, flush drops. Karukan: 'd' stays direct, output Abc\ndef\n. Note 'でf' because 'f' alone is a Hiragana partial prefix that flush drops, but the expected shows it dropped → just で. (expected refined below)
-```
-
-Correction for the last row (to avoid ambiguous expectation): replace the 10th row with:
-
-```tsv
-hiragana	Abc\nka\n	Abc\nか\n	hiragana	# After Abc commits and auto-returns, 'ka' → か. Karukan would output Abc\nka with 'ka' still in direct mode.
-```
-
-Write the corrected 10-row content (replacing the problematic final row):
+Write to `crates/kotoha-core/tests/fixtures/mode_cases_karukan_diff.tsv`:
 
 ```tsv
 # Kotoha input mode golden fixture — Karukan differential (10 cases)
@@ -2222,8 +2195,6 @@ hiragana	Q\n\nka\n	Q\n\nか\n	hiragana	# Empty line between Shift-trigger and Hi
 hiragana	Sakura\n	Sakura\n	hiragana	# Capitalized noun remains all-Direct in both Kotoha and Karukan within the line, but Kotoha returns to Hiragana after \n.
 hiragana	Abc\nka\n	Abc\nか\n	hiragana	# After Abc commits and auto-returns, 'ka' → か. Karukan would output Abc\nka with 'ka' still in direct mode.
 ```
-
-Write the final (corrected) 10-row TSV content to the file.
 
 - [ ] **Step 2: 行数確認**
 
@@ -2984,7 +2955,7 @@ Spec §13 の M4 相当要件を以下のタスクが担保する:
    - 初稿で `RomajiConverter::normalize_pending` を新規追加として計画していたが、実装済の `StateMachine::normalize` が既に `pub(crate)` で存在するため、`normalize_pending` は `self.machine.normalize()` を単に呼ぶだけの thin wrapper であることを明記
    - 初稿で `ConvertStep` の `match` を完全列挙していたが、`#[non_exhaustive]` のため将来互換性上 `_ => InputStep::Preedit` の defensive arm が必要であることを Task M4b-4 Step 1 の実装に追加
    - 初稿の mode_cases.tsv category 6 で Transient → Sticky 昇格を TSV で表現する設計にしていたが、TSV format には toggle 操作の表現がない(input 列は文字列のみ)ため、category 6 は Transient commit の自動復帰 5 件に変更し、promotion の verify は M4c-4 property test と M4b-4 Step 1 unit test 2 件 (`toggle_mode_in_transient_default_flag_false_returns_hiragana` / `toggle_mode_in_transient_with_flag_true_promotes_to_sticky`) に集約
-   - 初稿で Karukan 差分 TSV の最終行が曖昧 (`Abc\ndef\n` の `def` の挙動が rule table 依存で pending が複雑)だったため、`Abc\nka\n` → `Abc\nか\n` に置き換え(Task M4c-2 Step 1 の Correction block)
+   - 初稿で Karukan 差分 TSV の最終行が曖昧 (`Abc\ndef\n` の `def` の挙動が rule table 依存で pending が複雑)だったため、Task M4c-2 Step 1 の正準 TSV ブロック最終行を `Abc\nka\n` → `Abc\nか\n` に修正した(レビュー指摘 PR #33 を受け、初稿+修正案の 2 段構成を 1 個の正準ブロックに統合)
 
 ---
 
