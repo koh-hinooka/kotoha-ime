@@ -7,9 +7,10 @@
 //!
 //! The pending-buffer backtrack rule implemented in [`StateMachine::settle`]
 //! (sokuon double-consonant, bare-`n` hatsuon, single-char invalid peel-off)
-//! is currently documented only in this module's source. See ISSUE #15 for
-//! the tracking of a normative description in the project spec
-//! (§9.1 / §9.2 pending-buffer backtrack rule).
+//! is specified normatively in spec §9.3 (pending バッファの backtrack 規則)
+//! at `docs/superpowers/specs/2026-04-22-kotoha-phase-0-design.md`. The
+//! source of truth for the contract lives in that spec subsection; this
+//! module implements it.
 
 use std::borrow::Cow;
 
@@ -92,6 +93,8 @@ impl StateMachine {
 
     /// Feed one char to the machine.
     ///
+    /// 参照: spec §9.3 pending バッファの backtrack 規則。
+    ///
     /// # Preconditions
     /// - Non-ASCII input is rejected with [`PushResult::Invalid`] without
     ///   modifying the buffer.
@@ -122,11 +125,11 @@ impl StateMachine {
     ///
     /// # Normative spec
     /// The backtrack rule implemented here (sokuon double-consonant,
-    /// bare-`n` hatsuon, single-char invalid peel-off) is currently
-    /// documented only in this function's source. A normative description
-    /// for the project spec is tracked in ISSUE #15 (spec §9.1 / §9.2
-    /// pending-buffer backtrack rule). Do not change this function's
-    /// behavior without updating the plan to match.
+    /// bare-`n` hatsuon, single-char invalid peel-off) is specified in
+    /// spec §9.3 pending バッファの backtrack 規則
+    /// (`docs/superpowers/specs/2026-04-22-kotoha-phase-0-design.md`).
+    /// Do not change this function's behavior without also updating §9.3
+    /// so the spec and implementation stay in lockstep.
     fn settle(&mut self) -> PushResult {
         match self.trie.lookup(&self.buffer) {
             Lookup::Match(kana) => {

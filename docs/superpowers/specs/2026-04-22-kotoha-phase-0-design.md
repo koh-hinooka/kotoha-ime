@@ -440,6 +440,55 @@ particle の位置を見て `wa` → `は` に変換する heuristic は、か�
 - かな出力を再度 `convert` に通しても、非 ASCII 文字はすべて drop されるため、新たな romaji pending は生成されない (property test `prop_idempotence_on_committed` の弱化形不変条件)。
 - 強い retraction `convert(convert(x).committed).committed == convert(x).committed` は契約外とし、上位層 (かな漢字変換層) でもこの再入力を前提とした設計は避ける。
 
+### 9.3 Pending バッファの backtrack 規則
+
+本節は `StateMachine::push`(実装: `crates/kotoha-core/src/romaji/state.rs`、rule table: `crates/kotoha-core/src/romaji/rules.rs`)が、pending バッファへ次の文字を追加した直後に trie 検索結果を分類して振る舞いを確定させる際の normative 契約を定義する。§9.1(ローマ字入力 convention)と §9.2(非 ASCII 入力の取り扱い)はそれぞれ打鍵モデルと入力ドメインを規定するが、本節 §9.3 は「ASCII 入力かつ rule trie のいずれの prefix にも一致しない」正規ケースを補完的にカバーする。
+
+#### 9.3.1 trie 検索結果の分類
+
+`StateMachine` は pending バッファに ASCII 文字 1 つを append した直後、`Trie::lookup` を呼び出して結果を以下 3 分類に分ける(`Lookup` enum 定義を参照)。
+
+- **`Match`(完全一致)**: pending バッファが rule table 上の完全な rule に一致した。動作: 対応するかなを `PushResult::Committed(Cow::Borrowed(kana))` として返し、pending バッファを空にする。
+- **`Partial`(前方一致のみ)**: pending バッファは 1 つ以上の rule の真の前方一致だが、それ自体は完全一致ではない。動作: pending バッファはそのまま保持し、`PushResult::Pending` を返す。かなは出力しない。
+- **`None`(不一致)**: pending バッファは完全一致でも前方一致でもない。動作は §9.3.2 の backtrack 規則に従う。
+
+#### 9.3.2 `None` 発生時の backtrack 規則(normative)
+
+`None` と判定された時点で、pending バッファ長と先頭 2 バイトを用いて以下の優先順で分岐する。実装は `StateMachine::settle` の `Lookup::None` 分岐に対応する。
+
+1. **長さが 2 バイト以上かつ「先頭 2 バイトが同一の sokuon 対応子音」**(例: `kk`, `ss`, `tt` … `is_sokuon_consonant` が真となる子音の 2 連打): `StateMachine` は先頭 1 バイトを pending バッファから除去し、`PushResult::Committed(Cow::Borrowed("っ"))` を返す。残った 1 バイト(単独の子音)は pending に残り、次の `push` の起点となる。
+2. **長さが 2 バイト以上かつ「先頭が `n` で 2 バイト目が n-continuation でない」**(n-continuation = `a`/`i`/`u`/`e`/`o`/`y`/`n`/`'`): `StateMachine` は先頭の `n` を pending バッファから除去し、`PushResult::Committed(Cow::Borrowed("ん"))` を返す。2 バイト目以降は pending に残る。
+3. **上記いずれにも該当しない**(長さ 1 バイト、または sokuon / bare-`n` 条件を満たさない 2 バイト以上): `StateMachine` は pending バッファ先頭 1 文字を剥がし、`PushResult::Invalid(dropped_char)` を返す。剥がされた文字より後の残渣は pending に残る。
+
+`settle` は 1 回の `push` につき可視効果を高々 1 つしか返さないため、上記 2 の分岐後に残渣が再び `None` となる状況(例: `"byb"` 処理中に先頭 `b` を Invalid として剥がした直後の `"yb"`)は settle 単独では解消されない。`RomajiConverter::convert` および `RomajiConverter::flush` はこの残渣を安定化するために、`StateMachine::normalize` を追加呼び出しする(`normalize` は上記 1 / 2 / 3 の分岐を buffer が空または `Partial` になるまで繰り返すループである)。
+
+#### 9.3.3 代表的な入力の挙動
+
+以下は §9.3.1 / §9.3.2 の契約を検証する代表 5 ケースである(golden fixture `crates/kotoha-core/tests/fixtures/romaji_cases.tsv` の `pending tails` セクションと対応する)。
+
+| 入力 | 各 push 後の pending 遷移 | 累積 emission | 最終 pending |
+|---|---|---|---|
+| `ko` | `"k"`(Partial) → `""`(Match で `こ` を commit) | `こ` | `""` |
+| `kon` | `"k"` → `"ko"`(Match で `こ`) → `"n"`(Partial; `n` は `na`/`ni`/… の prefix) | `こ` | `"n"` |
+| `koh` | `"k"` → `"ko"`(Match で `こ`) → `"h"`(Partial; `h` は `ha`/`hi`/… の prefix) | `こ` | `"h"` |
+| `kk` | `"k"`(Partial) → `"kk"`(None、sokuon 分岐で `っ` commit、pending = `"k"`) | `っ` | `"k"` |
+| `shz` | `"s"` → `"sh"`(ともに Partial) → `"shz"`(None、sokuon 条件不成立 `s != h`、bare-`n` 条件不成立、先頭 `s` を Invalid として剥がす、pending = `"hz"`)。convert/flush 経路では続けて `normalize` が `"hz"` に対して同じ規則を適用し、`"hz"` → `"z"` → `""`(いずれも Invalid 剥がし)まで縮退する | なし | `""` |
+
+注: `kyak` / `tsuk` / `fuk` などの他の pending-tail ケースも同様に、完全一致で先行子音列が commit された後、末尾 1 バイトが Partial として残る。
+
+#### 9.3.4 不変条件
+
+`StateMachine::push` 呼び出し後、および `RomajiConverter::convert` / `push` の完了後に成立すべき不変条件を以下に列挙する。
+
+- **pending 安定性**: pending バッファは必ず「空」または「rule trie の `Partial` prefix」のいずれかである。`None` 判定された残渣を保持したまま呼び出しを終えることはない(§9.3.2 および `StateMachine::normalize` により保証される)。
+- **flush 決定性**: `RomajiConverter::flush` は最終 pending を決定論的に処理し、pending を空にする。具体的には `normalize` で sokuon / hatsuon / rule match の salvage を行い、残渣が単独 `"n"` であれば `ん` を追加 emit し、それ以外の残渣は ASCII 文字列のまま返す。
+- **emission 局所性**: 1 回の `push` で emit される commit は高々 1 つの rule 一致または 1 つの特殊化 commit(`っ` / `ん`)である。複数の内部 commit が 1 回の `push` で発生することはない(§7.2 の `StateMachine` algebra と整合)。
+
+#### 9.3.5 関連セクション
+
+- §11.3 プロパティテスト: 本節で規定した pending 安定性は property test `prop_idempotence_on_committed` および convert 結合性 property の前提である。
+- 実装計画 Task M3b-2(`docs/superpowers/plans/2026-04-23-kotoha-phase-0-m3.md`): 本節の契約を検証する pending-tails fixture 行(`kon` / `koh` / `kos` / `kyak` / `tsuk` / `fuk` など 10 行)を定義する。
+
 ## 10. CLI 仕様
 
 Phase 0 の CLI `kotoha-romaji` は動作確認とデバッグが目的である。モード切替ロジック全体の網羅的検証は golden test / unit test に委ね、CLI は最小限の入出力ツールに徹する。
