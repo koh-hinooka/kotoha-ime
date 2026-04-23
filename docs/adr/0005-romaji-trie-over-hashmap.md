@@ -39,6 +39,7 @@ Kotoha のローマ字→かな変換層は M3a で 207 エントリのルール
 ### パフォーマンスへの影響
 
 - 初期実装は `StateMachine::new` ごとに Trie を per-call rebuild する。207 エントリでは実測問題なし。OnceLock キャッシュ化は ISSUE #19 で別途 tracking する。
+- **更新 (2026-04-23)**: ISSUE #19 で `std::sync::OnceLock<Trie>` による process-wide cache を `crates/kotoha-core/src/romaji/state.rs::global_trie` に導入し、per-call rebuild 問題は解消済み。`StateMachine.trie` は `&'static Trie` として cache を参照する。
 
 ### 将来への影響
 
