@@ -22,3 +22,6 @@ pub use mock::MockBackend;
 mod llama_cpp;
 #[cfg(feature = "llama-cpp")]
 pub use llama_cpp::LlamaCppBackend;
+
+#[cfg(feature = "dict")]
+pub use crate::dict::DictionaryBackend;
