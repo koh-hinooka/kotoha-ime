@@ -17,3 +17,8 @@ pub use error::KanjiError;
 mod mock;
 #[cfg(feature = "mock-backend")]
 pub use mock::MockBackend;
+
+#[cfg(feature = "zenz")]
+mod zenz;
+#[cfg(feature = "zenz")]
+pub use zenz::ZenzBackend;
