@@ -1,12 +1,17 @@
 # P5-A data pipeline PoC (Kotoha Phase 5)
 
-Kotoha IME の Phase 5(custom romaji-base model)における **P5-A data pipeline** の Proof of Concept 実装です。ADR 0010 で確定した方針に従い、Phase 4 完了後の Phase 5 kick-off 時に実証根拠として利用するための最小縦スライスを提供します。本ツールは 30 件の hand-crafted 日本語文から `(noisy_romaji, kanji, clean_romaji, typo_distance, romaji_style)` の学習対を生成します。
+Kotoha IME の Phase 5(custom romaji-base model)における **P5-A data pipeline** の Proof of Concept 実装です。ADR 0010 で確定した方針に従い、Phase 4 完了後の Phase 5 kick-off 時に実証根拠として利用するための最小縦スライスを提供します。本ツールは hand-crafted 日本語文から以下を生成します:
+
+- 通常 `(noisy_romaji, kanji, clean_romaji, typo_distance, romaji_style)` の学習対
+- random truncation による partial-input 行(ISSUE #86 iter1 で追加)
+- PUA による training-ready トークン列(ISSUE #86 iter1 で追加)
+- mixed JP/EN 混合文行(ISSUE #86 iter1 で追加、segment 情報付き)
 
 参照:
 
-- `docs/adr/0010-kotoha-custom-romaji-base-model.md`
-- `docs/superpowers/specs/2026-04-25-kotoha-phase-5-custom-model.md` §3.1 / §4
-- ISSUE #79
+- `docs/adr/0010-kotoha-custom-romaji-base-model.md`(D4 PUA トークン初期値 / D8 mixed JP/EN 方針)
+- `docs/superpowers/specs/2026-04-25-kotoha-phase-5-custom-model.md` §3.1 / §4.4 / §4.5 / §4.7
+- ISSUE #79(親 PoC)/ #86(本 iter1 拡張)/ #88(mixed JP/EN 主目的)
 
 ## Install
 
@@ -19,6 +24,8 @@ uv sync
 
 ## 実行
 
+最小実行(iter0 相当、既存 5 列):
+
 ```bash
 uv run -m kotoha_p5a \
     --input fixtures/input_sentences.txt \
@@ -26,49 +33,94 @@ uv run -m kotoha_p5a \
     --seed 42
 ```
 
-実行後、`fixtures/sample.tsv` に header 付きの TSV が出力されます。`--seed` は typo 注入の乱数シードで、同一シードなら入出力は bit 単位で再現します。
+拡張実行(iter1、10 列すべて活用):
 
-## 出力 TSV schema
+```bash
+uv run -m kotoha_p5a \
+    --input fixtures/input_sentences.txt \
+    --output fixtures/sample.tsv \
+    --seed 42 \
+    --with-partials 2 \
+    --with-tokens \
+    --with-mixed-jpen 5
+```
+
+実行後、`fixtures/sample.tsv` に header 付きの TSV が出力されます。`--seed` は typo 注入 / partial 生成 / mixed 合成すべての乱数シードで、同一シードなら入出力は bit 単位で再現します。
+
+## CLI フラグ
+
+| フラグ | 型 | 既定 | 説明 |
+| --- | --- | --- | --- |
+| `--input` | path | 必須 | UTF-8 入力ファイル(1 行 1 文) |
+| `--output` | path | 必須 | TSV 出力先 |
+| `--seed` | int | 42 | typo / partial / mixed 共通の base seed |
+| `--with-partials` | int | 0 | 各 clean row に対して生成する partial(prefix truncation)数。0 で無効 |
+| `--with-tokens` | flag | off | `tokenized` 列を PUA 包み文字列で埋める |
+| `--with-mixed-jpen` | int | 0 | mixed JP/EN sentence 追加数。各 sentence は 3 styles × 3 distances = 9 rows に展開 |
+
+## 出力 TSV schema(10 列)
 
 | 列番号 | 列名 | 型 | 説明 |
 | --- | --- | --- | --- |
-| 1 | `noisy_romaji` | string | typo 注入後の入力文字列(編集距離 = `typo_distance`) |
-| 2 | `kanji` | string | 正解の漢字表層 |
+| 1 | `noisy_romaji` | string | typo 注入後の入力文字列 |
+| 2 | `kanji` | string | 正解の漢字表層(mixed 行は合成文原型) |
 | 3 | `clean_romaji` | string | typo 注入前の romaji(正解) |
-| 4 | `typo_distance` | int | `0` / `1` / `2` / `3` のいずれか。`0` は clean pair |
-| 5 | `romaji_style` | string | `hepburn` / `kunrei` / `waapuro` のいずれか |
+| 4 | `typo_distance` | int | `0` / `1` / `2` / `3` のいずれか |
+| 5 | `romaji_style` | string | `hepburn` / `kunrei` / `waapuro` |
+| 6 | `is_partial` | int | `1` のとき partial 行、`0` は full 行 |
+| 7 | `partial_len` | int | partial の char 長(full 行は `0`) |
+| 8 | `tokenized` | string | `--with-tokens` 有効時の PUA 包み文字列、無効時は空文字列 |
+| 9 | `language_segments` | string | mixed JP/EN 行のみ `jp:0-3;en:3-9;jp:9-14` 形式、他は空文字列 |
+| 10 | `has_en_words` | int | mixed 行は `1`、他は `0` |
 
-## 現 scope
+## PUA トークン(`--with-tokens`)
 
-- **入力**: `fixtures/input_sentences.txt` 30 件の hand-crafted 日本語文(kanji / hiragana / katakana 混在、短文中心)
-- **形態素解析**: sudachipy (Apache-2.0) + sudachidict_small (Apache-2.0)。`SplitMode.C`(最長分割)で kanji を含む文節のみ抽出
-- **kana → romaji 変換**: 自前の変換表 `src/kotoha_p5a/romaji.py`。Hepburn / Kunrei / waapuro の 3 方式、ASCII のみ(macron は使わず母音重複で長音を表現)
-- **typo 注入**: QWERTY 隣接キーに基づく substitute / transpose / delete / insert、編集距離 0-3、`random.Random(seed)` で再現性を担保
+Karukan 踏襲の PUA code point を初期値として採用しています(ADR 0010 D4)。最終確定は Phase 5 kick-off のモデル学習検証後。
 
-出力行数の目安: 30 sentences × kanji 含む文節(変動)× 3 styles × 4 distances ≈ 300-500 行。
+| 定数名 | Code point | 意味 |
+| --- | --- | --- |
+| `ROMAJI_TOKEN` | U+E000 | `<romaji>` |
+| `OUT_TOKEN` | U+E001 | `<out>` |
+| `CTX_TOKEN` | U+E002 | `<ctx>`(空 context 時は省略) |
+| `EOS_TOKEN` | U+E003 | `<eos>` |
 
-## 非 scope(Phase 5 kick-off 時に対応)
+フォーマット:
 
-本 PoC は以下を **意図的に含みません**:
+```
+[CTX_TOKEN ctx] ROMAJI_TOKEN romaji OUT_TOKEN kanji EOS_TOKEN
+```
 
-- Wikipedia JP / LLM-JP / CC-100 JP からの実データ取得
-- 1M〜10M 対の本番規模データ生成
-- モデル学習 / 推論
-- partial-input generation(ユーザ部分入力の再現)
-- special token 挿入
-- train / val / test 分割
-- lefthook / CI 統合
+## mixed JP/EN(`--with-mixed-jpen`)
 
-## Phase 5 kick-off 時の拡張計画
+EN 単語は hand-crafted list(programming 文脈 + 一般 loanword)から、JP 部は `{en}` placeholder 付き hand-crafted template から、合成時にランダムに選択されます。将来、Wikipedia streaming corpus fetch で大規模化する計画(次 iteration)ですが、PoC では外部通信ゼロ・依存ゼロ追加で動的生成を完結させます。
 
-Phase 4(local LLM 統合)完了後の Phase 5 kick-off では、本 PoC を基盤として以下の拡張を段階的に加える予定です:
+romaji 化時は EN 部をそのまま保持、JP 部のみ 3 style で変換します。typo 注入は PoC では文字列全体に適用(厳密な segment-aware 注入は Phase 5 kick-off で実装)。
 
-- **corpus 拡張**: Wikipedia JP + LLM-JP + CC-100 JP の streaming fetch を `datasets` (Apache-2.0) で実装。本 PoC の 30 sentences 固定から、数 M 行の streaming 消費に切り替える
-- **partial-input 生成**: 各 clean romaji に対し、先頭 N 文字で切り詰めた部分入力を生成し、実際の IME 入力時の「打鍵途中」状態を模倣する
-- **special token 挿入**: 学習時に `<ctx>`、`<romaji>`、`<out>`、`<eos>` 等のセパレータを TSV 出力に埋め込む(現 PoC は raw pair のみ)
-- **bias sampling**: 常用漢字頻度や漢字・ひらがな比を考慮した重み付きサンプリングで、低頻度漢字を過学習させないよう均衡を取る
-- **validation / test split**: 生成された対を 80 / 10 / 10 で分割し、`train.tsv` / `val.tsv` / `test.tsv` を出力する
-- **並列化**: sudachipy 呼び出しを `multiprocessing` で並列化し、1M+ pair 生成を実用時間内(数十分)に収める
+## 現 scope(iter1 時点)
+
+- **入力**: `fixtures/input_sentences.txt` 33 件の hand-crafted 日本語文
+- **形態素解析**: sudachipy (Apache-2.0) + sudachidict_small (Apache-2.0)、`SplitMode.C`
+- **kana → romaji 変換**: 自前変換表 `src/kotoha_p5a/romaji.py`、Hepburn / Kunrei / waapuro の 3 方式、ASCII のみ
+- **typo 注入**: QWERTY 隣接 substitute / transpose / delete / insert、編集距離 0-3、`random.Random(seed)` で再現性担保
+- **partial-input**: random prefix truncation(`src/kotoha_p5a/partial.py`)
+- **PUA 包み**: 4 種の PUA トークンで training-ready 列を生成(`src/kotoha_p5a/tokens.py`)
+- **mixed JP/EN**: programming + 一般 loanword の hand-crafted EN 単語 × JP テンプレート(`src/kotoha_p5a/mixed_jp_en.py`)
+
+出力行数の目安(iter1 の全フラグ ON): 既存フロー ~1260 行 + partial 拡張(~約 2500 行)+ mixed(5 × 9 = 45 行)≈ 3800 行。
+
+## Phase 5 拡張計画
+
+Phase 4 完了後の Phase 5 kick-off では、本 PoC を基盤として以下の拡張を段階的に加える予定です:
+
+- [x] **partial-input 生成**(iter1: ISSUE #86 完了): random truncation による PoC 実装
+- [x] **special token 挿入**(iter1: ISSUE #86 完了): PUA 包み(Karukan 踏襲)を初期候補として実装
+- [x] **mixed JP/EN corpus**(iter1: ISSUE #86 完了): hand-crafted template + EN 単語 list から動的生成
+- [ ] **Wikipedia corpus 拡張**: Wikipedia JP + LLM-JP + CC-100 JP の streaming fetch を `datasets` (Apache-2.0) で実装
+- [ ] **bias sampling**: 常用漢字頻度や漢字・ひらがな比を考慮した重み付きサンプリング
+- [ ] **train / val / test split**: 生成された対を 80 / 10 / 10 で分割
+- [ ] **segment-aware typo 注入**: mixed 行で EN 単語境界を跨がない typo 注入
+- [ ] **並列化**: sudachipy 呼び出しを `multiprocessing` で並列化し、1M+ pair 生成を実用時間内に収める
+- [ ] **token id 最終確定**: Phase 5 kick-off での学習実験に基づき、PUA code point を学習済み tokenizer に適合
 
 ## テスト
 
@@ -85,9 +137,13 @@ uv run mypy src tests
 uv run pytest -v
 ```
 
+iter1 時点のテスト数: 51(既存 28 + 新規 23)。内訳は `tests/test_*.py` を参照。
+
 ## License
 
 本ツールは `Apache-2.0` で配布されます(Kotoha 全体ライセンス方針と整合)。
+
+iter1 拡張は **依存を追加しません**(sudachipy + sudachidict-small のみ、すべて Apache-2.0)。
 
 ランタイム依存:
 
