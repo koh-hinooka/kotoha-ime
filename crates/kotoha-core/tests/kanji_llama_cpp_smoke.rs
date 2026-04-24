@@ -135,6 +135,14 @@ fn llama_cpp_smoke_2_kanji() {
     run_fixture(path, 1);
 }
 
+// KNOWN LIMITATION (Phase 3 deferral): Gemma-2-2B-jpn-it Q5_K_M consistently
+// outputs "翌日" for input "あした" instead of "明日", regardless of positive/
+// negative few-shot examples or directives (empirically verified across P1-2.5
+// prompt iterations v5–v12). Root cause is the model's strong pretrain bias
+// associating "あした" with "翌日". Resolution is deferred to Phase 3
+// (task-specific fine-tuned romaji-base model). This test is intentionally
+// left as a failing assertion rather than #[ignore] so CI surfaces the known
+// failure explicitly rather than silently skipping it.
 #[test]
 fn llama_cpp_smoke_3_ashita() {
     let Some(path) = get_model_path_or_skip() else {
@@ -184,9 +192,57 @@ fn llama_cpp_smoke_8_watashi_wa_gakusei_desu() {
 }
 
 #[test]
-fn llama_cpp_smoke_9_shinbun() {
+fn llama_cpp_smoke_9_gyuunyuu() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
     run_fixture(path, 8);
+}
+
+#[test]
+fn llama_cpp_smoke_10_kippu() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 9);
+}
+
+#[test]
+fn llama_cpp_smoke_11_kohii() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 10);
+}
+
+#[test]
+fn llama_cpp_smoke_12_happyou() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 11);
+}
+
+#[test]
+fn llama_cpp_smoke_13_jisho() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 12);
+}
+
+#[test]
+fn llama_cpp_smoke_14_ryouri() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 13);
+}
+
+#[test]
+fn llama_cpp_smoke_15_shinbun() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 14);
 }

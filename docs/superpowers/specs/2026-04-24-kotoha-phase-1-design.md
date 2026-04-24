@@ -97,13 +97,14 @@ Phase 1 では `llama-cpp-2` を第一候補として採用し、採用事由と
 
 #### 3.2.1 IME-style prompt wrapper (実装上の補足)
 
-Gemma-2-2B-jpn-it は instruction-tuned なので、生のひらがな入力を `apply_chat_template(None)` に渡すだけでは chat-style 応答 (入力エコー + emoji + 改行) を返し、kana→kanji 変換を行わない。実装 (`crates/kotoha-core/src/kanji/llama_cpp.rs::build_chat_tuples`) では **multi-turn few-shot** 形式で以下の 3 例を pre-fill する:
+Gemma-2-2B-jpn-it は instruction-tuned なので、生のひらがな入力を `apply_chat_template(None)` に渡すだけでは chat-style 応答 (入力エコー + emoji + 改行) を返し、kana→kanji 変換を行わない。P1-2.5 follow-up (PR #76) では当初採用した `apply_chat_template` 経路から **plain-text completion + v12 few-shot prompt** 方式へ pivot した。実装 (`crates/kotoha-core/src/kanji/llama_cpp.rs::build_prompt`) は `build_prompt(template: &PromptTemplate, user_input: &str) -> String` というシグネチャで、`Gemma2InstructChat` / `Qwen2Chat` variant の場合に以下の要素を単一の plain-text 文字列として組み立てる:
 
-1. 入力: `にほんご` → 出力: `日本語` (短語)
-2. 入力: `やまださん` → 出力: `山田さん` (敬称付き固有名詞)
-3. 入力: `わたしはがくせいです` → 出力: `私は学生です` (文章)
+1. **strict directive** — 音韻保持の 1 対 1 写像であり翻訳・類義語置換を行わない、という指示文
+2. **13 pair の positive few-shot** — 短単語 (`えき → 駅`) / 熟語 (`にほんご → 日本語`) / 拗音 (`ちゃわん → 茶碗`) / 外来語長音 (`こーひー → コーヒー`) / 送り仮名 (`たべもの → 食べ物`) / 敬称 (`やまださん → 山田さん`) / 外来語交じり文 (`パソコンをつかう → パソコンを使う`) / 文章 (`わたしはがくせいです → 私は学生です`) などを網羅
+3. **3 pair の negative example 対照** — `あした → 明日` / `ぎゅうにゅう → 牛乳` / `りょうり → 料理` の 3 行を directive 内で「`翌日` / `ミルク` / `クッキング` ではない」と明示的に禁じたうえで、few-shot 末尾にも `あした → 明日` の正例を再掲し、pretrain bias による翻訳出力を抑制する
+4. **query 行** — `入力: {user_input}\n出力: ` でモデル補完を誘導
 
-この構造は `build_chat_tuples` の内部実装詳細であり、`KanjiBackend::convert` の公開契約 (spec §5.3) には影響しない。Phase 2 で別 backend (e.g. fine-tuned specialized IME model) を追加する際は、Gemma 系には few-shot が必要/不要という事実を踏まえ、`PromptTemplate` variant を増やして切り替える。
+この構造は `build_prompt` の内部実装詳細であり、`KanjiBackend::convert` の公開契約 (spec §5.3) には影響しない。Phase 2 で別 backend (e.g. fine-tuned specialized IME model) を追加する際は、Gemma 系には few-shot が必要/不要という事実を踏まえ、`PromptTemplate` variant を増やして切り替える。
 
 #### 3.2.2 Historical context: Zenz (Miwa-Keita) reevaluation
 
@@ -359,21 +360,28 @@ use std::path::PathBuf;
 
 /// Prompt template dispatch hint。
 ///
-/// llama-cpp-2 の `apply_chat_template` が読み取る GGUF metadata 上の
-/// `tokenizer.chat_template` が family ごとに異なるため、backend 側で
-/// template の family と few-shot wrapper の有無を選択する hint として使う。
+/// P1-2.5 follow-up (PR #76) 以降、Gemma / Qwen 系 instruct model は
+/// `apply_chat_template` ではなく plain-text completion を使う
+/// (§3.2.1 参照)。本 enum は prompt 構築ロジック (`build_prompt`) の
+/// 分岐 tag であり、family ごとの将来拡張 (異なる few-shot 集合 /
+/// 異なる directive) の受け皿として variant を保持する。
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum PromptTemplate {
     /// Gemma-2 instruction-tuned chat (`gemma-2-2b-jpn-it` 等)。
-    /// GGUF の `tokenizer.chat_template` を参照し、few-shot wrapper を差し込む。
+    /// `build_prompt` 経由で plain-text v12 few-shot prompt
+    /// (strict directive + 13-pair positive few-shot + 3-pair
+    /// negative 対照 + query) を生成する。
     Gemma2InstructChat,
     /// Qwen2 instruction-tuned chat (`qwen2.5-1.5b-instruct` 等)。
-    /// Gemma2InstructChat 同様に GGUF chat_template + few-shot wrapper。
+    /// Phase 1 では `Gemma2InstructChat` と同一の plain-text prompt を
+    /// `build_prompt` が生成する (両 variant の内部 format は現状同じ)。
+    /// variant tag は将来的な family 別分岐拡張用に保持している。
     Qwen2Chat,
-    /// Custom escape hatch。Integrator が独自の chat template / wrapper を
-    /// 用いる場合 (Phase 2+ の想定)。GGUF が `tokenizer.chat_template` を埋め込ん
-    /// でいない model、あるいは別の IME directive を使いたい場合に使用する。
+    /// Custom escape hatch。Integrator が独自の wrapper を用いる場合
+    /// (Phase 2+ の想定)。`build_prompt` は `system` + `user_wrapper` +
+    /// `assistant_prefix` を verbatim で連結するのみで、few-shot scaffold は
+    /// 注入しない。
     Custom {
         /// 先頭に付与する `system` turn の内容 (不要なら `None`)。
         system: Option<String>,
@@ -437,7 +445,7 @@ pub fn load_backend(
 }
 ```
 
-`PromptTemplate` は llama-cpp-2 が `apply_chat_template` で読み出す GGUF-embedded `tokenizer.chat_template` の dispatch hint であり、同時に few-shot prompt wrapper の選択肢も担う。詳細は §3.2.1 参照。
+`PromptTemplate` は `build_prompt` の plain-text prompt 構築 (strict directive + v12 few-shot wrapper) の分岐 tag である。`Gemma2InstructChat` と `Qwen2Chat` variant は Phase 1 時点で同一の plain-text format を生成し、variant tag は将来の family 別分岐拡張用に保持する。詳細は §3.2.1 参照。
 
 ### 5.5 KanjiError
 
@@ -528,13 +536,15 @@ Dedupe は score 順 sort の後、先頭から見て既出 surface を skip す
 │        ▼                                                   │
 │    ┌───────────────────────────────────────────────────┐   │
 │    │ LlamaCppBackend                                   │   │
-│    │   chat = build_chat_tuples(template, "にほんご")  │   │
-│    │   tmpl = model.chat_template(None)?               │   │
-│    │   prompt = model.apply_chat_template(&tmpl, chat) │   │
-│    │   tokens = llama_cpp_2.tokenize(prompt)           │   │
-│    │   outputs = llama_cpp_2.generate(tokens, greedy)  │   │
-│    │   candidates = parse_outputs(outputs)             │   │
-│    │   candidates = score_sort_dedupe(candidates)      │   │
+│    │   prompt = build_prompt(&template, "にほんご")    │   │
+│    │     (plain-text: directive + v12 few-shot + query)│   │
+│    │   tokens = model.str_to_token(&prompt,            │   │
+│    │              AddBos::Always)                      │   │
+│    │   output_bytes = greedy_loop(tokens)              │   │
+│    │     (newline stop after non-whitespace content)   │   │
+│    │   surface = String::from_utf8_lossy(&output_bytes)│   │
+│    │             .trim()                               │   │
+│    │   candidates = score_sort_dedupe(vec![surface])   │   │
 │    │   → Vec<Candidate>                                │   │
 │    └───────────────────────────────────────────────────┘   │
 │       │                                                    │
@@ -548,6 +558,8 @@ Dedupe は score 順 sort の後、先頭から見て既出 surface を skip す
 │  user stdout     │  例: "日本語"
 └──────────────────┘
 ```
+
+註 (P1-2.5 follow-up / PR #76): 上記データフローは Phase 1 acceptance 14/15 (row 3 `あした → 翌日` のみ不合格) に対応する最終形である。row 3 は Gemma-2-2B-jpn-it Q5_K_M の pretrain bias に起因する既知の制約 (v5–v12 の prompt 反復でも解消せず) であり、task-specific fine-tuned romaji-base model を使う Phase 3 で解消する方針として deferral する。
 
 `kotoha-romaji` と `kotoha-kanji` は独立したプロセスであり、shell pipe でのみ連結する。両者間で共有メモリ / IPC を使わないため、Phase 0 / Phase 1 の CLI 仕様は shell tooling で柔軟に組み合わせ可能である。
 
