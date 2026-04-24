@@ -81,6 +81,8 @@ Phase 5 kick-off 時点で Karukan 踏襲 (PUA 領域 `\u{ee00}-\u{ee0F}`) か�
 
 Phase 5 の拡張 special tokens 候補として `<edit>` (編集履歴), `<partial>` (未確定 prefix), `<typo-hint>` (typo tolerance 強調) を検討する。
 
+PUA id は Phase 5 kick-off で empirical 確定する (Karukan 踏襲 `\u{ee02}=<ctx>` / `\u{ee00}=<romaji>` / `\u{ee01}=<out>` / `\u{ee03}=<eos>` を初期候補とする。詳細と追加 token は [Phase 5 spec §4.5](../superpowers/specs/2026-04-25-kotoha-phase-5-custom-model.md) を参照)。
+
 ### D5. 外部 HuggingFace tokenizer を必須とする
 
 Kotoha の推論コードは Rust の `tokenizers` crate で `tokenizer.json` を直接 load し、llama.cpp 内蔵 tokenizer はバイパスする。これにより以下を達成する。
@@ -131,6 +133,7 @@ Phase 3 (IBus) と Phase 4 (fcitx5) は Gemma baseline で先行リリースし�
 - **学習データ品質が最終性能を支配する**: romaji 拡張規則 (Hepburn / Kunrei / waapuro) と typo 注入規則 (edit distance 1-3) の設計品質が、Phase 5 完了時の accuracy を決める
 - **B3 distillation は teacher の Japanese quality に下限を制約される**: Gemma-4-31B-it 等の teacher が row 3 相当の synonym bias を持つ場合、student にも波及する可能性があり、evaluation で確認が必要
 - **Phase 6 完遂までの schedule が延びる**: Phase 5 の data pipeline + training + evaluation で 3〜6 ヶ月程度を見込む。Phase 6 (旧 Phase 5) の着手時期は Phase 5 完了に連動する
+- Phase 5 は手動 training を前提とし、CI-driven training pipeline の自動化は Phase 6 以降へ延期する (spec §7 参照)。
 
 ## Alternatives considered
 

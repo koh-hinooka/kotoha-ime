@@ -52,7 +52,7 @@ Data pipeline は kana→kanji ペアの大規模コーパス構築を担う。�
 学習戦略候補 3 本の empirical 比較と default 決定を担う。
 
 - B1: scratch training (GPT-2 Small 90M、random init、RTX 4090 で 1〜3 GPU-day)
-- B2: LoRA fine-tune (Gemma-2-2B-jpn-it adapter、inference 時 base 必要のため候補から除外推奨)
+- B2: LoRA fine-tune (Gemma-2-2B-jpn-it adapter、inference 時 base 必要のため候補から除外推奨。offline batch 用途での再検討余地あり。詳細は Phase 5 spec §5.2)
 - B3: distillation (Gemma-4-31B-it 等を teacher、90〜180M student、数 GPU-day、**default 推奨**)
 - 比較計画: B1 と B3 を同一評価 fixture で走らせ、row 3 解消率 / typo robustness / latency の 3 軸で判定する
 
@@ -82,5 +82,5 @@ Data pipeline は kana→kanji ペアの大規模コーパス構築を担う。�
 ## 注記
 
 - Phase 5 への restructure (ADR 0010) により、旧 Phase 5 (Advanced features) は Phase 6 へ、旧 Phase 6 (UX polish) は Phase 7 へ後ろ倒しされた
-- 旧 Phase 5 の「Shift 挙動設定」は、設計書 revision 2 の判断により Phase 0 に前倒し済み。新 Phase 6 の内容は「タイポ訂正 + 文脈リランキング」のみ
+- 旧 Phase 5 の「Shift 挙動設定」は、Phase 0 設計書 (`docs/superpowers/specs/2026-04-22-kotoha-phase-0-design.md`) revision 2 の判断により Phase 0 に前倒し済み。新 Phase 6 の内容は「タイポ訂正 + 文脈リランキング」のみ
 - 各 Phase の設計書は `docs/superpowers/specs/` に配置する

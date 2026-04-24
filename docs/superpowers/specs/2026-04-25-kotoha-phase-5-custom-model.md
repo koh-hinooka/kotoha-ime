@@ -139,7 +139,7 @@ Phase 5 の実装範囲は以下 5 項目とする。
 
 - Phase 1 の `BackendConfig::LlamaCpp { model_path, prompt_template }` に加え、Phase 5 で `BackendConfig::KotohaNative { model_path, tokenizer_path }` variant を追加する
 - 外部 HuggingFace tokenizer を `tokenizers` crate で load する
-- 推論本体は llama-cpp-2 を使用するが、tokenize / detokenize の I/O boundary は `tokenizers` に委譲する
+- 推論本体は llama-cpp-2 を使用する (Phase 5 kick-off で他 inference backend との比較を行い確定、stub 段階では default candidate として記述)。ただし tokenize / detokenize の I/O boundary は `tokenizers` に委譲する
 - beam search で partial-input 候補 top-k を算出する
 - Sudachi 辞書 fallback を OOV (Out-Of-Vocabulary) 検知時の後段として併用する
 
