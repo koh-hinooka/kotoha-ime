@@ -9,6 +9,9 @@ pub mod kana;
 pub mod kanji;
 pub mod romaji;
 
+#[cfg(feature = "dict")]
+pub mod dict;
+
 pub use error::{Error, Result};
 pub use input::{InputContext, InputMode, InputStep};
 pub use kanji::{load_backend, BackendConfig, Candidate, ConvertOptions, KanjiBackend, KanjiError};
