@@ -12,9 +12,27 @@ description = "Kotoha: command-line frontend for manual verification of the Koto
 kotoha-core = { path = "../kotoha-core" }
 clap = { workspace = true }
 
+[features]
+# Default feature set is empty so `cargo build -p kotoha-cli` remains fast
+# and does not trigger the llama.cpp C++ build. P1-3 adds an opt-in
+# `llama-cpp` feature that propagates to `kotoha-core/llama-cpp`, enabling
+# the `kotoha-kanji` binary to consume the Layer 3 backend.
+default = []
+llama-cpp = ["kotoha-core/llama-cpp"]
+
 [[bin]]
 name = "kotoha-romaji"
 path = "src/bin/romaji.rs"
 
-# src/lib.rs は process_line / format_line_output を unit-testable に切り出すために存在する。
-# binary 側は `use kotoha_cli::process_line;` 等でライブラリ層を参照する。
+# `kotoha-kanji` is gated on the `llama-cpp` feature so default builds
+# (including `cargo build --workspace` without features) do not attempt to
+# compile the llama.cpp C++ sources. Enable with
+# `cargo build -p kotoha-cli --bin kotoha-kanji --features llama-cpp`.
+[[bin]]
+name = "kotoha-kanji"
+path = "src/bin/kanji.rs"
+required-features = ["llama-cpp"]
+
+# src/lib.rs は process_line / format_line_output (Phase 0 romaji 用) と
+# kanji_cli module (P1-3 の kotoha-kanji 用 pure helper) を unit-testable
+# に切り出すために存在する。binary 側は `use kotoha_cli::...` で参照する。
