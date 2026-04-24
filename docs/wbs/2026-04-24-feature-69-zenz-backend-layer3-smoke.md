@@ -116,7 +116,124 @@ Zenz-v2.5-medium GGUF model が実装セッション内で未入手のため、e
     - `from_utf8_lossy` 適用時の silent substitution に `tracing::warn!` を入れる案
     - Layer 3 test helper の `.expect(...)` メッセージの改善
 
-## P1-2-9 empirical verification (deferred — requires user-provided model)
+## P1-2-9 empirical verification 実施結果 (2026-04-24、Option A pivot — zenz-v3.1-small-gguf)
+
+本 section は Option A (gated spec default `zenz-v2.5-medium-gguf` を諦め、公開 repo の `Miwa-Keita/zenz-v3.1-small-gguf` で empirical 検証) を実施した結果である。**結論: v3.1-small は Kotoha の現行実装にとって drop-in 代替として使用不可**。詳細は以下。
+
+### Download / 検体同定
+
+| 項目 | 値 |
+|------|-----|
+| Repo | `Miwa-Keita/zenz-v3.1-small-gguf` (公開、auth 不要) |
+| File | `ggml-model-Q5_K_M.gguf` |
+| 入手経路 | `curl -L https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf/resolve/main/ggml-model-Q5_K_M.gguf` |
+| size | 74 MiB (file) / 70.26 MiB (model weights、GGUF ヘッダ込み) |
+| GGUF magic | `G G U F` 4 bytes 先頭で確認 OK |
+| SHA-256 | `4de930c06bef8c263aa1aa40684af206db4ce1b96375b3b8ed0ea508e0b14f6c` |
+| local path | `$HOME/.cache/kotoha/models/zenz-v3.1-small-gguf/ggml-model-Q5_K_M.gguf` |
+
+### なぜ v3.1-small を pivot 先に選んだか
+
+spec §3.2 default の `Miwa-Keita/zenz-v2.5-medium-gguf` は HuggingFace API が HTTP 401 を返す gated repository であり、本セッション内での実施不能。公開 Zenz 系 GGUF の中で最も新しく (2025-08-30 更新)、直近 30 日 DL 5194 と community 採用が最も厚い `zenz-v3.1-small-gguf` を選んだ。v3 系の prompt format `<context><input_katakana>{input}<output></s>` は Kotoha の `build_prompt` 実装と一致する想定であった (しかし後述の通り、v3.1-small では成立しないことが判明した)。
+
+### Layer 3 smoke test outcome (全 5 件 FAIL)
+
+```bash
+export KOTOHA_ZENZ_MODEL_PATH="$HOME/.cache/kotoha/models/zenz-v3.1-small-gguf/ggml-model-Q5_K_M.gguf"
+cargo test -p kotoha-core --features zenz-smoke --test kanji_zenz_smoke -- --nocapture --test-threads=1
+```
+
+結果: **0 passed / 5 failed** (all tests panic at `ZenzBackend::load`)。
+
+全 5 件ともに同一の panic:
+
+```
+llama_model_load: error loading model: error loading model vocabulary:
+  unknown pre-tokenizer type: 'gpt2-small-japanese-char'
+llama_model_load_from_file_impl: failed to load model
+panicked at crates/kotoha-core/tests/kanji_zenz_smoke.rs:92:
+  Zenz backend must load from the pinned fixture path:
+  ModelLoadFailed { source: NullResult }
+```
+
+5 件の内訳は機械的に同じ理由なので、top-1 substring 検証は一切行えなかった (load 段で全件中断)。
+
+### モデル構造の解析 (なぜ load に失敗したか)
+
+GGUF metadata を dump すると、本 model は `zenz-v2` 系とは **アーキテクチャが異なる** ことが判明した:
+
+| GGUF KV field | 値 | 備考 |
+|---------------|------|------|
+| `general.architecture` | `gpt2` | **llama 系ではない**。llama.cpp 本体の GPT-2 サポート (static subset) が必要 |
+| `general.name` | `Gpt2 Small Japanese Char` | Character-level 日本語 GPT-2 (京大 NLP) をベースに fine-tune |
+| `general.organization` | `Ku Nlp` | 京都大学 NLP (`ku-nlp/gpt2-small-japanese-char`) 派生 |
+| `general.finetune` | `japanese-char` | |
+| `general.size_label` | `small` | |
+| `general.version` | `v3.1` | |
+| `gpt2.block_count` | 12 | |
+| `gpt2.context_length` | 1024 | |
+| `gpt2.embedding_length` | 768 | |
+| `tokenizer.ggml.model` | `gpt2` | GPT-2 byte-level BPE |
+| `tokenizer.ggml.pre` | `gpt2-small-japanese-char` | **これが llama.cpp 0.1.145 同梱版に未登録のため load 不能** |
+| tokens (total) | 6000 | zenz-v2.5 系の vocab 規模と桁違いに小さい |
+
+直接の load 失敗原因は `tokenizer.ggml.pre = "gpt2-small-japanese-char"` の pre-tokenizer identifier が llama-cpp-2 0.1.145 が bundling する llama.cpp 内の pre-tokenizer allow-list に登録されていないこと。これは upstream llama.cpp 側で明示的 allow-list 方式を採用しており、未登録 pre-tokenizer は load 時に reject される仕様である (security 前提)。回避には llama.cpp upstream patch の PR 待ち or 自前 patch が必要となり、Phase 1 scope 外である。
+
+### PUA token verification (致命的な不整合)
+
+より重要な論点として、**v3.1-small は Kotoha `build_prompt` が前提とする PUA token を一切持たない**。
+
+```python
+# gguf python reader で全 6000 token を走査した結果
+PUA (U+E000..U+F8FF) token 数: 0
+"katakana" / "context" / "input" / "output" 含有 token 数: 0
+先頭 30 token: [UNK], [PAD], <s>, </s>, !, ", #, ..., : (ASCII 記号)
+vocab: byte-level BPE (UTF-8 byte fragments of hiragana/kanji)
+```
+
+一方 Kotoha `build_prompt` は spec §5.6 に準拠して:
+
+- U+EE00 = `<context>` (placeholder)
+- U+EE01 = `<input_katakana>` (placeholder)
+- U+EE02 = `<output>` (placeholder)
+
+を prompt 中に挿入する。v3.1-small はこれらの special token を vocab に持たないため、仮に load に成功していたとしても prompt format が model の訓練時契約と合致せず、出力は完全に garbage になる。
+
+これは v3.1-small が zenz-v2 系とは **別モデル系統** であることを示している。v3 系 README (AzooKey docs) の `<context><input_katakana><output></s>` format はおそらく同名の別 variant (`zenz-v3-xsmall`、`zenz-v3-small` など) ないし author の命名方針変更を意味しており、`v3.1-small` は別物の可能性が高い。
+
+### Latency 測定
+
+model load 自体が 0.03 秒以内に失敗するため、**cold start / warm cache latency は測定不能** (load が成立しないため意味をなさない)。
+
+cargo test 全体の壁時計は 0.37 秒 (build はすでに完了していた prior cache を再利用)。
+
+### Fixture TSV 更新の要否
+
+**不要** (現 fixture で対応できる model が無いため、fixture 行の実測値への修正は意味がない)。v2.5-medium (gated) が入手できた時点で改めて empirical 実施する。
+
+### ADR 0009 (P1-4) への入力 — 決定的な含意
+
+本 empirical 結果は ADR 0009「Phase 1 default Zenz model の選定」の判断材料を大幅に塗り替えた:
+
+1. **選択肢 2 (`zenz-v3.1-small-gguf` に差し替え) は却下**:
+   - llama.cpp 0.1.145 が `gpt2-small-japanese-char` pre-tokenizer を認識しないため、load 不能。
+   - 仮に patched llama.cpp で load 通しても、PUA special token を持たないため `build_prompt` format が一切効かない。
+   - architecture が `gpt2` (not `llama`) で、推論 pass 自体が別経路を必要とする可能性。
+2. **選択肢 1 (spec default `zenz-v2.5-medium-gguf` を維持) が優位**:
+   - gated ではあるが HF 上に存在する(HTTP 401 は未 auth / access 未承認の挙動であり、model 自体は生きている)。
+   - v2.5 系は v3.1 と別系統 (v2.5 = llama 系、v3.1 = gpt2 系) のため、Kotoha の現行 prompt format 前提は v2.5 系固有である可能性が高い。
+3. **選択肢 3 (CLI `--model` 必須 + README に両論併記) が次善**:
+   - v2.5-medium gated ユーザには v2.5 系、public なユーザには現時点では該当なし。
+   - 将来 `zenz-v2-gguf` (`Miwa-Keita/zenz-v2-gguf`, 公開) を第二候補として empirical 検証する手がある。
+4. **新規論点**: Kotoha の `build_prompt` 実装は「v2.5-medium 訓練時の special token layout」に強く依存している可能性が高い。ADR 0009 では「どの Zenz variant を sustain 対象とするか」を単なる default 問題ではなく「prompt format ABI を何にロックするか」として議論すべき。
+
+### 申し送り
+
+- P1-2-9 empirical 本番 (v2.5-medium) は spec default を変更しない限り user の HF auth + gated access request が前提となる。
+- もし public な代替を探す場合、次の empirical 候補は `Miwa-Keita/zenz-v2-gguf` (`zenz-v2-Q5_K_M.gguf`)。v2 系は v3 系と tokenizer architecture が異なる可能性があり、再度 `gpt2` vs `llama` の判定から始める必要がある。
+- llama.cpp upstream の pre-tokenizer allow-list に `gpt2-small-japanese-char` を追加する PR は本プロジェクト scope 外。もし Zenz 著者自身が upstream に patch を投げていれば llama-cpp-2 の version bump で解決する可能性はあるが、現時点 (0.1.145) では未対応。
+
+## P1-2-9 empirical verification (deferred — 当初 WBS、未実施時の記述)
 
 Zenz-v2.5-medium GGUF が実装セッション内で未入手のため、Phase 1 follow-up として user が実施する。本セッションで確認した環境制約と代替手段を以下に記す。
 
