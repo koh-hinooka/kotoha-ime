@@ -410,3 +410,99 @@ v3.1-small と **完全に同一の失敗モード**。load 段階で vocab が 
 - Phase 1 の zenz backend を実運用可能にするには **Option B (自前 HF model から GGUF 再変換し pre-tokenizer を llama-compat に調整) または Option C (llama-cpp-2 が `gpt2-small-japanese-char` を support する version へ bump)** が必須。
 - 本 empirical verification 自体のタスクは「Option A 不成立を確定させる」ことが deliverable として完了した。ADR 0009 更新と次手段選定は P1-4 docs bundle に繰延する。
 
+## P1-2-9 model selection pivot (2026-04-24、Zenz 系全 blocker を受けた再設計)
+
+### 背景
+
+zenz-v3.1-small-gguf / zenz-v2-gguf の empirical verification が `tokenizer.ggml.pre = gpt2-small-japanese-char` という llama.cpp 未登録 pre-tokenizer により load 段階で abort した。upstream llama.cpp master にも該当文字列は未登録のため、llama-cpp-2 version bump でも解消不可と判明 (ggerganov/llama.cpp `src/llama-vocab.cpp` 直接確認)。Miwa-Keita 著者の spec default `zenz-v2.5-medium-gguf` は別途 gated + 認証失敗 (401/404)。→ Phase 1 backend を Zenz 系以外の日本語対応 LLM へ pivot する判断となった。
+
+本 section は scratch 3 files (`p1-2-9-alternative-models-research.md` / `p1-2-9-gemma-investigation.md` / `p1-2-9-empirical-3way-comparison.md`、計 451 行) の調査結果を consolidate したものである。元の scratch は本 commit で削除した。
+
+### 代替候補調査 (Category A: kana→kanji 専用モデル、Zenz 以外)
+
+HuggingFace 網羅検索 (`/api/models?search=kana+kanji`, `search=japanese+ime`, `search=kana` 各 limit 20) の結果:
+
+- `fujie/kana_kanji_20240307` — safetensors only、GGUF なし。
+- `mradermacher/kanji-2-kana-gemma3-1b-GGUF` — 方向が逆 (漢字→かなの ruby 用途)。
+- `yuuki14202028/gpt2-kanakanji` — safetensors only、同じ gpt2-japanese 系罠の懸念。
+
+→ 公開されている kana→kanji specialized open model は事実上 Zenz family のみ。非 Zenz 路線は必然的に汎用 Japanese-capable small LLM + prompt engineering になる。
+
+### 代替候補調査 (Category B: 汎用 Japanese small LLM)
+
+| 順位 | Model | arch | pre | size (Q5_K_M) | license |
+|---|---|---|---|---|---|
+| 1 | Qwen2.5-1.5B-Instruct | qwen2 | qwen2 | 1.29 GB | Apache 2.0 |
+| 2 | Gemma-2-2B-jpn-it (Google 日本語 native FT、2024-10) | gemma2 | default | 1.92 GB | Gemma |
+| 3 | Gemma-3-1B-it | gemma3 | default | 0.85 GB | Gemma |
+
+### Gemma family 調査 (ユーザ指摘、google/collections 起点)
+
+Gemma 1 / Gemma 2 (2b/9b/27b + jpn FT) / Gemma 3 (1b/4b/12b/27b + 270m) / Gemma 3n (mobile MatFormer) / Gemma 4 (E2B/E4B/31B/26B-A4B、2026-04-10 リリース、license を Apache 2.0 に変更) の 5 世代を確認。llama-cpp-2 0.1.145 の bundle llama.cpp commit は `e21cdc11` (2026-04-13) で `LLM_ARCH_GEMMA4` + `LLAMA_VOCAB_PRE_TYPE_GEMMA4` 対応済と直接確認。Gemma 4 E2B (Q4_K_M 3.11 GB) は Phase 1 2GB budget 超過のため Phase 2 検討扱い。
+
+### 3-way head-to-head empirical 比較 (llama-cpp-python via uvx)
+
+Test cases (Layer 3 fixture と同一): にほんご/かんじ/あした/やまださん/ことば → 日本語/漢字/明日/山田/言葉。
+
+実行環境: llama-cpp-python 0.3.20 (uvx 経由、初回 source build) / AMD Zen3 (`-march=znver3`、ggml CPU backend、OpenMP) / `n_ctx=2048` `n_batch=256` `n_threads=4` `temperature=0.0` `max_tokens=32` `seed=0` / Chat template は llama-cpp-python が GGUF 埋め込み template を自動適用。Prompt は system + few-shot 2 例 (`わたし→私`, `ありがとう→有難う`) + target 入力で 3 モデル同一。
+
+| Model | Pass | Avg latency | Cold load | License | Size |
+|---|---|---|---|---|---|
+| **Gemma-2-2B-jpn-it Q5_K_M** | **5/5** | 4,105 ms | 10.6 s | Gemma | 1.92 GB |
+| Qwen2.5-1.5B-Instruct Q5_K_M | 3/5 | 3,264 ms | 1.3 s | Apache 2.0 | 1.29 GB |
+| Gemma-3-1B-it Q5_K_M | 2/5 | 3,984 ms | 3.7 s | Gemma | 0.85 GB |
+
+Per-case top-1:
+
+- にほんご: Gemma-2-jpn=日本語 PASS / Qwen=日本語 PASS / Gemma-3=日本語 PASS
+- かんじ: Gemma-2-jpn=漢字 PASS / Qwen=カンジ FAIL (katakana 化) / Gemma-3=感謝します FAIL (hallucination)
+- あした: Gemma-2-jpn=明日 PASS / Qwen=明日 PASS / Gemma-3=します FAIL (hallucination)
+- やまださん: Gemma-2-jpn=山田さん PASS (敬称保持) / Qwen=やまださん FAIL (変換せず) / Gemma-3=又楽ます FAIL (hallucination)
+- ことば: Gemma-2-jpn=言葉 PASS / Qwen=言葉 PASS / Gemma-3=言葉 PASS
+
+### 勝者: Gemma-2-2B-jpn-it (Q5_K_M、1.92 GB)
+
+- narrow task (kana→kanji) に対する日本語 native SFT の優位性が empirical に確認された。
+- 敬称「さん」を自然に保持 (IME として正しい挙動)。
+- Cold load 10.6s + 5 × 4.1s ≈ 31s → spec §8.3 target (10〜30s) に fit。
+- Gemma license は商用 attribution-based 利用可。OSS 公開時は license ファイル同梱と Gemma Terms of Use (<https://ai.google.dev/gemma/terms>) への compliance が必要。ADR 0009 で明文化する。
+- community GGUF 採用候補: `bartowski/gemma-2-2b-jpn-it-GGUF` (または grapevine-AI / MCZK の imatrix 版)。いずれも Google 公式 `google/gemma-2-2b-jpn-it` の重みを量子化した再配布。
+
+### Phase 2 migration 参考候補 (ユーザ指摘の 31B 系 2 repo)
+
+いずれも Phase 1 採用外 (31B dense ≈ 13〜18 GB、2GB budget の 6〜9 倍)。Phase 2 の tiered model 設計時に候補化する。
+
+- **`Jackrong/Gemopus-4-31B-it-GGUF`** (2026-04-15、Apache 2.0、5119 DL/month): `google/gemma-4-31B-it` の community SFT 派生。"Gemopus" = Gemma + Opus の命名のみで Claude 関連性は無し。philosophy は "stability first" (Gemma 4 native reasoning order を保持、英語 answer quality / structure / clarity / consistency 改善に focus)、Claude-style CoT distillation を明示的に拒否。Unsloth + post-fix gradient accumulation で訓練。Quantization は BF16 / Q3_K_M / Q4_K_M / Q5_K_M / Q5_K_S / Q6_K / Q8_0 + mmproj.gguf の 7 variant。tags は gguf / gemma / gemma4 / instruction-tuned / reasoning / alignment / text-generation、言語は en/zh/ko (ja は frontmatter には記載されるが tags には無し → JP 能力は base 継承のみで SFT 方向性は英語 reasoning)。**Phase 1 判定: 不適合** (31B ≥ 13 GB even at Q3_K_M、Phase 1 budget の 6〜9 倍超過、FT 方向が英語寄りで narrow JP task への寄与は期待薄)。
+- **`batiai/gemma-4-31B-it-GGUF`** (2026-04-18、2057 DL/month): `google/gemma-4-31B-it` の純粋 GGUF quantization (FT なし、base-only)。作者 BatiAI は商用 AI 企業 (macOS 向け BatiFlow product あり)。focus は macOS Apple Silicon Metal on-device inference (Ollama 経由)。Quantization は IQ3_M / IQ4_XS (imatrix) / Q4_K_M / Q6_K + mmproj-BF16 / mmproj-Q6_K の 4 quant + 2 mmproj。tags は imatrix / apple-silicon / ollama / multimodal / vision / on-device。license tag は `other` / `license_name: gemma` / link は <https://ai.google.dev/gemma/terms> を記載するが、**upstream Google `google/gemma-4-31B-it` API は現時点で `apache-2.0` を返すため batiai の frontmatter は pre-release の stale metadata である可能性が高い** (Phase 2 採用検討時に再確認要)。**Phase 1 判定: 不適合** (size reality は Gemopus と同じ)、ただし base-only quantization として cleaner で、Phase 2 の tiered migration で GPU/Metal acceleration 追加時の候補として記録に残す。
+
+両 repo とも multimodal (vision) 対応だが Phase 1 は text-only のため mmproj は不要。
+
+### ADR 0009 (P1-4 で起票) への input 集約
+
+- Phase 1 default: **Gemma-2-2B-jpn-it Q5_K_M** (empirical 5/5 PASS、spec §8.3 latency target fit)。
+- Phase 2 migration candidates (GPU/Metal acceleration 前提): Gemma 4 E2B (Apache 2.0)、batiai/gemma-4-31B-it (純粋 quantization、Metal 最適化)。Jackrong/Gemopus は英語寄り SFT のため narrow JP task には不向きとして候補外。
+- license 方針: Apache 2.0 (Qwen / Gemma 4) を優先、Gemma license (Gemma 2 / 3) は attribution + propagation 条件で OSS 互換と判断するが終局的には ADR 0009 で Gemma Terms of Use の全条項 review を実施する。
+- Zenz family: architectural blocker (gpt2-small-japanese-char) により Phase 1/2 ともに直接採用不可。Phase 3+ で upstream llama.cpp への pre-tokenizer 追加 PR または Kotoha 側での自前 pre-tokenizer 実装を検討する別 issue として分離する。
+
+### 本セッションでの handoff
+
+Phase 1 P1-2 実装 (ZenzBackend + Layer 3) は architectural には動くが empirical には未検証。新たに判明した事実:
+
+- `ZenzBackend` という名前は backend-specific すぎる → `LlamaCppBackend` 汎用化が必要。
+- `build_prompt` の PUA codepoint 実装は Gemma-2-2B-jpn-it では不要 (chat template で置換)。
+- hiragana→katakana 前処理は Gemma では不要 (native JP で hiragana 直受け可)。
+
+これらを反映する **P1-2.5 refactor milestone** を次セッションで起票する。内容:
+
+1. `superpowers:writing-plans` skill で `docs/superpowers/plans/2026-04-XX-kotoha-phase-1-p1-2-5.md` を起票。
+2. ISSUE + branch: `feature/NN-llama-cpp-backend-gemma-2-jpn`。
+3. Rename: `ZenzBackend` → `LlamaCppBackend`、`BackendConfig::Zenz { model_path }` → `BackendConfig::LlamaCpp { model_path, prompt_template: PromptTemplate }`。
+4. `PromptTemplate` enum (Gemma2InstructChat / Qwen2Chat / Custom の 3 variant)。
+5. `infer` を llama-cpp-2 の chat template API (`apply_chat_template`) 利用に改修。
+6. hiragana→katakana 前処理を削除 (Gemma template では不要)。
+7. Layer 3 fixture を 15〜20 cases に拡張 (文単位も含める)。
+8. Spec 改訂 (中程度): §3.2 default 差替、§3.3 AzooKey を historical reference に格下げ、§5.6/§6 katakana 前処理を "backend 内部依存" に抽象化。
+9. ADR 0009 draft (P1-4 正式起票の先行メモ)。
+
+scope 見積: Medium tier (10 files / 500 LOC、spec 改訂込)、所要 1 day。既存 PR #70 は revert せず forward refactor (Zenz attempt を architectural blocker で不採用とした経緯は commit 本文で保持)。
+
