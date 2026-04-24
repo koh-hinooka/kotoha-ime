@@ -142,10 +142,10 @@ SudachiDict は core (約 70MB) と full (約 500MB) の 2 variant を提供す�
 | 項目 | SudachiDict-core | SudachiDict-full |
 |---|---|---|
 | size | 約 70MB | 約 500MB |
-| 収録語彙数 | 約 75 万 | 約 90 万 |
+| 収録語彙数 | 約 76 万 entries (lemma + 活用形含む、lemma 単位では約 20 万) | 約 90 万 entries |
 | 固有名詞 recall | 中 | 高 |
 | 配布ライセンス | Apache-2.0 | Apache-2.0 |
-| IME 常駐 footprint | 許容 | Phase 1 の 1.92GB と合算で約 2.4GB に膨張 |
+| IME 常駐 footprint | 許容 | Phase 1 の Gemma-2-2B-jpn-it Q5_K_M 1.92GB + SudachiDict-full 約 500MB で合算約 2.4GB に膨張 |
 
 Phase 2 default は core を採用する方針とし、recall が P2-D の golden fixture で不足と判定された場合のみ full への切替を検討する。
 
@@ -246,7 +246,7 @@ Phase 2 で新規に必要となる option を整理する。2 案ある。
 - **案 1** (既存拡張): 既存の `ConvertOptions` 型に `use_dictionary: bool` / `use_learning_cache: bool` 等の field を追加する
 - **案 2** (別型分離): `ConvertOptions` は Phase 1 のまま維持し、別型 `Phase2ConvertOptions { base: ConvertOptions, use_dictionary: bool, ... }` を新設する
 
-default 案は「案 1 の既存拡張」とする。`ConvertOptions` は `#[non_exhaustive]` で宣言し直し (Phase 1 時点の属性は要確認、P2-A kick-off で確定)、新 field は `Default::default()` の boolean default を `true` として「Phase 2 機能が default で on」の挙動を与える。
+default 案は「案 1 の既存拡張」とする。P2-A kick-off 着手前に `crates/kotoha-core/src/kanji/` 配下の `ConvertOptions` 定義で `#[non_exhaustive]` の有無を確認する。付いていなければ P2-A 最初の commit で属性を追加する (ADR 0006 方針との整合上必要)。新 field は `Default::default()` の boolean default を `true` として「Phase 2 機能が default で on」の挙動を与える。
 
 詳細は P2-A kick-off で確定する。
 

@@ -20,11 +20,11 @@ Phase 5 は data pipeline + training + evaluation で 3〜6 ヶ月の工数を�
 
 ### C3. 固有名詞と敬称の dictionary 補完価値
 
-固有名詞 (「鈴木」「山田」「新宿」) と敬称 (「さん」「様」「殿」) は、LLM の synonym bias よりも「学習分布内に存在するか否か」が recall を決める。SudachiDict (WorksApplications, Apache-2.0) は 20 万語規模の System 辞書を提供しており、Phase 2 で dictionary lookup 層を追加すれば、LLM 単体で recall が不足する語彙を構造的に補える。User dict を併設すれば、ユーザ個別語彙 (自分の名前 / 所属組織名 / 業界固有語) も明示登録で覆える。
+固有名詞 (「鈴木」「山田」「新宿」) と敬称 (「さん」「様」「殿」) は、LLM の synonym bias よりも「学習分布内に存在するか否か」が recall を決める。SudachiDict (WorksApplications, Apache-2.0) は約 76 万 entries (lemma + 活用形含む、lemma 単位では約 20 万) の System 辞書を提供しており、Phase 2 で dictionary lookup 層を追加すれば、LLM 単体で recall が不足する語彙を構造的に補える。User dict を併設すれば、ユーザ個別語彙 (自分の名前 / 所属組織名 / 業界固有語) も明示登録で覆える。
 
 ### C4. SudachiDict Apache-2.0 の OSS 互換性
 
-Kotoha は OSS として公開予定であり、依存辞書の再配布ライセンスが採用可否を支配する。SudachiDict は Apache-2.0 で公開されており、Kotoha 本体想定 OSS ライセンスと両立する。MeCab + UniDic を組合せる選択肢は、UniDic の配布条件が商用利用で制約を受ける運用形態があり、Phase 2 で採用すべきではない (glossary §8 MeCab / UniDic / fugashi の項を参照)。Phase 5 P5-A PoC でも SudachiDict を採用済であり、Phase 2 で同一辞書を流用することで学習データと推論 runtime の語彙整合も取れる。
+Kotoha は OSS として公開予定であり、依存辞書の再配布ライセンスが採用可否を支配する。SudachiDict は Apache-2.0 で公開されており、Kotoha 本体想定 OSS ライセンスと両立する。MeCab + UniDic を組合せる選択肢は、UniDic の配布条件が商用利用で制約を受ける運用形態があり、Phase 2 で採用すべきではない (`docs/wiki/glossary.md` §8 MeCab / UniDic / fugashi 参照)。Phase 5 P5-A PoC でも SudachiDict を採用済であり、Phase 2 で同一辞書を流用することで学習データと推論 runtime の語彙整合も取れる。
 
 ## Decision
 
@@ -94,7 +94,7 @@ Phase 5 で `KotohaNative` backend が追加される際も、本 ADR の Dictio
 
 - **2 layer (LLM + Dictionary) の保守コストが追加される**: Phase 1 の LLM 単層と比較し、Dictionary 初期化 / User dict 永続化 / Learning cache sync の 3 path を Phase 2 で追加実装する必要がある
 - **Rerank tuning が P2-D に集中する**: D5 の初期重み (dict 0.95 / LLM 1.0) は empirical tuning を前提とし、P2-D で 100〜200 件規模の fixture で evaluation する工数が要る。D5 の値は暫定であり、P2-D の結果で再確定する
-- **Sudachi binary の 70〜500MB footprint が常駐サイズに上乗せされる**: SudachiDict-core は 70MB、full は 500MB。Phase 1 の Gemma-2-2B-jpn-it 1.92GB と合算すると IME 常駐 size が増大する。Phase 5 custom model (ADR 0010 D6, ≤ 200MB) への移行で total size は改善見込みだが、Phase 2 単体では footprint 増が避けられない
+- **Sudachi binary の 70〜500MB footprint が常駐サイズに上乗せされる**: SudachiDict-core は約 70MB、full は約 500MB。Phase 1 の Gemma-2-2B-jpn-it Q5_K_M (1.92GB) と合算すると、core 採用で約 2.0GB、full 採用で約 2.4GB の常駐 footprint になる。Phase 2 default は core、full は opt-in に限定する方針。Phase 5 custom model (ADR 0010 D6, ≤ 200MB) への移行で total size は改善見込みだが、Phase 2 単体では footprint 増が避けられない
 
 ### Phase 2 spec との整合
 
@@ -118,7 +118,7 @@ Phase 5 で `KotohaNative` backend が追加される際も、本 ADR の Dictio
 
 ### D. 独自 dict format only (SudachiDict を採用しない)
 
-**Rejected.** SudachiDict は Apache-2.0 / 20 万語規模 / 形態素解析済 / Phase 5 P5-A PoC で採用実績あり、の 4 条件を満たす。独自 dict format を Phase 2 で新設すると、(a) 20 万語規模の初期辞書作成工数が別途発生し、(b) Phase 5 data pipeline (ADR 0010 Phase 5 spec §3.1) との辞書整合が取りにくくなる。Kotoha 独自語彙は SudachiDict の上に薄い補完レイヤーとして merge するのが合理的である (Phase 2 spec §4.2 参照)。
+**Rejected.** SudachiDict は Apache-2.0 / 約 76 万 entries (lemma + 活用形含む) / 形態素解析済 / Phase 5 P5-A PoC で採用実績あり、の 4 条件を満たす。独自 dict format を Phase 2 で新設すると、(a) 約 76 万 entries 規模の初期辞書作成工数が別途発生し、(b) Phase 5 data pipeline (ADR 0010 Phase 5 spec §3.1) との辞書整合が取りにくくなる。Kotoha 独自語彙は SudachiDict の上に薄い補完レイヤーとして merge するのが合理的である (Phase 2 spec §4.2 参照)。
 
 ## Related documents
 
