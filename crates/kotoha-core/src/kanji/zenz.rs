@@ -16,6 +16,7 @@ use crate::kanji::{Candidate, ConvertOptions, KanjiBackend, KanjiError};
 /// **P1-1: all methods panic via `todo!()`. P1-2 supplies the real
 /// implementation backed by llama-cpp-2.**
 #[allow(dead_code)]
+#[derive(Debug)]
 pub struct ZenzBackend {
     model_path: PathBuf,
     _placeholder: (),
@@ -24,9 +25,12 @@ pub struct ZenzBackend {
 impl ZenzBackend {
     /// Loads a Zenz GGUF model from `model_path`.
     ///
-    /// # P1-1
+    /// # P1-1 status
     ///
-    /// Panics with `todo!()` unconditionally.
+    /// Returns [`KanjiError::Backend`] with a "not yet implemented (P1-2)"
+    /// reason. This is a safe error — not a panic — so that callers going
+    /// through [`crate::kanji::load_backend`] with the `zenz` feature enabled
+    /// receive a typed error instead of a process abort.
     ///
     /// # P1-2 (planned)
     ///
@@ -35,13 +39,15 @@ impl ZenzBackend {
     ///
     /// # Errors
     ///
-    /// After P1-2 lands:
-    ///
-    /// - [`KanjiError::ModelNotFound`] if `model_path` does not exist.
-    /// - [`KanjiError::ModelLoadFailed`] if llama-cpp-2 rejects the file.
+    /// - P1-1: [`KanjiError::Backend`] unconditionally.
+    /// - P1-2 (planned): [`KanjiError::ModelNotFound`] if `model_path` does
+    ///   not exist; [`KanjiError::ModelLoadFailed`] if llama-cpp-2 rejects
+    ///   the file.
     #[allow(unused_variables)]
     pub fn load(model_path: &Path) -> Result<Self, KanjiError> {
-        todo!("P1-2: implement via llama-cpp-2")
+        Err(KanjiError::Backend {
+            reason: "ZenzBackend is a P1-1 skeleton; real implementation lands in Phase 1 milestone P1-2".to_string(),
+        })
     }
 }
 
@@ -53,5 +59,25 @@ impl KanjiBackend for ZenzBackend {
     #[allow(unused_variables)]
     fn convert(&self, input: &str, options: &ConvertOptions) -> Result<Vec<Candidate>, KanjiError> {
         todo!("P1-2: implement via llama-cpp-2")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zenz_load_returns_backend_error_in_p1_1_skeleton() {
+        let err = ZenzBackend::load(Path::new("/tmp/nonexistent.gguf"))
+            .expect_err("ZenzBackend::load must error in P1-1 skeleton, not panic");
+        match err {
+            KanjiError::Backend { reason } => {
+                assert!(
+                    reason.contains("P1-2"),
+                    "reason should point to P1-2 implementation: {reason}"
+                );
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
     }
 }
