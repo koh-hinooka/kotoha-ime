@@ -24,3 +24,10 @@ clap = { version = "4.5", features = ["derive"] }
 # Adopted reason: latest stable (0.1.145, MIT OR Apache-2.0, active maintainer).
 # Alternatives rejected per spec §3.1: llama_cpp-rs (stale 2y), mistral.rs (MSRV 1.88), Candle (orthogonal).
 llama-cpp-2 = "0.1"
+# sudachi.rs pinned via P2-A Q1 (brainstorming, 2026-04-25).
+# Adopted reason: SudachiDict-core を native Rust で読込可能、P5-A PoC と辞書整合、Apache-2.0。
+# Alternatives rejected per P2-A spec §3.1 Q1:
+#   - lindera: MeCab-IPADIC / UniDic 要求(UniDic は商用利用制約)
+#   - vibrato: SudachiDict native 非対応(short/middle/long unit 不可)
+#   - SudachiDict→MeCab 変換: WorksApplications 公式提供なし、精度保証なし
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "90fd6068c80c" }
