@@ -14,3 +14,18 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+
+[features]
+default = []
+# `mock-backend` exposes the deterministic MockBackend to cross-crate integration tests.
+# Cannot be reduced to `#[cfg(test)]` because downstream test files live in a separate
+# crate (the `tests/` directory) and need the public surface.
+mock-backend = []
+# `zenz` gates ZenzBackend. In P1-1 this is an empty flag (no `dep:llama-cpp-2`) because
+# the real backend skeleton only contains todo!() stubs. P1-2 will replace this with
+# `zenz = ["dep:llama-cpp-2"]` once the llama-cpp-2 dependency is wired up.
+zenz = []
+# `zenz-smoke` is the opt-in gate for Layer 3 live-inference smoke tests (added in P1-2).
+# Kept separate from `zenz` so that lefthook pre-push, which only runs default features,
+# does not attempt to load a real GGUF model.
+zenz-smoke = ["zenz"]
