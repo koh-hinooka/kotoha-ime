@@ -451,6 +451,27 @@
 - **対応する identifier**: 未実装 (Phase 5 kick-off で詳細化)
 - **備考**: P5-A PoC の scope 外。Phase 5 kick-off 時に比率と分割基準を確定する。
 
+### Mixed JP/EN input (JP/EN 混在入力)
+
+- **定義**: 日本語と英語が 1 行内で混在する romaji 入力ストリーム。例: `tuginocommitwoshuuseisitepull requestwodasite` はユーザー意図として「次のcommitを修正してpull requestを出して」を表し、`commit` / `pull request` は英字列のまま出力することが期待される。
+- **初出**: ADR 0010 C4 / D8 (Phase 5 primary goal に mixed JP/EN 要件追加) / Phase 5 spec §1.5 / §3.5
+- **対応する identifier**: Phase 5 custom model が context で判定する (explicit API は持たない予定、Phase 5 実装時に確定)
+- **備考**: Phase 0 ADR 0002 が扱う Shift-triggered Transient Direct モードとは異なり、本要件は「行内に EN span が挟まる」ケースを対象とする。Phase 5 custom model の language-context detection (§3.5.1) が primary 対応、Tier 2 fallback として `InputMode::Latin` 新設案 (ADR 0010 Alternative E、現時点 Rejected) を保持する。
+
+### Language-context detection (言語文脈検出)
+
+- **定義**: Phase 5 custom model が input romaji stream 中で JP (かな / 漢字変換対象) と EN (英字出力対象) の boundary を context で判定する内部機構。decoder の hidden state に「現在 EN span 中か JP 変換対象か」の状態を保持する。
+- **初出**: ADR 0010 D8 (Phase 5 primary goal) / Phase 5 spec §3.5.1
+- **対応する identifier**: Phase 5 custom model 内部 (Phase 5 decoder の hidden state、explicit API は持たない予定)
+- **備考**: 明示的 classifier head を decoder に追加する案ではなく、decoder hidden state の暗黙学習で担わせる方針を default とする (明示 classifier は fallback)。P5-A kick-off で empirical 妥当性を検証する。
+
+### Context-aware space (文脈依存 space)
+
+- **定義**: space 文字を単一意味の変換 trigger として扱わず、「EN 文脈では word separator、JP 文脈では区切り記号 (変換 boundary hint)」の 2 義として context で解釈する model-level semantics。
+- **初出**: ADR 0010 D8 / Phase 5 spec §3.5.2
+- **対応する identifier**: Phase 5 training data + Phase 5 decoder で学習 (explicit API なし、Phase 5 実装時に確定)
+- **備考**: Phase 0 / Phase 1 の IME input layer は space = 単純な区切りとして扱ったが、Phase 5 では model が context で space の扱いを切り替える。space event の「IME layer 前処理 vs 生のまま decoder に渡す」の選択は Phase 5 kick-off で empirical 確定する (spec §3.5.2)。
+
 ## 8. 参考実装・関連エコシステム
 
 ### Karukan (`togatoga/karukan`)

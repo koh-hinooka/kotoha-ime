@@ -70,6 +70,16 @@ Phase 5 は以下 4 点を同時解決する。
 - **G3**: partial-input 対応 (`s` / `sh` / `si` 等の prefix から top-k 候補を即時算出)
 - **G4**: context-aware 変換 (周辺テキストを special token で注入し同音異義の曖昧性を解決)
 
+### 1.5 Mixed JP/EN 入力要件 (Phase 5 primary goal 追加)
+
+プログラマおよび技術ライター use case では、日本語と英語が 1 行内で混在する入力 (例: `tuginocommitwoshuuseisitepull requestwodasite` → 「次のcommitを修正してpull requestを出して」) を自然に処理する要件が本 Phase の primary goal に追加された (ADR 0010 C4 / D8)。本要件は Phase 1 row 3 (§1.1) と同系統の LLM ICL 限界事例であり、汎用 instruction-tuned LLM の prompt 指示では context 依存の言語判定を安定させるのが困難であるため、Phase 5 custom model の context-aware fine-tune で根本解決する方針を取る。
+
+Phase 5 は §1.4 の G1-G4 に加え、以下 3 点を G5-G7 として追加する。詳細は §3.5 と §4.7 を参照する。
+
+- **G5**: language-context detection (input romaji stream 中で JP / EN boundary を decoder hidden state で暗黙判定)
+- **G6**: context-aware space handling (space を word separator と変換 trigger の両義として context で解釈)
+- **G7**: mixed output generation (単一推論 pass で JP 部 = kanji / kana surface、EN 部 = ASCII 文字列を混在 decode)
+
 詳細は Phase 5 kick-off で確定する。
 
 ## 2. スコープ
@@ -155,6 +165,34 @@ Phase 5 の実装範囲は以下 5 項目とする。
 
 詳細は Phase 5 kick-off で確定する。
 
+### 3.5 Mixed JP/EN handling
+
+§1.5 の G5-G7 要件を実現するためのアーキテクチャ設計を本節にまとめる。ADR 0010 D8 に対応する spec 層の記述である。
+
+#### 3.5.1 Language-context detection
+
+Phase 5 モデルは input romaji stream を prefix から逐次 consume し、各位置で「現在 EN span 中か JP 変換対象か」を decoder の hidden state に保持する。boundary の推定は空白 / punctuation / 語彙 plausibility (当該 prefix が EN 単語の初頭に一致するか、JP kana 列に展開可能か) の複合信号で行う。
+
+実装方式として、(a) 明示的 classifier head を decoder に追加する案と、(b) decoder の hidden state に暗黙学習で担わせる案の 2 候補があるが、Phase 5 の default 方針は (b) 暗黙学習とする。(a) は debug しやすい一方で model parameter を分裂させ training 難度を上げるため、(b) が成立しない場合の fallback とする。
+
+詳細 (hidden state dim / training loss 構成 / 暗黙学習 vs 明示 classifier の empirical 比較) は Phase 5 kick-off で確定する。
+
+#### 3.5.2 Context-aware space handling
+
+Phase 5 モデルは space 文字を単一意味の変換 trigger として扱わず、「EN 文脈では word separator、JP 文脈では区切り記号 (変換 boundary hint)」の 2 義として context で解釈する。training data 側は space を含む mixed sentence を十分 sampling することで学習分布内に含める (§4.7 参照)。
+
+既存 Phase 1 IME input layer (`kotoha-core::input`) との調整として、「space event を IME layer で前処理してモデルに渡す / space event を生のまま decoder に渡す」の 2 方式が成立する。前者は既存 IME 層の挙動を変えないで済む利点、後者は model 側の context 判定に space 前後の情報を全部委ねる利点がある。Phase 5 kick-off で empirical に確定する。
+
+詳細は Phase 5 kick-off で確定する。
+
+#### 3.5.3 Mixed output generation
+
+Phase 5 モデルは単一推論 pass で JP 部 (kanji / kana surface) と EN 部 (ASCII 文字列) を混在させた 1 本の出力列を decode する。2 パス方式 (JP decode → EN overlay) は採用しない (context の整合性を単一 pass で保証するため)。
+
+明示的 span marker として `{en-span}` / `{jp-span}` を special tokens に追加する案と、暗黙で通す (marker なし、hidden state と出力 surface の連動で判別) 案の 2 候補がある。明示 marker は debug しやすく再現性が高い一方で、training data の構築工数と output decode の後処理工数が増える。Phase 5 kick-off で empirical 比較する。
+
+詳細は Phase 5 kick-off で確定する。
+
 ## 4. データ設計
 
 ### 4.1 コーパス source とライセンス
@@ -228,6 +266,63 @@ Phase 5 の拡張 special tokens 候補は以下 3 種を検討する。
 ### 4.6 データ scale
 
 目標は 1M〜10M kana→kanji ペアである。B1 scratch training では 10M+ ペアが必要と推定し、B3 distillation では 1M〜3M ペアで teacher の soft label を引き継げる想定である。最終 scale は Phase 5 kick-off 時の empirical pilot で確定する。
+
+### 4.7 Mixed JP/EN コーパス設計
+
+§3.5 の G5-G7 要件を学習分布内に持ち込むため、Phase 5 の training data は JP-only コーパス (§4.1) に加えて以下 2 種類の mixed 源を追加する。ADR 0010 D8 に対応する data 層の記述である。
+
+#### 4.7.1 Programming context source
+
+プログラマ use case (`tuginocommitwoshuuseisitepull requestwodasite` 系) の学習源として以下を候補とする。各源は再配布可能ライセンス (Apache-2.0 / MIT / CC BY 相当) であることを前提とし、採用可否は Phase 5 kick-off のライセンス審査で個別判定する。
+
+- GitHub issues / pull request 本文 (GitHub API 経由で抽出、repository 単位でライセンス確認)
+- commit messages (同上)
+- OSS README (Apache-2.0 / MIT / BSD license の repository のみ)
+- 技術 blog (Zenn / Qiita 等、各 platform の利用規約に基づく範囲)
+- 技術書 (O'Reilly 等、明示パーミッション必須)
+
+詳細 (具体的 repository 候補 / 抽出 pipeline / ライセンス審査フロー) は Phase 5 kick-off で確定する。
+
+#### 4.7.2 一般 loanword context source
+
+プログラマ以外の一般ユーザが使う日常的な英語借用語 (technology / IT / business / culture / 科学 カテゴリ) の学習源として以下を候補とする。
+
+- Wikipedia JP の technology / IT / business / culture / 科学 カテゴリ (CC BY-SA 3.0)
+- 青空文庫 (Public Domain、古典日本語だが歴史的 loanword を含む)
+
+詳細 (カテゴリ単位の抽出 / filter 条件 / サンプリング比率) は Phase 5 kick-off で確定する。
+
+#### 4.7.3 データ比率 (初期案)
+
+mixed コーパスと JP-only コーパスの混合比率は Phase 5 kick-off で empirical 確定するが、初期案として以下を置く。
+
+| 区分 | 比率 | 用途 |
+|---|---|---|
+| JP-only | 60% | §1.4 G1-G4 (kana→kanji 基本変換) を安定学習する主源 |
+| Mixed (JP + EN) | 30% | §1.5 G5-G7 (mixed JP/EN 判定) を学習分布内に含める主源 |
+| EN-only | 10% | EN 単独入力時の退化動作 (kana 変換せず ASCII 透過) を担保する補助源 |
+
+初期案の根拠は「JP-only を過半に保ちつつ mixed を無視できない比率で混ぜる」という経験則であり、P5-A kick-off の pilot training で比率を empirical 再確定する。詳細は Phase 5 kick-off で確定する。
+
+#### 4.7.4 Romaji 拡張規則 (mixed コーパス向け)
+
+Mixed コーパスは JP 部と EN 部が混在するため、§4.2 の kana→romaji 拡張規則を以下のように拡張する。
+
+- **JP 部**: 既存の Hepburn / Kunrei / waapuro 3 方式をそのまま適用する
+- **EN 部**: 原文の EN 単語をそのまま keep する (kana 変換 / 再拡張は行わない)
+- **境界処理**: JP 部と EN 部の境界に挿入する space は training data 上では明示的に 1 文字分保持する (context-aware space handling §3.5.2 が学習分布内で space を sample するため)
+
+詳細は Phase 5 kick-off で確定する。
+
+#### 4.7.5 Typo 注入規則 (mixed コーパス向け)
+
+§4.3 の typo 注入規則 (edit distance 1-3、隣接キー置換 / 文字転倒 / 文字欠落 / 文字余剰) を mixed コーパスに適用する際のルールを以下に定める。
+
+- EN 部にも QWERTY 隣接 typo を適用可能 (programmer が EN 部でも typo する現実を反映)
+- ただし typo の置換範囲は EN 語彙内に限定する (EN 部の 1 文字が JP 部境界を越えて置換されることは無い)
+- JP 部の typo ルールは §4.3 と同一
+
+詳細 (typo 注入率が JP 部 / EN 部で異なるか、境界領域の扱い) は Phase 5 kick-off で確定する。
 
 ## 5. 学習戦略
 
@@ -317,10 +412,11 @@ Phase 5 のスコープから以下を明示的に除外する。
 - **multilingual extension**: 英語 / 中国語 / 韓国語 入力対応は Phase 8 以降の別議論とする
 - **streaming inference**: 現行 Phase 5 は single-shot 推論のみを扱う。streaming が必要となった場合は Phase 6 着手時点で別 ADR を起こして判断する
 - **training infrastructure の CI 化**: Phase 5 は手動 training を前提とする。CI-driven 差分再学習は Phase 6 以降
+- **多言語完全対応 (中国語 / 韓国語 / ドイツ語 / フランス語 等)**: Phase 5 は JP + EN の 2 言語のみをサポートする。ADR 0010 D8 で Phase 5 primary goal に追加したのは mixed JP/EN に限定しており、他言語 (CJK 系 / 欧州言語) への拡張は Phase 5 scope 外である。将来 Phase で他言語を追加する場合は新 ADR を起票し、training data と vocabulary を拡張する必要がある。
 
 ## 8. Open questions
 
-Phase 5 kick-off 時点で解消する 6 点を以下に列挙する。
+Phase 5 kick-off 時点で解消する 7 点を以下に列挙する。
 
 | # | Question | 解消 milestone |
 |---|---|---|
@@ -330,6 +426,17 @@ Phase 5 kick-off 時点で解消する 6 点を以下に列挙する。
 | Q4 | 量子化精度を Q5_K_M default として Q4_K_M / Q8_0 をどう扱うか | Phase 5 P5-C で empirical 比較 |
 | Q5 | Sudachi 辞書 fallback の integration layer を §3.4 の候補 a / b / c のいずれにするか | Phase 5 P5-C で empirical 比較 |
 | Q6 | user learning cache (Karukan の `learning.tsv` 相当) を Phase 5 に含めるか Phase 6 に延期するか | Phase 5 kick-off 初週で scope 判断 |
+| Q7 | mixed JP/EN auto-detect の empirical 達成率目標 (F1 0.90 / 0.95 / 0.99) | P5-A kick-off 前の empirical PoC で baseline 測定後に確定 |
+
+### Q7: mixed JP/EN auto-detect の empirical 達成率目標
+
+Phase 5 custom model で §1.5 / §3.5 の mixed JP/EN 自動判定の精度目標をどの水準に置くかを確定する必要がある。候補は以下 3 水準である。
+
+- **A**: EN 単語の英字出力 F1 ≥ 0.90 (Tier 1 成功の最低ライン。ユーザは多少の誤変換を reviewer で修正する前提で IME として実用可能)
+- **B**: EN 単語の英字出力 F1 ≥ 0.95 (reviewer 不要レベル。プログラマ use case で日常的に stress 無く使える)
+- **C**: EN 単語の英字出力 F1 ≥ 0.99 (ほぼ誤変換なし。Tier 1 の完全成功に相当)
+
+P5-A kick-off 前の empirical PoC で baseline を測定し、本 Open question を確定する。baseline が A 水準 (0.90) にも届かない場合は ADR 0010 Alternative E (Tier 2 採用、`InputMode::Latin` 新設) にフォールバックする判断を下す。
 
 詳細は Phase 5 kick-off で確定する。
 
