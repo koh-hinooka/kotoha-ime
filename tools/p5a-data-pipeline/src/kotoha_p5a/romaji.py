@@ -150,6 +150,13 @@ _BASE_TABLE: Final[dict[str, tuple[str, str, str]]] = {
     "ろ": ("ro", "ro", "ro"),
     # W row
     "わ": ("wa", "wa", "wa"),
+    # Intentional asymmetry across styles for を (particle `wo`):
+    # - Traditional Hepburn transcribes the particle as "o" (pronounced /o/).
+    # - Kunrei-shiki and waapuro both keep "wo" to preserve the kana
+    #   distinction from お.
+    # - Revised Hepburn (if adopted later) would map both を and お to "o",
+    #   but that normalization is deferred to Phase 5 kick-off where the
+    #   canonical style for training data will be confirmed empirically.
     "を": ("o", "wo", "wo"),
     "ん": ("n", "n", "n"),
     # Small kana (standalone fallback)
@@ -268,6 +275,8 @@ _KATAKANA_BASE: Final[dict[str, tuple[str, str, str]]] = {
     "レ": ("re", "re", "re"),
     "ロ": ("ro", "ro", "ro"),
     "ワ": ("wa", "wa", "wa"),
+    # Same asymmetry as the hiragana を entry above: Hepburn uses "o" while
+    # Kunrei / waapuro keep "wo". See the comment on "を" in _BASE_TABLE.
     "ヲ": ("o", "wo", "wo"),
     "ン": ("n", "n", "n"),
     "ヴ": ("vu", "vu", "vu"),

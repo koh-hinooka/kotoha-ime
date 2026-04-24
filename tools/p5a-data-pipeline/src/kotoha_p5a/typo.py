@@ -97,6 +97,31 @@ def _transpose(text: str, rng: random.Random) -> str:
 
 
 def _delete(text: str, rng: random.Random) -> str:
+    """Delete one random character from ``text``.
+
+    Falls back to :func:`_substitute` when ``text`` is empty, because edit
+    distance semantics require an actual mutation and deletion on an empty
+    string is a no-op.
+
+    Note:
+        In multi-step operation chains (``distance >= 2``), if sequential
+        ``_delete`` calls empty the string, subsequent operations invoke
+        the ``_substitute`` fallback. The nominal ``distance`` parameter
+        therefore counts the number of operations applied, not the exact
+        Levenshtein edit distance between input and final output. The
+        fallback is acceptable for the PoC because it preserves
+        determinism and never raises; a strict distance-preserving
+        operation graph is deferred to Phase 5 kick-off.
+
+    Args:
+        text: Source string to delete a character from.
+        rng: Seeded random number generator.
+
+    Returns:
+        A new string with exactly one character removed when
+        ``len(text) >= 1``; otherwise the result of the substitute
+        fallback.
+    """
     if not text:
         return _substitute(text, rng)
     idx = rng.randrange(len(text))
@@ -128,7 +153,15 @@ def inject_typos(text: str, distance: int, seed: int) -> str:
     Args:
         text: Input ASCII string to corrupt.
         distance: Number of edit operations to apply (0-3 in practice).
-            ``0`` returns ``text`` unchanged.
+            ``0`` returns ``text`` unchanged. This is the nominal
+            operation count, not the strict Levenshtein edit distance
+            between input and output: when an operation cannot proceed
+            (e.g. ``_transpose`` on a single character, ``_delete`` on
+            an already-empty string), the injector falls back to
+            ``_substitute``, which can make the resulting Levenshtein
+            distance smaller than ``distance``. The fallback preserves
+            determinism; exact edit-distance guarantees are deferred to
+            Phase 5 kick-off.
         seed: Deterministic seed; the same ``(text, distance, seed)``
             triple always produces the same output.
 

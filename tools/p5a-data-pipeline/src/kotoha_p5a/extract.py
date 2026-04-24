@@ -46,6 +46,28 @@ def _contains_kanji(text: str) -> bool:
 
 
 def _katakana_to_hiragana(text: str) -> str:
+    """Convert katakana characters in ``text`` to their hiragana counterparts.
+
+    Scope and passthrough behaviour:
+        The conversion range is ``U+30A1..U+30FA`` (ァ..ヺ). Characters in
+        ``U+30FB..U+30FF`` (``・`` ``ー`` ``ヽ`` ``ヾ`` ``ヿ``) fall outside
+        this range by design and are copied unchanged. The long-vowel mark
+        ``ー`` is intentionally left as-is here because the downstream
+        romaji stage (``romaji.py``: ``_CHOUON`` handling) applies the
+        previous-vowel doubling rule. The iteration marks ``ヽ`` / ``ヾ``
+        and the digraph ligature ``ヿ`` are rare enough in modern Japanese
+        that pass-through is acceptable for the PoC pipeline; if Phase 5
+        training data surfaces them frequently, explicit handling can be
+        added later.
+
+    Args:
+        text: Any string, typically a Sudachi ``reading_form()`` result
+            that is already katakana-only.
+
+    Returns:
+        A new string with katakana in the covered range folded to
+        hiragana, and every other character preserved verbatim.
+    """
     out: list[str] = []
     for ch in text:
         code = ord(ch)
