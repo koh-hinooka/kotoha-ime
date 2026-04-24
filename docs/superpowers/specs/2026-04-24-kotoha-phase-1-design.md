@@ -49,7 +49,7 @@ Phase 1 は `InputContext` との直接 wiring は行わない。IME engine 層�
 2. `Candidate` struct (`#[non_exhaustive]`) と `ConvertOptions` struct (`top_k` / `temperature` / `seed`) を公開 API として定義する
 3. Config-driven backend factory `load_backend(&BackendConfig) -> Result<Box<dyn KanjiBackend>, KanjiError>` を実装する
 4. CLI `kotoha-kanji` を `kotoha-cli` crate に新設する。stdin 1 行 1 ひらがな、stdout 1 行 1 漢字混じり文とし、options として `--model <path>`, `--top-k N`, `--show-scores`, `--show-model-id`, `--temperature F`, `--seed U` を提供する
-5. Test 戦略を 4 層で整備する: default features での mock 使用 unit test、`mock-backend` feature による cross-crate integration test、`llama-cpp-smoke` feature による実推論 smoke (Phase 1 default: Gemma-2-2B-jpn-it、9 件、opt-in)、E2E smoke script
+5. Test 戦略を 4 層で整備する: default features での mock 使用 unit test、`mock-backend` feature による cross-crate integration test、`llama-cpp-smoke` feature による実推論 smoke (Phase 1 default: Gemma-2-2B-jpn-it、15 件 (row 3 skip で有効 14 件)、opt-in)、E2E smoke script
 6. `scripts/phase1-smoke.sh` を Phase 0 の `scripts/phase0-smoke.sh` と並列配置する
 7. Model placement は manual 前提とする (Q3=A 決定済み)。`README.md` に `Gemma-2-2B-jpn-it` の GGUF 入手コマンドと配置先を明記する
 8. 共通 shell library `scripts/lib/assert.sh` を抽出する。Phase 0 smoke script も本 library を使うよう refactor する先行 PR (P1-0) を設ける
@@ -92,7 +92,7 @@ Phase 1 では `llama-cpp-2` を第一候補として採用し、採用事由と
 - License: Gemma License (再配布可、attribution 必須。Kotoha repo に同梱はしない — 利用者が HuggingFace から download する。手順は `crates/kotoha-core/tests/kanji_llama_cpp_smoke.rs` の module docstring 参照)
 - Tokenizer: SentencePiece (Gemma 2 family), chat template は GGUF metadata の `tokenizer.chat_template` に埋め込み済
 - 採用根拠: P1-2-9 empirical verification (WBS `docs/wbs/2026-04-24-feature-69-zenz-backend-layer3-smoke.md` commit `718fd8e`) で Qwen2.5-1.5B-Instruct / Gemma-2-2B-jpn-it / Gemma-3-1B-it の 3-way 比較を実施し、Gemma-2-2B-jpn-it が 5/5 (敬称 `やまださん` → `山田さん` を含む) を達成した唯一のモデル
-- Phase 1 latency: cold load 約 10.6 秒 + warm inference 約 3 秒 / case。spec §8.3 の "30 秒以内" target に対し、9 件連続実行で約 30 秒 (9 件 × 平均 3 秒 + cold load 分) と境界付近。target 緩和可否は P1-4 の正式 ADR で決定する
+- Phase 1 latency: cold load 約 10.6 秒 + warm inference 約 3 秒 / case。P1-2.5 follow-up (PR #76) で fixture が 15 行に復元され、row 3 skip で有効 14 件が約 52 秒 (cold load 約 10.6 秒 + 14 件 × 約 3 秒) で実行される。spec §8.3 の当初 "30 秒以内" target は ADR 0013 で empirical 実測に合わせて緩和済 (詳細は ADR 0013 を参照)
 - Quantization 選択肢: Q4_K_M (品質劣化あり、Phase 1 default としては不適) / Q5_K_M (本採用) / Q6_K / Q8_0 (size 3.3 GB 超、Phase 1 budget 逼迫)
 
 #### 3.2.1 IME-style prompt wrapper (実装上の補足)
@@ -887,7 +887,7 @@ Phase 1 終了時に以下 3 本の ADR を作成する。番号は Phase 0 ま�
 - [ ] 5. `load_backend` factory が feature 未有効時に `KanjiError::FeatureDisabled` を返す
 - [ ] 6. Layer 1 unit test (default features、約 25 件) が pass する
 - [ ] 7. Layer 2 integration test (`--features mock-backend`、5 件) が pass する
-- [ ] 8. Layer 3 llama.cpp smoke (`--features llama-cpp-smoke`、9 件) が `KOTOHA_LLAMA_MODEL_PATH` 指定で pass する
+- [ ] 8. Layer 3 llama.cpp smoke (`--features llama-cpp-smoke`、15 件 (row 3 skip で有効 14 件)) が `KOTOHA_LLAMA_MODEL_PATH` 指定で pass する
 - [ ] 9. Layer 4 E2E smoke (`scripts/phase1-smoke.sh`、5 件) が pass する
 - [ ] 10. CLI `kotoha-kanji` が `--model <path>` required、option `--top-k / --show-scores / --show-model-id / --temperature / --seed` を受け付ける
 - [ ] 11. CLI の exit code 仕様 (0 / 1 / 2) が Phase 0 `kotoha-romaji` と整合している
