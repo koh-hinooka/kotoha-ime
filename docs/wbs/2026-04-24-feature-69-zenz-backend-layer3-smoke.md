@@ -350,3 +350,63 @@ P1-1 + P1-2 の review で surface した findings と plan bug を P1-4 docs �
 - Dataset authoritative source: <https://huggingface.co/Miwa-Keita/zenz-v2.5-dataset>
 - llama-cpp-2 crate: <https://crates.io/crates/llama-cpp-2>
 - AzooKey Zenzai reference: <https://github.com/azooKey/AzooKeyKanaKanjiConverter/blob/main/Docs/zenzai.md>
+
+## P1-2-9 empirical verification 実施結果 (2026-04-24、Option A 第二候補 — zenz-v2-gguf)
+
+v3.1-small 失敗 (pre-tokenizer 非対応) を受け、より古い世代 `Miwa-Keita/zenz-v2-gguf` (2024-08-04 release) で再検証した。仮説は「v2 系は `gpt2-small-japanese-char` pre-tokenizer 以前の tokenizer を使用しているので llama-cpp-2 0.1.145 と compat な可能性がある」であったが、検証結果は **仮説の棄却** である。
+
+### Model file
+
+- 配置: `$HOME/.cache/kotoha/models/zenz-v2-gguf/zenz-v2-Q5_K_M.gguf`
+- サイズ: 72 MiB (on-disk) / GGUF 内 `file size = 68.76 MiB (6.07 BPW)`
+- 出典: <https://huggingface.co/Miwa-Keita/zenz-v2-gguf>
+- GGUF magic 確認: yes (`GGUF` ASCII先頭4バイト確認済み)
+
+### GGUF metadata
+
+- `general.architecture`: `gpt2`
+- `general.name`: `zenz-v2`
+- `tokenizer.ggml.model`: `gpt2`
+- `tokenizer.ggml.pre`: **`gpt2-small-japanese-char`**(v3.1-small と同一の pre-tokenizer)
+- 総 token 数: 6000(vocab size。reader が 12005 parts を返すのは tokens + token\_types 合算。`tokens field` arr 長は 6000)
+- PUA-containing tokens (U+E000..U+F8FF): **0 個**
+- Bracket special tokens (`<` で始まり `>` で終わる token): 2 個のみ (`<s>` id=10, `</s>` id=12)
+- BOS id=1, EOS id=2, PAD id=1, `add_bos_token=false`
+
+### Layer 3 smoke 結果
+
+KOTOHA_ZENZ_MODEL_PATH を設定し `cargo test -p kotoha-core --features zenz-smoke --test kanji_zenz_smoke -- --nocapture --test-threads=1` を実行:
+
+- zenz_smoke_1_nihongo: **FAIL** (`ModelLoadFailed { source: NullResult }`)
+- zenz_smoke_2_kanji: **FAIL** (同上)
+- zenz_smoke_3_ashita: **FAIL** (同上)
+- zenz_smoke_4_yamada_san: **FAIL** (同上)
+- zenz_smoke_5_kotoba: **FAIL** (同上)
+- 合計: **0/5 PASS**
+
+llama.cpp stderr:
+
+```text
+llama_model_load: error loading model: error loading model vocabulary: unknown pre-tokenizer type: 'gpt2-small-japanese-char'
+llama_model_load_from_file_impl: failed to load model
+```
+
+v3.1-small と **完全に同一の失敗モード**。load 段階で vocab が reject されるため prompt format や PUA token 整合性までは到達しない。
+
+### 考察
+
+1. **仮説棄却**: `Miwa-Keita/zenz-v2-gguf` (2024-08-04) も `Miwa-Keita/zenz-v3.1-small-gguf` と同じく `gpt2-small-japanese-char` pre-tokenizer で GGUF 化されている。時期が古い v2 世代でも base model は既に `ku-nlp/gpt2-small-japanese-char` 系であった、あるいは少なくとも GGUF converter 側で同じ pre-tokenizer 名が付与されている。llama-cpp-2 0.1.145 (bundled llama.cpp) の allow-list にこの pre-tokenizer が入っていないため、**Miwa-Keita 配布の全 Zenz GGUF が現行 llama-cpp-2 ではロード不可**と判断する。
+2. **build_prompt 仮定への影響**: v2 の vocab には PUA codepoint token が 0 個、bracket special token も `<s>` / `</s>` のみ。現在の `ZenzBackend::build_prompt` が前提としている PUA delimiter (spec §5.6 / ADR 0009 初版) は v2 では文字通りには存在しない。ロードに到達しないため実証できないが、**現行 build_prompt 実装が Miwa-Keita 世代全般に適用できない可能性が高い** ことを示唆する (PUA codepoint は v3.x 以降の convention の可能性)。P1-4 の ADR 0009 更新で、PUA 方式が v3.x 固有か v2 系まで遡れるかの明示が必要。
+3. **Phase 1 での結論**: Option A(Miwa-Keita 配布の GGUF を直接ロード)は、**zenz-v1 / v2 / v2-5 / v3 / v3.1-small のいずれの GGUF も同じ pre-tokenizer 壁に阻まれる高い蓋然性** がある。v1 を追加で試行するコストは低いが、期待値は限りなく低い。Phase 1 の model sourcing 判断は Option B / Option C (自前 convert、または llama-cpp-2 upgrade 待ち) へ pivot することを ADR 0009 に記録すべきである。
+4. **ADR 0009 input**: (a) v2 / v3.1-small 両方で同じ pre-tokenizer エラーが確定、(b) llama-cpp-2 0.1.145 は `gpt2-small-japanese-char` を受け付けない、(c) PUA token は少なくとも v2 世代では vocab に存在しない — の 3 点を Decision Record に反映し、Phase 1 の default model sourcing を Option A から外す根拠とする。
+
+### v1 追検証について
+
+計画上「v2 が駄目なら v1 を軽く確認」とあったが、上記考察 3 のとおり v1 まで同じ convention である蓋然性が高く、**追加ダウンロード + 再テストのコストに見合う情報利得は低い**と判断し、本 WBS 段階では実施しない。実施を希望する場合は別 ISSUE として立ててから進める。
+
+## P1-2-9 (empirical verification, v2 attempt) 結論
+
+- Option A 第一候補 (v3.1-small) / 第二候補 (v2) ともに **現行 llama-cpp-2 0.1.145 ではロード不可**。
+- Phase 1 の zenz backend を実運用可能にするには **Option B (自前 HF model から GGUF 再変換し pre-tokenizer を llama-compat に調整) または Option C (llama-cpp-2 が `gpt2-small-japanese-char` を support する version へ bump)** が必須。
+- 本 empirical verification 自体のタスクは「Option A 不成立を確定させる」ことが deliverable として完了した。ADR 0009 更新と次手段選定は P1-4 docs bundle に繰延する。
+
