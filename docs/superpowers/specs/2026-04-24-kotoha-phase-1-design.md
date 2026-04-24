@@ -372,8 +372,18 @@ pub enum PromptTemplate {
     /// Gemma2InstructChat 同様に GGUF chat_template + few-shot wrapper。
     Qwen2Chat,
     /// Custom escape hatch。Integrator が独自の chat template / wrapper を
-    /// 用いる場合 (Phase 2+ の想定)。
-    Custom,
+    /// 用いる場合 (Phase 2+ の想定)。GGUF が `tokenizer.chat_template` を埋め込ん
+    /// でいない model、あるいは別の IME directive を使いたい場合に使用する。
+    Custom {
+        /// 先頭に付与する `system` turn の内容 (不要なら `None`)。
+        system: Option<String>,
+        /// user turn を包む `(prefix, suffix)`。
+        /// 例: `("<start_of_turn>user\n", "<end_of_turn>")`
+        user_wrapper: (String, String),
+        /// assistant turn を開始する prefix。
+        /// 例: `"<start_of_turn>model\n"`
+        assistant_prefix: String,
+    },
 }
 
 /// Backend の構築パラメータ。
