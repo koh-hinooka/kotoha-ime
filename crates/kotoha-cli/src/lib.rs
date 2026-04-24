@@ -1,10 +1,21 @@
-//! Line-based helpers for the `kotoha-romaji` CLI binary.
+//! Line-based helpers for the Kotoha CLI binaries.
 //!
-//! This crate exposes two pure functions ([`process_line`] and
-//! [`format_line_output`]) that the binary entry point
-//! (`src/bin/romaji.rs`) calls. Keeping the logic pure keeps the
-//! binary thin and the behavior covered by unit tests without spawning
-//! a subprocess.
+//! This crate exposes pure functions that the binary entry points call
+//! so that the binaries themselves stay thin and the behavior is
+//! covered by unit tests without spawning a subprocess.
+//!
+//! # Module surface
+//!
+//! - [`process_line`] / [`format_line_output`] — Phase 0 romaji
+//!   (`src/bin/romaji.rs`).
+//! - [`kanji_cli`] — Phase 1 kanji (`src/bin/kanji.rs`, gated on the
+//!   `llama-cpp` feature).
+//!
+//! The `kanji_cli` submodule is always compiled (no feature gate at the
+//! module level). The `[[bin]] kotoha-kanji` binary is gated with
+//! `required-features = ["llama-cpp"]` in `Cargo.toml`, so only the
+//! binary itself is opt-in; the pure helpers in `kanji_cli` remain
+//! available for unit testing regardless of feature selection.
 //!
 //! # Behavior pins (see plan M6 §『本 M6 plan 内で解決する既知の懸念』)
 //!
@@ -15,6 +26,8 @@
 //! - `--show-mode` suffix uses `[H]` for [`InputMode::Hiragana`] and
 //!   `[D]` for [`InputMode::Direct`] with no Transient / Sticky
 //!   distinction (`ModeOrigin` is `pub(crate)`).
+
+pub mod kanji_cli;
 
 use kotoha_core::{InputContext, InputMode, InputStep};
 
