@@ -214,9 +214,16 @@ impl KanjiBackend for LlamaCppBackend {
 /// `apply_chat_template`. Phase 1 submits a single user turn; the model is
 /// expected to return the kanji string as its assistant turn.
 ///
+/// For `Gemma2InstructChat` / `Qwen2Chat`, the user content is wrapped in an
+/// IME-style instruction + 2 few-shot examples so the chat-tuned base model
+/// performs kana→kanji conversion instead of responding conversationally.
+/// Empirical observation (P1-2.5-8): without this instruction wrapper,
+/// Gemma-2-2B-jpn-it echoes the hiragana input plus whitespace/emoji noise.
+///
 /// For [`PromptTemplate::Custom`] with `system: Some(s)`, a `"system"` turn
-/// is prepended. `Gemma2InstructChat` and `Qwen2Chat` return the single user
-/// turn and rely on the GGUF-embedded chat template for role delimiters.
+/// is prepended. `Custom` does not add the instruction wrapper — callers who
+/// use `Custom` are expected to bake their own directive into the wrapper
+/// strings.
 fn build_chat_tuples(template: &PromptTemplate, user_input: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::with_capacity(2);
     if let PromptTemplate::Custom {
@@ -226,7 +233,29 @@ fn build_chat_tuples(template: &PromptTemplate, user_input: &str) -> Vec<(String
     {
         out.push(("system".to_string(), system.clone()));
     }
-    out.push(("user".to_string(), user_input.to_string()));
+    match template {
+        PromptTemplate::Gemma2InstructChat | PromptTemplate::Qwen2Chat => {
+            // Multi-turn few-shot: Gemma-2-2B-jpn-it follows the conversion
+            // pattern more reliably when each example is a full user→assistant
+            // exchange than when few-shot examples are embedded as plain text
+            // in a single turn (empirical P1-2.5-8 observation).
+            let directive = "あなたは日本語IMEです。ひらがな入力を漢字交じりの自然な日本語に変換して、変換結果のみを出力してください。";
+            // Turn 1 example
+            out.push(("user".to_string(), format!("{directive}\n\n入力: にほんご")));
+            out.push(("assistant".to_string(), "日本語".to_string()));
+            // Turn 2 example
+            out.push(("user".to_string(), "入力: やまださん".to_string()));
+            out.push(("assistant".to_string(), "山田さん".to_string()));
+            // Turn 3 example
+            out.push(("user".to_string(), "入力: わたしはがくせいです".to_string()));
+            out.push(("assistant".to_string(), "私は学生です".to_string()));
+            // Actual query
+            out.push(("user".to_string(), format!("入力: {user_input}")));
+        }
+        PromptTemplate::Custom { .. } => {
+            out.push(("user".to_string(), user_input.to_string()));
+        }
+    }
     out
 }
 

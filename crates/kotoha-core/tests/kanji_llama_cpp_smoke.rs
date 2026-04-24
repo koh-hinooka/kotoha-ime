@@ -120,7 +120,7 @@ fn run_fixture(model_path: PathBuf, row_index: usize) {
 }
 
 #[test]
-fn zenz_smoke_1_nihongo() {
+fn llama_cpp_smoke_1_nihongo() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
@@ -128,7 +128,7 @@ fn zenz_smoke_1_nihongo() {
 }
 
 #[test]
-fn zenz_smoke_2_kanji() {
+fn llama_cpp_smoke_2_kanji() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
@@ -136,7 +136,7 @@ fn zenz_smoke_2_kanji() {
 }
 
 #[test]
-fn zenz_smoke_3_ashita() {
+fn llama_cpp_smoke_3_ashita() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
@@ -144,7 +144,7 @@ fn zenz_smoke_3_ashita() {
 }
 
 #[test]
-fn zenz_smoke_4_yamada_san() {
+fn llama_cpp_smoke_4_yamada_san() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
@@ -152,9 +152,41 @@ fn zenz_smoke_4_yamada_san() {
 }
 
 #[test]
-fn zenz_smoke_5_kotoba() {
+fn llama_cpp_smoke_5_kotoba() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
     run_fixture(path, 4);
+}
+
+#[test]
+fn llama_cpp_smoke_6_kyou_no_tenki() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 5);
+}
+
+#[test]
+fn llama_cpp_smoke_7_toukyou() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 6);
+}
+
+#[test]
+fn llama_cpp_smoke_8_watashi_wa_gakusei_desu() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 7);
+}
+
+#[test]
+fn llama_cpp_smoke_9_shinbun() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 8);
 }
