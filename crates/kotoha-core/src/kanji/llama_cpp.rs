@@ -18,13 +18,18 @@
 //!
 //! # Prompt format
 //!
-//! Prompts are built via llama-cpp-2's `apply_chat_template`, reading the
-//! GGUF-embedded `tokenizer.chat_template` through `chat_template(None)`
-//! for the [`PromptTemplate::Gemma2InstructChat`] and
-//! [`PromptTemplate::Qwen2Chat`] variants. [`PromptTemplate::Custom`] falls
-//! back to a hand-authored `{system?}{user_wrapper.0}{input}{user_wrapper.1}{assistant_prefix}`
-//! string, letting integrators wire backends whose GGUF lacks embedded
-//! chat_template metadata.
+//! P1-2.5 follow-up (PR #76) replaced the earlier `apply_chat_template`
+//! route with plain-text completion using a v12 few-shot prompt. For
+//! [`PromptTemplate::Gemma2InstructChat`] and [`PromptTemplate::Qwen2Chat`],
+//! [`build_prompt`] concatenates a strict directive, 13 positive few-shot
+//! pairs, a 3-pair negative example contrast (あした/ぎゅうにゅう/りょうり),
+//! and the query line into a single plain-text string that the model
+//! completes in text-completion mode. [`PromptTemplate::Custom`] falls back
+//! to a hand-authored
+//! `{system?}{user_wrapper.0}{input}{user_wrapper.1}{assistant_prefix}`
+//! string, letting integrators wire backends with their own directive.
+//! See [`build_prompt`]'s rustdoc for the full rationale and pair
+//! breakdown.
 //!
 //! # Deterministic output
 //!
@@ -72,10 +77,11 @@ pub struct LlamaCppBackend {
     /// [`KanjiBackend::model_id`] and used in Layer 3 smoke test assertions.
     model_id: String,
     /// Chat/prompt template to apply when constructing the inference prompt.
-    /// Dispatched by `convert` via `infer` to either llama-cpp-2's
-    /// `apply_chat_template` (for [`PromptTemplate::Gemma2InstructChat`] /
-    /// [`PromptTemplate::Qwen2Chat`]) or a hand-authored format string (for
-    /// [`PromptTemplate::Custom`]).
+    /// Dispatched by `convert` via `infer` to [`build_prompt`], which emits
+    /// a plain-text v12 few-shot prompt for
+    /// [`PromptTemplate::Gemma2InstructChat`] /
+    /// [`PromptTemplate::Qwen2Chat`] and a hand-authored format string for
+    /// [`PromptTemplate::Custom`].
     prompt_template: PromptTemplate,
 }
 
@@ -221,12 +227,20 @@ impl KanjiBackend for LlamaCppBackend {
 /// harness that produced 5/5 PASS in the original P1-2-9 empirical
 /// verification (llama-cpp-python text completion).
 ///
-/// The 7 few-shot pairs cover: short single kanji (えき → 駅) / multi-char
-/// kanji compound (にほんご → 日本語, directly reinforcing the row that
-/// regressed) / yōon (ちゃわん → 茶碗) / okurigana compound (たべもの →
-/// 食べ物) / honorific suffix (やまださん → 山田さん) / loanword mid-phrase
+/// The 13 positive few-shot pairs cover: short single kanji (えき → 駅) /
+/// multi-char kanji compound (にほんご → 日本語, directly reinforcing the
+/// row that regressed) / yōon (ちゃわん → 茶碗) / gyūnyū vs milk loanword
+/// contrast (ぎゅうにゅう → 牛乳) / promoted-sokuon compound (きっぷ →
+/// 切符) / katakana loanword with long-sound mark (こーひー → コーヒー) /
+/// Sino-Japanese compound (はっぴょう → 発表) / ryōri vs cooking loanword
+/// contrast (りょうり → 料理) / okurigana compound (たべもの → 食べ物) /
+/// honorific suffix (やまださん → 山田さん) / loanword mid-phrase
 /// (パソコンをつかう → パソコンを使う) / full sentence with particles
-/// (わたしはがくせいです → 私は学生です).
+/// (わたしはがくせいです → 私は学生です) / and the final あした → 明日
+/// reinforcement. Additionally, the directive prose explicitly names three
+/// negative examples (あした is not 翌日, ぎゅうにゅう is not ミルク, and
+/// りょうり is not クッキング) to suppress the pretrain translation bias;
+/// the corresponding positive pairs appear in the few-shot list above.
 ///
 /// For [`PromptTemplate::Custom`], the caller's `system` + `user_wrapper` +
 /// `assistant_prefix` fields are composed verbatim; no few-shot scaffold is
@@ -276,11 +290,13 @@ fn build_prompt(template: &PromptTemplate, user_input: &str) -> String {
 /// extracting per-token logits from the greedy sampler requires reaching
 /// into the lower-level `LlamaTokenDataArray` API; left for Phase 2).
 ///
-/// The prompt is built per the supplied [`PromptTemplate`]:
-/// [`PromptTemplate::Gemma2InstructChat`] and [`PromptTemplate::Qwen2Chat`]
-/// dispatch to llama-cpp-2's `apply_chat_template` (reading the
-/// GGUF-embedded `tokenizer.chat_template` via `chat_template(None)`);
-/// [`PromptTemplate::Custom`] formats `{system?}{user_wrapper.0}{input}{user_wrapper.1}{assistant_prefix}`
+/// The prompt is built per the supplied [`PromptTemplate`] via
+/// [`build_prompt`]: [`PromptTemplate::Gemma2InstructChat`] and
+/// [`PromptTemplate::Qwen2Chat`] produce a plain-text v12 few-shot prompt
+/// (strict directive + 13 positive few-shot pairs + 3-pair negative
+/// example contrast + query) that the model completes in text-completion
+/// mode; [`PromptTemplate::Custom`] formats
+/// `{system?}{user_wrapper.0}{input}{user_wrapper.1}{assistant_prefix}`
 /// directly.
 ///
 /// # Errors
