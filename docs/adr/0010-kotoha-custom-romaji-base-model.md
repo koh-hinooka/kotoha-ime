@@ -202,7 +202,7 @@ Phase 2 (ADR 0014) の Sudachi-based dictionary に英語 loanword entry を追�
 - ROADMAP restructure 反映先: `docs/ROADMAP.md` Phase 一覧テーブル + Phase 5 マイルストーン分割節
 - 先行 ADR 0009 (Gemma-2-2B-jpn-it pivot prep note): `docs/adr/0009-kanji-backend-model-selection-prep.md`
 - Phase 0 ADR 0002 (input mode Transient vs Sticky、Alternative E `InputMode::Latin` の基盤): `docs/adr/0002-input-mode-transient-vs-sticky.md`
-- Phase 5 spec の mixed JP/EN 対応節: `docs/superpowers/specs/2026-04-25-kotoha-phase-5-custom-model.md` §1 / §3.5 / §4.7 / §9 Q7 (本 ADR C4 / D8 の spec 側対応)
+- Phase 5 spec の mixed JP/EN 対応節: `docs/superpowers/specs/2026-04-25-kotoha-phase-5-custom-model.md` §1.5 / §3.5 / §4.7 / §8 Q7 (本 ADR C4 / D8 の spec 側対応)
 
 ## Note: Phase 3 呼称訂正
 
