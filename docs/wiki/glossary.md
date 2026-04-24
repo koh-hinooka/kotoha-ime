@@ -182,6 +182,52 @@
 - **対応する identifier**: `Candidate` struct (`crates/kotoha-core/src/kanji/mod.rs`)
 - **備考**: Phase 1 では surface のみ使用。Phase 2 で score / source (辞書 or LLM) フィールドを追加予定。
 
+### Phase 2 Dictionary layer (P2-A 以降)
+
+以下 6 entry は ADR 0014 (`docs/adr/0014-phase-2-dictionary-layer-architecture.md`) および Phase 2 spec (`docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md`) で初出した用語を集約する。実装 identifier は P2-A kick-off で確定予定のものを含む。
+
+### DictionaryBackend / DictionaryAugmented variant
+
+- **定義**: Phase 2 で追加予定の `BackendConfig` 新 variant (正式名は P2-A kick-off で確定)。Sudachi-based dictionary lookup と LlamaCpp LLM 生成を hybrid 構成で組合せる backend を表す。LLM 単体では recall が不足する固有名詞 / 敬称 / User 登録語彙を dictionary 側で structural に補う目的で導入する。
+- **初出**: ADR 0014 D1 / Phase 2 spec §3.3
+- **対応する identifier**: `BackendConfig::DictionaryAugmented` (候補名、P2-A kick-off で実装確定)
+- **備考**: 既存 `BackendConfig` は `#[non_exhaustive]` 属性を持つため、新 variant 追加は ADR 0006 方針に整合し breaking change にならない (既存 BackendConfig entry 備考参照)。Phase 5 で追加予定の `KotohaNative` variant とは直交しており、Phase 5 backend も同じ Dictionary layer を再利用できる設計 (ADR 0014 D6)。
+
+### System dictionary (システム辞書)
+
+- **定義**: Kotoha が配布する共通語彙辞書。SudachiDict-core (WorksApplications, Apache-2.0) を base とし、Kotoha 独自語彙 (敬称、IME 固有表記等) を薄い補完 layer として merge する。Phase 2 default の recall 源として働く。
+- **初出**: ADR 0014 D2 / Phase 2 spec §4.2
+- **対応する identifier**: System dictionary loader module (`crates/kotoha-core/src/dict/` 配下、P2-A kick-off で配置確定)
+- **備考**: core variant (約 70MB) と full variant (約 500MB) の 2 種のうち、Phase 2 default は core を採用する (Phase 2 spec §4.1)。SudachiDict-core の収録 entry 数は約 76 万 (lemma + 活用形含む、lemma 単位では約 20 万)。full 切替は P2-D golden fixture で recall 不足と判定された場合に限定する。
+
+### User dictionary (ユーザ辞書)
+
+- **定義**: ユーザが明示登録する個別語彙 (人名 / 所属組織名 / 業界固有語 / macro 展開) を保持する辞書。System dictionary と分離し、永続化形式 (TOML / JSONL / plain-text tsv) は P2-A kick-off で確定する。
+- **初出**: ADR 0014 D2 / Phase 2 spec §4.3
+- **対応する identifier**: User dictionary store module (`crates/kotoha-core/src/dict/` 配下、P2-A kick-off で配置確定)
+- **備考**: System dictionary の再配布サイクルに束縛されず、ユーザ側で独立に更新可能である。Phase 6 UX (MEMORY.md 参照) で設定 UI からの追加 / 編集 / import / export を実装予定。
+
+### Learning cache (学習キャッシュ)
+
+- **定義**: ユーザの変換候補選択履歴を永続化し、後続の rerank に利用する cache。in-memory LRU 構造で runtime に保持し、起動時 load + shutdown save で永続化する。同一 kana 入力に対するユーザ選択の偏りを時系列で反映する目的で導入する。
+- **初出**: ADR 0014 D3 / Phase 2 spec §5
+- **対応する identifier**: Learning cache module (`crates/kotoha-core/src/learning/` 配下、P2-A kick-off で配置確定)
+- **備考**: in-memory LRU の容量 / LRU eviction 方針 / 永続化 format (JSONL or sqlite) は P2-A kick-off で確定する。Phase 5 `KotohaNative` backend でも再利用可能な layer として設計する (ADR 0014 D6)。
+
+### Ranker / Reranker
+
+- **定義**: Dictionary 候補と LLM 候補を merge / dedupe / rerank して最終 top-k を決定する layer。初期重みは dict = 0.95 / LLM = 1.0 (P2-D での empirical tuning を前提とした暫定値)。学習キャッシュの履歴情報を rerank signal として追加で加味する。
+- **初出**: ADR 0014 D5 / Phase 2 spec §3.3 / §6
+- **対応する identifier**: Ranker module (`crates/kotoha-core/src/ranker/` 配下、P2-A kick-off で配置確定)
+- **備考**: 初期重み (dict 0.95 / LLM 1.0) は ADR 0014 D5 の暫定値であり、P2-D で 100〜200 件規模の golden fixture に対して evaluation し再確定する (ADR 0014 Consequences 負の帰結 参照)。
+
+### Candidate merge / dedupe
+
+- **定義**: 辞書候補と LLM 候補を同一 kanji surface で統合 (merge) し、重複 entry を排除 (dedupe) する処理。score は「最大値採用」または「重み合算」のいずれかで決定し、選択方針は P2-D で empirical 確定する。
+- **初出**: Phase 2 spec §3.3
+- **対応する identifier**: Ranker module 内の merge / dedupe 関数 (P2-A kick-off で実装確定)
+- **備考**: 同一 surface が Dictionary 側と LLM 側の両方から返る場合、source フィールド (Candidate 構造体に Phase 2 で追加予定) を保持して、後段の UX / debug に活用できる設計とする。
+
 ## 5. LLM 推論とプロンプト
 
 ### PromptTemplate
