@@ -88,7 +88,7 @@ crates/
 | `crates/kotoha-core/src/kanji/candidate.rs` | 値型 Candidate (`#[non_exhaustive]`, Debug+Clone+PartialEq) と ConvertOptions (`#[non_exhaustive]`, Default=top_k 5/temp 0/seed Some(0)) |
 | `crates/kotoha-core/src/kanji/error.rs` | KanjiError (`#[non_exhaustive]`, thiserror 由来 5 variant)、spec §5.5 の定義を英語エラーメッセージで実装 |
 | `crates/kotoha-core/src/kanji/backend.rs` | KanjiBackend trait + pub(crate) fn validate_input + pub(crate) fn score_sort_dedupe + BackendConfig enum + load_backend factory fn。本ファイルで contract (§5.6/§5.7) を一元化 |
-| `crates/kotoha-core/src/kanji/mock.rs` | 決定論的 MockBackend 実装。`#[cfg(feature = "mock-backend")]` gate。spec §8.2 の hard-coded fixture 3 件 (にほんご / かんじ / あした) と未知入力 → 空 Vec を実装 |
+| `crates/kotoha-core/src/kanji/mock.rs` | 決定論的 MockBackend 実装。`#[cfg(feature = "mock-backend")]` gate。spec §8.2 の hard-coded fixture 4 件 (にほんご / かんじ / あした / にほん) と未知入力 → 空 Vec を実装。にほん は dedupe path を end-to-end で発火させる唯一の fixture (surface 重複あり) |
 | `crates/kotoha-core/src/kanji/zenz.rs` | ZenzBackend skeleton。P1-1 では todo!() stub のみ。`#[cfg(feature = "zenz")]` gate。P1-2 で llama-cpp-2 依存と実装を追加する |
 | `crates/kotoha-core/tests/kanji_mock.rs` | Layer 2 integration test (spec §8.2、5 件)。file-level `#![cfg(feature = "mock-backend")]` で gate |
 
@@ -435,7 +435,7 @@ mod tests {
     fn candidate_new_constructs_with_surface_and_score() {
         let c = Candidate::new("日本語", 0.9);
         assert_eq!(c.surface, "日本語");
-        assert_eq!(c.score, 0.9);
+        assert!((c.score - 0.9).abs() < 1e-6);
     }
 
     #[test]
@@ -761,7 +761,7 @@ use crate::kanji::{Candidate, ConvertOptions, KanjiError};
 ///
 /// Implementations MUST:
 ///
-/// - Reject non-hiragana input (hiragana block `U+3041..=U+309F` plus the
+/// - Reject non-hiragana input (hiragana block `U+3040..=U+309F` plus the
 ///   prolonged-sound mark `ー U+30FC` is the only accepted alphabet) by
 ///   returning [`KanjiError::InvalidInput`]. Use the shared
 ///   [`validate_input`] helper to ensure a uniform error shape.
@@ -811,7 +811,7 @@ pub trait KanjiBackend {
 ///
 /// # Accepted characters
 ///
-/// - Hiragana block: `U+3041..=U+309F`
+/// - Hiragana block: `U+3040..=U+309F`
 /// - Prolonged sound mark: `U+30FC` (ー)
 ///
 /// Empty input is accepted (the backend returns an empty `Vec`).
@@ -830,11 +830,11 @@ pub(crate) fn validate_input(input: &str) -> Result<(), KanjiError> {
         });
     }
     for ch in input.chars() {
-        let ok = matches!(ch, '\u{3041}'..='\u{309F}' | '\u{30FC}');
+        let ok = matches!(ch, '\u{3040}'..='\u{309F}' | '\u{30FC}');
         if !ok {
             return Err(KanjiError::InvalidInput {
                 reason: format!(
-                    "character {ch:?} is outside the hiragana block (U+3041..=U+309F) and is not the prolonged sound mark (U+30FC)"
+                    "character {ch:?} is outside the hiragana block (U+3040..=U+309F) and is not the prolonged sound mark (U+30FC)"
                 ),
             });
         }
@@ -992,7 +992,7 @@ mod tests {
         let out = score_sort_dedupe(input, 5);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].surface, "日本語");
-        assert_eq!(out[0].score, 0.9);
+        assert!((out[0].score - 0.9).abs() < 1e-6);
         assert_eq!(out[1].surface, "二本後");
     }
 
@@ -1256,7 +1256,7 @@ Expected: `2 files changed`。
 - Create: `crates/kotoha-core/src/kanji/mock.rs`
 - Modify: `crates/kotoha-core/src/kanji/mod.rs` (add `#[cfg(feature = "mock-backend")] mod mock; ...`)
 
-spec §8.2 の MockBackend を実装する。hard-coded fixture 3 件 (spec §13 Q4 に従い hard-code 優先)。
+spec §8.2 の MockBackend を実装する。hard-coded fixture 4 件 (にほんご / かんじ / あした / にほん、spec §13 Q4 に従い hard-code 優先)。にほん は dedupe property を Layer 2 で実際に発火させるための surface 重複 fixture。
 
 - [ ] **Step 1: mod.rs に mock module 宣言を追加**
 
@@ -1297,11 +1297,13 @@ Content:
 //! # Fixture decision (spec §13 Q4 follow-up)
 //!
 //! The fixture is hard-coded (not externalized to TSV). Spec §13 Q4 accepts
-//! this for small fixture counts. Three known inputs (`"にほんご"`,
-//! `"かんじ"`, `"あした"`) produce two candidates each (six total data
-//! points), which is sufficient to exercise every contract property
-//! (score-descending sort, surface dedupe, top_k truncation, empty result,
-//! unknown-input empty result) in Layer 2 integration tests.
+//! this for small fixture counts. Four known inputs (`"にほんご"`,
+//! `"かんじ"`, `"あした"`, `"にほん"`) produce candidates sufficient to
+//! exercise every contract property (score-descending sort, surface dedupe,
+//! top_k truncation, empty result, unknown-input empty result) in Layer 2
+//! integration tests. The `"にほん"` entry emits three raw candidates with
+//! one duplicate surface ("日本" at 0.9 and 0.3), so the dedupe path of
+//! `score_sort_dedupe` is actually exercised end-to-end.
 //!
 //! Any input not listed above returns an empty `Vec` rather than an error,
 //! matching the trait contract (spec §5.3, §5.7 bullet 4 "empty allowed").
@@ -1354,6 +1356,15 @@ impl KanjiBackend for MockBackend {
                 Candidate::new("明日", 0.92),
                 Candidate::new("足した", 0.25),
             ],
+            // Dedupe fixture: two candidates share the same surface "日本" but
+            // with different scores; after score_sort_dedupe, only the higher
+            // (0.9) is retained. This is the one input that exercises the
+            // surface-dedupe property end-to-end in Layer 2.
+            "にほん" => vec![
+                Candidate::new("日本", 0.9),
+                Candidate::new("日本", 0.3),
+                Candidate::new("二本", 0.5),
+            ],
             _ => Vec::new(),
         };
         Ok(score_sort_dedupe(fixture, options.top_k))
@@ -1377,7 +1388,7 @@ mod tests {
         let out = b.convert("にほんご", &opts).expect("convert must succeed");
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].surface, "日本語");
-        assert_eq!(out[0].score, 0.9);
+        assert!((out[0].score - 0.9).abs() < 1e-6);
         assert_eq!(out[1].surface, "二本後");
     }
 
@@ -1409,6 +1420,22 @@ mod tests {
         let err = b.convert("abc", &opts).expect_err("latin input must be rejected");
         assert!(matches!(err, KanjiError::InvalidInput { .. }));
     }
+
+    #[test]
+    fn mock_dedupe_fixture_collapses_duplicate_surfaces() {
+        let backend = MockBackend::new();
+        let options = ConvertOptions {
+            top_k: 5,
+            ..ConvertOptions::default()
+        };
+        let result = backend.convert("にほん", &options).expect("valid input");
+
+        assert_eq!(result.len(), 2, "3 raw candidates dedupe to 2");
+        assert_eq!(result[0].surface, "日本");
+        assert!((result[0].score - 0.9).abs() < 1e-6);
+        assert_eq!(result[1].surface, "二本");
+        assert!((result[1].score - 0.5).abs() < 1e-6);
+    }
 }
 ```
 
@@ -1420,7 +1447,7 @@ Run:
 cargo test -p kotoha-core --lib --features mock-backend kanji::mock::tests
 ```
 
-Expected: 5 tests passed。
+Expected: 6 tests passed。
 
 - [ ] **Step 4: feature flag なしでの check**
 
@@ -1988,21 +2015,33 @@ fn mock_backend_respects_top_k() {
 
 #[test]
 fn mock_backend_dedupes_identical_surface() {
-    let backend = load_backend(&BackendConfig::Mock)
-        .expect("Mock must construct when mock-backend feature is on");
-    let opts = ConvertOptions::default();
-    let out = backend
-        .convert("にほんご", &opts)
-        .expect("convert must succeed");
-    let mut seen: Vec<String> = Vec::new();
-    for c in &out {
-        assert!(
-            !seen.iter().any(|s| s == &c.surface),
-            "surface {:?} must not be duplicated in the output",
-            c.surface
-        );
-        seen.push(c.surface.clone());
-    }
+    let backend = load_backend(&BackendConfig::Mock).expect("mock backend should load");
+    let options = ConvertOptions {
+        top_k: 5,
+        ..ConvertOptions::default()
+    };
+
+    // "にほん" fixture intentionally emits [(日本, 0.9), (日本, 0.3), (二本, 0.5)].
+    // After score-desc sort + surface dedupe, the lower-scored "日本" (0.3) is
+    // dropped; the output is [(日本, 0.9), (二本, 0.5)] — 2 candidates, no
+    // duplicate surfaces.
+    let result = backend
+        .convert("にほん", &options)
+        .expect("valid hiragana input should convert");
+
+    assert_eq!(result.len(), 2, "dedupe should collapse one duplicate surface");
+    assert_eq!(result[0].surface, "日本");
+    assert!((result[0].score - 0.9).abs() < 1e-6);
+    assert_eq!(result[1].surface, "二本");
+
+    let mut surfaces: Vec<&str> = result.iter().map(|c| c.surface.as_str()).collect();
+    surfaces.sort();
+    surfaces.dedup();
+    assert_eq!(
+        surfaces.len(),
+        result.len(),
+        "no duplicate surfaces permitted in backend output (spec §5.7 bullet 2)",
+    );
 }
 
 #[test]
@@ -2161,7 +2200,7 @@ Run:
 git log --oneline develop..HEAD
 ```
 
-Expected: 9 commits (Task P1-1-1 〜 P1-1-10 のうち commit を行った Task 数 = 9)。
+Expected: 10 commits (Task P1-1-1 〜 P1-1-10 が各 1 commit = 10)。
 
 - [ ] **Step 2: branch を push**
 
@@ -2194,7 +2233,7 @@ Closes #<IMPL_ISSUE>.
   - `candidate.rs` — Candidate + ConvertOptions value types (`#[non_exhaustive]`, Default)
   - `error.rs` — KanjiError enum (`#[non_exhaustive]`, 5 variants via thiserror)
   - `backend.rs` — KanjiBackend trait, `pub(crate)` helpers `validate_input` + `score_sort_dedupe`, BackendConfig enum, `load_backend` factory
-  - `mock.rs` — MockBackend (feature = "mock-backend"), deterministic fixture for 3 known inputs
+  - `mock.rs` — MockBackend (feature = "mock-backend"), deterministic fixture for 4 known inputs (one of which exercises surface dedupe end-to-end)
   - `zenz.rs` — ZenzBackend skeleton (feature = "zenz"), todo!() stubs for P1-2
 - New feature flags in `crates/kotoha-core/Cargo.toml`: `default`, `mock-backend`, `zenz` (empty in P1-1), `zenz-smoke`
 - Updated `crates/kotoha-core/src/lib.rs` to expose `pub mod kanji;` + re-exports
@@ -2223,7 +2262,7 @@ Closes #<IMPL_ISSUE>.
 - [ ] `cargo test --workspace --features mock-backend` passes
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean
 - [ ] `cargo check` clean under all 6 feature configurations listed above
-- [ ] MockBackend fixture produces deterministic output for "にほんご" / "かんじ" / "あした" and empty Vec for unknown inputs
+- [ ] MockBackend fixture produces deterministic output for "にほんご" / "かんじ" / "あした" / "にほん" and empty Vec for unknown inputs ("にほん" exercises surface dedupe end-to-end)
 - [ ] load_backend returns `KanjiError::FeatureDisabled` when the matching feature is off
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
@@ -2315,7 +2354,7 @@ finished: 2026-04-24
   - `candidate.rs`: Candidate + ConvertOptions (spec §5.1 / §5.2)
   - `error.rs`: KanjiError (spec §5.5、5 variants、thiserror 由来)
   - `backend.rs`: KanjiBackend trait + pub(crate) validate_input + pub(crate) score_sort_dedupe + BackendConfig + load_backend (spec §5.3 / §5.4 / §5.6 / §5.7)
-  - `mock.rs`: MockBackend (feature = mock-backend)、3 known inputs のハードコード fixture
+  - `mock.rs`: MockBackend (feature = mock-backend)、4 known inputs のハードコード fixture (にほん は surface dedupe fixture)
   - `zenz.rs`: ZenzBackend skeleton (feature = zenz)、todo!() stubs
   - `mod.rs`: re-export
 - `crates/kotoha-core/src/lib.rs` に `pub mod kanji;` + `pub use kanji::{...};` を追加
@@ -2342,6 +2381,7 @@ finished: 2026-04-24
 - P1-1 で `validate_input` / `score_sort_dedupe` を `pub(crate)` helper として backend.rs に配置済み。ZenzBackend::convert 実装時にはこれら helper をそのまま利用すること (契約の一元化)。
 - Layer 3 (`zenz-smoke` feature、tests/kanji_zenz_smoke.rs) は P1-2 の scope。
 - Open Question Q2 (prompt template 正確形) / Q5 (`--seed 0` deterministic 挙動) は P1-2 開始時に解消する。
+- `crates/kotoha-core/src/kanji/zenz.rs` の `#[allow(unused_variables)]` (load / convert の引数未使用対応) と struct field の `#[allow(dead_code)]` (`model_path` / `_placeholder`) を、llama-cpp-2 による実装完了時に削除すること。P1-1 の todo!() スケルトンが消えれば引数と field は自然と使用されるため、allow 属性は不要になる。
 
 ## 成果物リンク
 
@@ -2429,7 +2469,7 @@ gh issue close <IMPL_ISSUE>
 
 ## Self-Review 済み事項
 
-本 plan の品質を担保するため、以下 8 項目を自己確認済み。
+本 plan の品質を担保するため、以下 9 項目を自己確認済み。
 
 1. **プレースホルダ残留なし**: 本文内の `<IMPL_ISSUE>` / `<PR_NUMBER>` / `<MERGE_COMMIT>` は意図した placeholder (着手時に実値へ置換)。それ以外に "TODO" / "..." / "TBD" / "fill in" / "similar to Task N" のような未解決箇所は存在しない。各 Task の Rust コードと bash コマンドはすべて完全形で記述されている。
 2. **型シグネチャ一貫性**: `Candidate::new(surface: impl Into<String>, score: f32)` のシグネチャは P1-1-2 の定義、P1-1-4 の score_sort_dedupe テスト、P1-1-6 の mock.rs 実装、P1-1-10 の integration test すべてで一致する。`ConvertOptions::default()` の `top_k: 5, temperature: 0.0, seed: Some(0)` も同様。
@@ -2439,3 +2479,4 @@ gh issue close <IMPL_ISSUE>
 6. **`#[non_exhaustive]` 適用確認**: Candidate (P1-1-2) / ConvertOptions (P1-1-2) / BackendConfig (P1-1-5) / KanjiError (P1-1-3) の 4 型すべてに `#[non_exhaustive]` を付与済み。ADR 0006 準拠。
 7. **Branch Scope Policy 準拠**: 本 PR は 7 new + 2 modified = 9 file、約 500 LOC。CLAUDE.md の目安 (10 files / 300 lines) のうち line 数がやや超過するため、PR Review Matrix の Small tier 上限近い Medium tier 寄りとして運用する (Task P1-1-13 Step 1 で reviewer 選択を明記済み)。
 8. **CLAUDE.md 制約遵守**: 言語規則 (英語 = commit / PR / rustdoc / ISSUE、日本語 = plan / WBS) を全 Task の commit message と Write content で徹底。WBS 直接 push は P1-1-14 で CLAUDE.md 「WBS 直接 push の例外」節を明示的に引用。lefthook pre-push `--no-verify` 禁止も共通規約に明記済み。
+9. **Review findings 反映 (PR #64 round 1)**: reviewer agent から挙がった HIGH 2 件 (hiragana range spec drift U+3041→U+3040、Layer 2 dedupe test が vacuous) と MEDIUM/LOW 3 件 (float_cmp 互換化、commit 数修正、P1-2 allow 削除申し送り) を本 commit で解消した。残置の MEDIUM/LOW (Layer 2 empty-input 網羅 / Task P1-1-6 TDD step split / verification 期待件数の厳密化 / variant-level non_exhaustive) は spec 制約 (§8.5 Layer 2 件数固定) または将来 ADR 0010 に委ねる判断。
