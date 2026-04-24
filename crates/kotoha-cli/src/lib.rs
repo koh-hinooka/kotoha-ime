@@ -11,6 +11,12 @@
 //! - [`kanji_cli`] — Phase 1 kanji (`src/bin/kanji.rs`, gated on the
 //!   `llama-cpp` feature).
 //!
+//! The `kanji_cli` submodule is always compiled (no feature gate at the
+//! module level). The `[[bin]] kotoha-kanji` binary is gated with
+//! `required-features = ["llama-cpp"]` in `Cargo.toml`, so only the
+//! binary itself is opt-in; the pure helpers in `kanji_cli` remain
+//! available for unit testing regardless of feature selection.
+//!
 //! # Behavior pins (see plan M6 §『本 M6 plan 内で解決する既知の懸念』)
 //!
 //! - [`InputStep::Preedit`] is dropped silently (Phase 0 CLI is not a

@@ -70,4 +70,5 @@ while IFS=$'\t' read -r hiragana expected; do
   assert_contains "$row_num. $hiragana → contains '$expected'" "$actual" "$expected"
 done <"$FIXTURE"
 
+# fixture 15 rows, row 3 skipped = 14 assertions expected.
 assert_summary "phase1-smoke"

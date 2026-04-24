@@ -75,8 +75,10 @@ pub struct KanjiCliArgs {
 /// # Postconditions
 ///
 /// - Returns `Ok(path)` if `cli_flag` is `Some(path)` (flag takes precedence).
-/// - Returns `Ok(PathBuf::from(v))` if `cli_flag` is `None` and
-///   `env_getter()` returns `Some(v)` with `v` non-empty after trim.
+/// - Returns `Ok(PathBuf::from(v.trim()))` if `cli_flag` is `None` and
+///   `env_getter()` returns `Some(v)` with `v` non-empty after trim
+///   (leading and trailing ASCII whitespace is trimmed before the
+///   `PathBuf` is constructed).
 /// - Returns `Err(_)` with a clear English message if both are absent
 ///   or the environment value is empty.
 ///
@@ -92,7 +94,7 @@ pub fn resolve_model_path(
         return Ok(path);
     }
     match env_getter() {
-        Some(v) if !v.trim().is_empty() => Ok(PathBuf::from(v)),
+        Some(v) if !v.trim().is_empty() => Ok(PathBuf::from(v.trim())),
         _ => Err(
             "--model-path not provided and KOTOHA_LLAMA_MODEL_PATH is unset or empty".to_string(),
         ),
@@ -188,6 +190,9 @@ pub fn format_candidates(candidates: &[Candidate]) -> String {
 ///
 /// - The returned `ConvertOptions` has `top_k == args.top_k`,
 ///   `temperature == args.temperature`, and `seed == Some(args.seed)`.
+// `ConvertOptions` is `#[non_exhaustive]`, so struct update syntax
+// (`..Default::default()`) is unavailable outside its defining crate.
+// We build via `Default::default()` and field mutation instead.
 #[allow(clippy::field_reassign_with_default)]
 pub fn build_options(args: &KanjiCliArgs) -> ConvertOptions {
     let mut opt = ConvertOptions::default();
