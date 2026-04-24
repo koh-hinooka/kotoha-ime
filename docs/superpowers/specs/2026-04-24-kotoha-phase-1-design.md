@@ -187,9 +187,11 @@ kotoha-ime/
     │   └── plans/
     │       └── 2026-04-24-kotoha-phase-1-implementation.md  # 後続 PR で作成
     └── adr/
-        ├── 0009-phase-1-default-model-selection.md  # ★ P1-4 で作成
-        ├── 0010-kanji-backend-trait-design.md       # ★ P1-4 で作成
-        └── 0011-feature-flag-design-for-llama-cpp.md # ★ P1-4 で作成
+        ├── 0009-phase-1-default-model-selection.md  # P1-4 で正式化 (元 prep 0009-kanji-backend-model-selection-prep.md を rename)
+        ├── 0010-kotoha-custom-romaji-base-model.md  # Phase 5 方針 (ADR 0010 として確定済、PR #78)
+        ├── 0011-kanji-backend-trait-design.md       # P1-4 で作成 (spec 当初計画の 0010 から +1 繰上げ)
+        ├── 0012-feature-flag-design-for-llama-cpp.md # P1-4 で作成 (spec 当初計画の 0011 から +1 繰上げ)
+        └── 0013-phase-1-latency-target.md           # P1-4 で作成 (spec §8.3 の 30s target を empirical に見直し)
 ```
 
 ### 4.2 依存方向
@@ -891,6 +893,22 @@ Phase 1 終了時に以下 3 本の ADR を作成する。番号は Phase 0 ま�
 - [ ] 13. ADR 0009 / 0010 / 0011 が作成され、本設計書と相互参照している
 - [ ] 14. `README.md` に Gemma-2-2B-jpn-it Q5_K_M の GGUF 入手コマンドと配置先、`kotoha-kanji --model` の使い方が記載されている
 - [ ] 15. `cargo fmt --all --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` が CI / lefthook pre-push で warning なく pass する
+
+### 14.1 Phase 1 完了宣言 (2026-04-25 P1-4)
+
+Phase 1 の全 milestone (P1-0 〜 P1-4) が完了した。達成内容は以下のとおりである。
+
+- **P1-0** (assert.sh 共通 library): 完了 (Phase 0 からの継承、`scripts/lib/assert.sh` を Phase 0 / Phase 1 smoke 双方で共有)
+- **P1-1** (MockBackend + skeleton): 完了 (`kotoha-core::kanji` module、`KanjiBackend` trait、`Candidate` / `ConvertOptions` / `BackendConfig` / `KanjiError`、`MockBackend`、`load_backend` factory、Layer 1 + Layer 2 test)
+- **P1-2** (初期 ZenzBackend): 完了 (後に P1-2.5 refactor で `LlamaCppBackend` に改称)
+- **P1-2.5** (LlamaCppBackend 汎用化 + Gemma-2-2B-jpn-it 採用): 完了 (PR #74 merge `02cf035`、`PromptTemplate` enum 導入、9/9 PASS baseline)
+- **P1-2.5 follow-up** (Layer 3 15 行復元 + v12 prompt): 完了 (PR #76 merge `3eccaa1`、14/15 PASS、row 3 は Phase 5 deferral)
+- **P1-3** (kotoha-kanji CLI + phase1-smoke.sh): 完了 (PR #82 merge `f9a820c`、`kotoha-cli::bin::kotoha-kanji` バイナリ、`process_line` 純粋関数、Layer 4 E2E smoke)
+- **P1-4** (ADR 0009 promote + ADR 0011/0012/0013 新規 + spec wrap): 完了 (本 PR、§14.1 宣言とともに close)
+
+完了条件は §14 Acceptance 表の全 15 項目が (a) 達成、または (b) ADR で defer が明文化 (row 3 → ADR 0010、latency → ADR 0013) されている状態で満たす。
+
+Phase 2 (Dictionary and learning) kick-off 可能。
 
 ## 15. 参照
 
