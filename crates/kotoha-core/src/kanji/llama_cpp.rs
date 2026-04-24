@@ -1,33 +1,39 @@
-//! Zenz GGUF model backend (via llama-cpp-2).
+//! llama.cpp-family GGUF backend (via llama-cpp-2).
 //!
-//! # Status (P1-2)
+//! # Status (P1-2.5)
 //!
 //! This module holds the real kanji conversion backend. An instance owns a
 //! llama-cpp-2 `LlamaModel` loaded from a GGUF file, re-used across every
 //! `convert` call.
 //!
+//! # Input handling
+//!
+//! Phase 1 default (`PromptTemplate::Gemma2InstructChat` + Gemma-2-2B-jpn-it)
+//! accepts hiragana directly as the user-turn content; no kana casing
+//! adjustment is performed at this layer. Backends that require a different
+//! input alphabet (for example, a hypothetical Zenz variant expecting
+//! katakana) are responsible for their own preprocessing — spec §5.6 keeps
+//! the Kotoha public API contract at hiragana-only, and backend-internal
+//! preprocessing is explicitly out of scope of that contract.
+//!
 //! # Prompt format
 //!
-//! Zenz was trained on katakana input per the upstream dataset contract
-//! (`Miwa-Keita/zenz-v2.5-dataset` README: `"input": 入力のカタカナ文字列`).
-//! `ZenzBackend::convert` therefore applies `crate::kana::hiragana_to_katakana`
-//! to the caller-supplied hiragana before building the prompt; Kotoha's
-//! public input contract (spec §5.6) stays hiragana-only so the preprocessing
-//! is an internal concern of this backend.
-//!
-//! The wider prompt template (context / input / output separators, EOS token
-//! `</s>`, the PUA separator tokens `U+EE00..=U+EE06`) follows the AzooKey
-//! Zenzai reference implementation and is documented in the WBS
-//! "prompt format 解析ログ" section.
+//! Prompts are built via llama-cpp-2's `apply_chat_template`, reading the
+//! GGUF-embedded `tokenizer.chat_template` through `chat_template(None)`
+//! for the [`PromptTemplate::Gemma2InstructChat`] and
+//! [`PromptTemplate::Qwen2Chat`] variants. [`PromptTemplate::Custom`] falls
+//! back to a hand-authored `{system?}{user_wrapper.0}{input}{user_wrapper.1}{assistant_prefix}`
+//! string, letting integrators wire backends whose GGUF lacks embedded
+//! chat_template metadata.
 //!
 //! # Deterministic output
 //!
-//! When `ConvertOptions::temperature == 0.0` and `ConvertOptions::seed == Some(0)`
-//! (the default), the backend performs greedy decoding with a fixed seed so
-//! the Layer 3 smoke tests and the E2E smoke tests are reproducible.
+//! With `ConvertOptions::temperature == 0.0` and `ConvertOptions::seed == Some(0)`
+//! the backend performs greedy decoding with a fixed seed so Layer 3 and
+//! Layer 4 smoke tests are reproducible.
 //!
 //! Spec: `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md` §3.1,
-//! §3.2, §3.3, §5.3, §6.
+//! §3.2, §5.3, §5.6, §6.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -37,47 +43,59 @@ use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaModel};
+use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 
-use crate::kanji::{Candidate, ConvertOptions, KanjiBackend, KanjiError};
+use crate::kanji::{Candidate, ConvertOptions, KanjiBackend, KanjiError, PromptTemplate};
 
-/// Zenz GGUF model backend, backed by llama-cpp-2. Enabled by `feature = "zenz"`.
+/// llama.cpp-family GGUF model backend, backed by llama-cpp-2. Enabled by
+/// `feature = "llama-cpp"`.
 ///
-/// Construct with [`ZenzBackend::load`] or via
-/// [`crate::kanji::load_backend`] applied to [`crate::kanji::BackendConfig::Zenz`].
+/// Construct via [`crate::kanji::load_backend`] applied to
+/// [`crate::kanji::BackendConfig::LlamaCpp`].
 ///
 /// # Invariants
 ///
 /// - `model` holds an initialized llama-cpp-2 `LlamaModel`.
 /// - `model_path` is the absolute path that was used to load `model`.
+/// - `model_id` is the file stem of `model_path` captured at load time.
+/// - `prompt_template` dispatches the prompt construction path per request.
 /// - The backend is single-threaded; wrap externally for concurrent use.
-pub struct ZenzBackend {
+pub struct LlamaCppBackend {
     /// Loaded llama-cpp-2 model. Kept private so llama-cpp-2 types do not leak
     /// into the public API surface. Read by `convert` to spin up a per-call
     /// `LlamaContext` for inference.
     model: LlamaModel,
     /// Path the model was loaded from. Used by logging and error diagnostics.
     model_path: PathBuf,
+    /// GGUF file stem captured at load time. Returned by
+    /// [`KanjiBackend::model_id`] and used in Layer 3 smoke test assertions.
+    model_id: String,
+    /// Chat/prompt template to apply when constructing the inference prompt.
+    /// Dispatched by `convert` via `infer` to either llama-cpp-2's
+    /// `apply_chat_template` (for [`PromptTemplate::Gemma2InstructChat`] /
+    /// [`PromptTemplate::Qwen2Chat`]) or a hand-authored format string (for
+    /// [`PromptTemplate::Custom`]).
+    prompt_template: PromptTemplate,
 }
 
 // Manual `Debug` impl: `LlamaModel` does not implement `Debug` (FFI-wrapping
-// type backed by `NonNull<llama_model>` with no derived impl in upstream
-// version 0.1.145), so `#[derive(Debug)]` on `ZenzBackend` would not compile.
-// The tests use `Result::expect_err`, which requires `T: Debug` on the `Ok`
-// variant. Print only `model_path` and replace the `model` field with a
-// placeholder string.
-impl fmt::Debug for ZenzBackend {
+// type backed by `NonNull<llama_model>` with no derived impl in llama-cpp-2
+// 0.1.145), so `#[derive(Debug)]` on `LlamaCppBackend` would not compile.
+// Print the three side fields and a placeholder for `model`.
+impl fmt::Debug for LlamaCppBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ZenzBackend")
+        f.debug_struct("LlamaCppBackend")
             .field("model", &"<LlamaModel>")
             .field("model_path", &self.model_path)
+            .field("model_id", &self.model_id)
+            .field("prompt_template", &self.prompt_template)
             .finish()
     }
 }
 
-impl ZenzBackend {
-    /// Loads a Zenz GGUF model from `model_path`.
+impl LlamaCppBackend {
+    /// Loads a GGUF model from `model_path` and captures the dispatch template.
     ///
     /// # Preconditions
     ///
@@ -87,9 +105,10 @@ impl ZenzBackend {
     ///
     /// # Postconditions
     ///
-    /// On success, the returned `ZenzBackend` owns a llama-cpp-2
-    /// [`LlamaModel`] initialized from the GGUF file at `model_path`, and
-    /// the process-global [`LlamaBackend`] is guaranteed to be initialized.
+    /// On success, the returned `LlamaCppBackend` owns a llama-cpp-2
+    /// [`LlamaModel`] initialized from the GGUF file at `model_path`, the
+    /// process-global [`LlamaBackend`] is guaranteed to be initialized, and
+    /// `prompt_template` is the value supplied by the caller.
     ///
     /// # Errors
     ///
@@ -97,7 +116,7 @@ impl ZenzBackend {
     /// - [`KanjiError::ModelLoadFailed`] if llama-cpp-2 fails to initialize
     ///   the global backend or parse / initialize the GGUF (wrapping the
     ///   underlying error as `source`).
-    pub fn load(model_path: &Path) -> Result<Self, KanjiError> {
+    pub fn load(model_path: &Path, prompt_template: PromptTemplate) -> Result<Self, KanjiError> {
         if !model_path.exists() {
             return Err(KanjiError::ModelNotFound {
                 path: model_path.to_path_buf(),
@@ -106,10 +125,17 @@ impl ZenzBackend {
 
         let model = load_llama_model(model_path)
             .map_err(|source| KanjiError::ModelLoadFailed { source })?;
+        let model_id = model_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("llama-cpp")
+            .to_string();
 
         Ok(Self {
             model,
             model_path: model_path.to_path_buf(),
+            model_id,
+            prompt_template,
         })
     }
 }
@@ -159,15 +185,9 @@ fn load_llama_model(
     Ok(model)
 }
 
-impl KanjiBackend for ZenzBackend {
+impl KanjiBackend for LlamaCppBackend {
     fn model_id(&self) -> &str {
-        // NOTE: llama-cpp-2 0.1.145 does not expose a clean public API for
-        // reading GGUF `general.name` metadata from `LlamaModel`; the underlying
-        // `llama_model_meta_val_str` FFI is not re-exported in this version.
-        // For Phase 1 we return the spec §3.2 default Zenz-v2.5-medium literal.
-        // Phase 2 can revisit once llama-cpp-2 surfaces a Rust-side metadata
-        // accessor or we reach for the `-sys` crate directly.
-        "zenz-v2.5-medium"
+        &self.model_id
     }
 
     fn convert(&self, input: &str, options: &ConvertOptions) -> Result<Vec<Candidate>, KanjiError> {
@@ -180,52 +200,63 @@ impl KanjiBackend for ZenzBackend {
             return Ok(Vec::new());
         }
 
-        // Step 3: Zenz expects katakana per the upstream dataset contract
-        // (`Miwa-Keita/zenz-v2.5-dataset` README). Kotoha's public API is
-        // hiragana-only, so the conversion is an internal concern.
-        let katakana = crate::kana::hiragana_to_katakana(input);
-
-        // Step 4: build the AzooKey-derived prompt (see WBS log).
-        let prompt = build_prompt(&katakana);
-
-        // Step 5: inference. Phase 1 produces a single greedy candidate;
-        // Phase 2+ expands to beam search / n-best sampling once the Zenz
-        // scoring story (per-token log-prob aggregation, diverse candidate
-        // generation) is nailed down.
-        let raw = infer(&self.model, &prompt, options)
+        // hiragana→katakana preprocessing is removed in P1-2.5-7 — Phase 1 default
+        // (Gemma-2-2B-jpn-it) accepts hiragana natively. Custom prompts handle any
+        // kana casing in their own template strings.
+        let raw = infer(&self.model, &self.prompt_template, input, options)
             .map_err(|reason| KanjiError::Backend { reason })?;
 
-        // Step 6: enforce spec §5.7 output guarantees (descending sort,
-        // surface dedupe, top_k truncation) uniformly with MockBackend.
         Ok(crate::kanji::backend::score_sort_dedupe(raw, options.top_k))
     }
 }
 
-/// Builds the Zenz prompt for a katakana-preprocessed input.
+/// Produces the role/content tuples consumed by llama-cpp-2
+/// `apply_chat_template`. Phase 1 submits a single user turn; the model is
+/// expected to return the kanji string as its assistant turn.
 ///
-/// # Prompt format (zenz-v3 / AzooKey Zenzai convention)
+/// For `Gemma2InstructChat` / `Qwen2Chat`, the user content is wrapped in an
+/// IME-style instruction + 2 few-shot examples so the chat-tuned base model
+/// performs kana→kanji conversion instead of responding conversationally.
+/// Empirical observation (P1-2.5-8): without this instruction wrapper,
+/// Gemma-2-2B-jpn-it echoes the hiragana input plus whitespace/emoji noise.
 ///
-/// Derived from the AzooKey Zenzai reference implementation; full analysis
-/// lives in the P1-2 WBS "prompt format 解析ログ" section. The prompt uses
-/// Unicode PUA separator tokens that the GGUF tokenizer resolves to Zenz's
-/// special-token ids:
-///
-/// - `U+EE00` (placeholder — exact codepoint pending P1-2-9 empirical
-///   verification against the GGUF `tokenizer.ggml.added_tokens` list) acts
-///   as the `<context>` opener. Empty context is acceptable for Phase 1.
-/// - `U+EE01` acts as the `<input_katakana>` prefix.
-/// - `U+EE02` acts as the `<output>` marker.
-/// - `"</s>"` is the EOS marker.
-///
-/// Keep this function pure (`&str -> String`) so Phase 2+ can unit-test it
-/// independently of llama-cpp-2 once the codepoints are locked down.
-fn build_prompt(input_katakana: &str) -> String {
-    // RESEARCH-DEPENDENT: exact PUA codepoints pending P1-2-9 empirical check.
-    const CONTEXT: &str = "\u{EE00}";
-    const INPUT: &str = "\u{EE01}";
-    const OUTPUT: &str = "\u{EE02}";
-    const EOS: &str = "</s>";
-    format!("{CONTEXT}{INPUT}{input_katakana}{OUTPUT}{EOS}")
+/// For [`PromptTemplate::Custom`] with `system: Some(s)`, a `"system"` turn
+/// is prepended. `Custom` does not add the instruction wrapper — callers who
+/// use `Custom` are expected to bake their own directive into the wrapper
+/// strings.
+fn build_chat_tuples(template: &PromptTemplate, user_input: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::with_capacity(2);
+    if let PromptTemplate::Custom {
+        system: Some(system),
+        ..
+    } = template
+    {
+        out.push(("system".to_string(), system.clone()));
+    }
+    match template {
+        PromptTemplate::Gemma2InstructChat | PromptTemplate::Qwen2Chat => {
+            // Multi-turn few-shot: Gemma-2-2B-jpn-it follows the conversion
+            // pattern more reliably when each example is a full user→assistant
+            // exchange than when few-shot examples are embedded as plain text
+            // in a single turn (empirical P1-2.5-8 observation).
+            let directive = "あなたは日本語IMEです。ひらがな入力を漢字交じりの自然な日本語に変換して、変換結果のみを出力してください。";
+            // Turn 1 example
+            out.push(("user".to_string(), format!("{directive}\n\n入力: にほんご")));
+            out.push(("assistant".to_string(), "日本語".to_string()));
+            // Turn 2 example
+            out.push(("user".to_string(), "入力: やまださん".to_string()));
+            out.push(("assistant".to_string(), "山田さん".to_string()));
+            // Turn 3 example
+            out.push(("user".to_string(), "入力: わたしはがくせいです".to_string()));
+            out.push(("assistant".to_string(), "私は学生です".to_string()));
+            // Actual query
+            out.push(("user".to_string(), format!("入力: {user_input}")));
+        }
+        PromptTemplate::Custom { .. } => {
+            out.push(("user".to_string(), user_input.to_string()));
+        }
+    }
+    out
 }
 
 /// Runs greedy inference against the loaded model and returns a single raw
@@ -237,13 +268,21 @@ fn build_prompt(input_katakana: &str) -> String {
 /// extracting per-token logits from the greedy sampler requires reaching
 /// into the lower-level `LlamaTokenDataArray` API; left for Phase 2).
 ///
+/// The prompt is built per the supplied [`PromptTemplate`]:
+/// [`PromptTemplate::Gemma2InstructChat`] and [`PromptTemplate::Qwen2Chat`]
+/// dispatch to llama-cpp-2's `apply_chat_template` (reading the
+/// GGUF-embedded `tokenizer.chat_template` via `chat_template(None)`);
+/// [`PromptTemplate::Custom`] formats `{system?}{user_wrapper.0}{input}{user_wrapper.1}{assistant_prefix}`
+/// directly.
+///
 /// # Errors
 ///
-/// Returns `Err(reason)` for any FFI / decode / sampling failure. The caller
-/// wraps the string into [`KanjiError::Backend`].
+/// Returns `Err(reason)` for any FFI / decode / sampling / template failure.
+/// The caller wraps the string into [`KanjiError::Backend`].
 fn infer(
     model: &LlamaModel,
-    prompt: &str,
+    template: &PromptTemplate,
+    input: &str,
     options: &ConvertOptions,
 ) -> Result<Vec<Candidate>, String> {
     // Phase 1 only supports greedy decoding. Reject `temperature > 0` early
@@ -262,6 +301,36 @@ fn infer(
 
     let backend = llama_backend().map_err(|e| format!("LlamaBackend init failed: {e}"))?;
 
+    // Dispatch prompt construction by template variant.
+    let prompt = match template {
+        PromptTemplate::Custom {
+            user_wrapper,
+            assistant_prefix,
+            system,
+        } => {
+            let system_part = system
+                .as_ref()
+                .map(|s| format!("{s}\n"))
+                .unwrap_or_default();
+            let (prefix, suffix) = user_wrapper;
+            format!("{system_part}{prefix}{input}{suffix}{assistant_prefix}")
+        }
+        PromptTemplate::Gemma2InstructChat | PromptTemplate::Qwen2Chat => {
+            let tmpl: LlamaChatTemplate = model
+                .chat_template(None)
+                .map_err(|e| format!("chat_template(None) failed: {e}"))?;
+            let chat_tuples = build_chat_tuples(template, input);
+            let chat: Vec<LlamaChatMessage> = chat_tuples
+                .into_iter()
+                .map(|(r, c)| LlamaChatMessage::new(r, c))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("LlamaChatMessage::new failed: {e}"))?;
+            model
+                .apply_chat_template(&tmpl, &chat, true)
+                .map_err(|e| format!("apply_chat_template failed: {e}"))?
+        }
+    };
+
     // Default context parameters are sufficient for ≤128-char hiragana inputs;
     // Phase 2+ may explicitly tune `n_ctx` once we benchmark longer queries.
     let ctx_params = LlamaContextParams::default();
@@ -269,11 +338,11 @@ fn infer(
         .new_context(backend, ctx_params)
         .map_err(|e| format!("context init failed: {e}"))?;
 
-    // Tokenize the prompt. The Zenz prompt already encodes the
-    // context/input/output markers explicitly, so we tell llama-cpp-2 to
-    // skip its own BOS injection.
+    // Tokenize the prompt. The chat template (GGUF-embedded or hand-authored
+    // via `Custom`) already supplies any required BOS/role markers, so we
+    // tell llama-cpp-2 to skip its own BOS injection.
     let tokens = model
-        .str_to_token(prompt, AddBos::Never)
+        .str_to_token(&prompt, AddBos::Never)
         .map_err(|e| format!("tokenize failed: {e}"))?;
     if tokens.is_empty() {
         return Ok(Vec::new());
@@ -296,15 +365,16 @@ fn infer(
     // Greedy sampler. Phase 2+ swaps in a temperature/top-k/top-p chain.
     let mut sampler = LlamaSampler::greedy();
 
-    // Bound generation length. AzooKey-style heuristic: at most 3× input
-    // chars, capped between 32 and 256 tokens. P1-2-9 records the empirically
-    // observed maximum once a real model is loaded.
+    // Bound generation length: at most 3× the prompt char count, clamped to
+    // [32, 256] tokens. The 3× factor accommodates kanji-heavy outputs that
+    // expand beyond the hiragana input; the upper cap prevents runaway
+    // generation when the model fails to emit EOS.
     let max_new_tokens: usize = (prompt.chars().count() * 3).clamp(32, 256);
     let eos = model.token_eos();
     // Accumulate raw bytes from each detokenized token, then UTF-8 decode at
-    // the end. Zenz outputs Japanese characters whose UTF-8 encoding may span
-    // multiple tokens, so per-token `String` decoding can split a multi-byte
-    // sequence and produce replacement characters. Buffering bytes side-steps
+    // the end. Japanese characters whose UTF-8 encoding spans multiple tokens
+    // can have their multi-byte sequences split by per-token `String`
+    // decoding, producing replacement characters. Buffering bytes side-steps
     // that without pulling in `encoding_rs` (a transitive dep of llama-cpp-2
     // that we do not want to surface in Kotoha's direct dependency list).
     let mut surface_bytes: Vec<u8> = Vec::new();
@@ -319,11 +389,12 @@ fn infer(
             break;
         }
 
-        // Detokenize. `special = false` keeps PUA separator tokens (and any
-        // other GGUF special tokens) from leaking into the candidate surface.
-        // Buffer size 64 fits any single Japanese token (UTF-8 max 4 bytes per
-        // code point, typical Zenz tokens are subword fragments ≤ a few code
-        // points); `token_to_piece_bytes` retries internally if undersized.
+        // Detokenize. `special = false` keeps any GGUF special tokens (chat
+        // template role markers, separator tokens, etc.) from leaking into
+        // the candidate surface. Buffer size 64 fits any single Japanese
+        // token (UTF-8 max 4 bytes per code point, typical subword fragments
+        // are ≤ a few code points); `token_to_piece_bytes` retries
+        // internally if undersized.
         let piece = model
             .token_to_piece_bytes(next, 64, false, None)
             .map_err(|e| format!("detokenize failed at step {step}: {e}"))?;
@@ -360,9 +431,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn zenz_load_errors_on_missing_file() {
-        let err = ZenzBackend::load(Path::new("/tmp/definitely-does-not-exist-kotoha-p1-2.gguf"))
-            .expect_err("load must error when the path does not exist");
+    fn llama_cpp_load_errors_on_missing_file() {
+        let err = LlamaCppBackend::load(
+            Path::new("/tmp/definitely-does-not-exist-kotoha-p1-2-5.gguf"),
+            PromptTemplate::Gemma2InstructChat,
+        )
+        .expect_err("load must error when the path does not exist");
         match err {
             KanjiError::ModelNotFound { path } => {
                 assert!(
@@ -375,10 +449,9 @@ mod tests {
         }
     }
 
-    // Note: `zenz_model_id_is_zenz_prefix` is intentionally absent from the
-    // in-source test module because constructing a `ZenzBackend` for the test
-    // requires a real GGUF file, which is out of scope here. Layer 3 smoke
-    // (`tests/kanji_zenz_smoke.rs`) asserts that `model_id()` returns a
-    // "zenz"-prefixed string once a real backend is loaded via
-    // `KOTOHA_ZENZ_MODEL_PATH`.
+    // Note: `llama_cpp_model_id_echoes_file_stem` is not covered here
+    // because constructing a real backend requires a live GGUF file. Layer 3
+    // smoke (`tests/kanji_llama_cpp_smoke.rs`) asserts that `model_id()`
+    // returns a file-stem-derived string once a real backend is loaded via
+    // `KOTOHA_LLAMA_MODEL_PATH`.
 }

@@ -5,7 +5,7 @@
 ## 目標
 
 - GNOME Wayland ネイティブに動作する軽量で拡張可能な日本語 IME
-- ニューラル変換 (Zenz 系 GPT-2 + llama.cpp) による高品質なかな漢字変換
+- ニューラル変換 (llama.cpp + Gemma-2-2B-jpn-it) によるかな漢字変換
 - 設定可能な挙動 (Shift 動作、ホットキー、モードなど)
 - タイポ訂正、文脈リランキング等のモダンな機能
 - IBus engine として GNOME に統合、将来的に fcitx5 addon (KDE/wlroots 対応) も提供
@@ -24,7 +24,7 @@ Cargo workspace として以下の crate を持つ:
 | Phase | 内容 | 状態 |
 |---|---|---|
 | 0 | Cargo workspace + ローマ字→かな変換 + CLI | 完了 |
-| 1 | かな→漢字変換 (Zenz + llama.cpp) | 未着手 |
+| 1 | かな→漢字変換 (llama.cpp + Gemma-2-2B-jpn-it) | 未着手 |
 | 2 | システム辞書 + ユーザ辞書 + 学習 | 未着手 |
 | 3 | IBus engine (GNOME) | 未着手 |
 | 4 | fcitx5 addon (KDE/wlroots) | 未着手 |

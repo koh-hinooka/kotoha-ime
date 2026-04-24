@@ -1,5 +1,5 @@
 ---
-title: Kotoha Phase 1 設計書 — かな→漢字変換 (Zenz + llama.cpp)
+title: Kotoha Phase 1 設計書 — かな→漢字変換 (Gemma-2-2B-jpn-it + llama.cpp)
 date: 2026-04-24
 status: draft
 phase: 1
@@ -29,13 +29,13 @@ revision: 1
 
 ## 1. 概要
 
-Phase 0 で確定した `InputContext` が生成するひらがな列を、Zenz モデル (GPT-2 系) に llama.cpp 経由で inference し、漢字混じり文の候補を top-K で返す機能を `kotoha-core` crate に追加する。CLI ツール `kotoha-kanji` を新設し、Phase 0 の `kotoha-romaji` と shell pipe で組み合わせることにより、ローマ字 → ひらがな → 漢字混じり文 のフル pipeline を shell 上で確認できるようにする。
+Phase 0 で確定した `InputContext` が生成するひらがな列を、LLM (Phase 1 default: Gemma-2-2B-jpn-it) に llama.cpp 経由で inference し、漢字混じり文の候補を top-K で返す機能を `kotoha-core` crate に追加する。CLI ツール `kotoha-kanji` を新設し、Phase 0 の `kotoha-romaji` と shell pipe で組み合わせることにより、ローマ字 → ひらがな → 漢字混じり文 のフル pipeline を shell 上で確認できるようにする。
 
 Phase 1 の到達点は以下の 3 点に集約される:
 
 1. `kotoha-core::kanji` 公開 API (trait + 具象実装 + Candidate / ConvertOptions / Error 型) が安定しており、Phase 2 以降の追加 backend / 辞書 / 学習層が pattern を再利用できる状態にあること
 2. CLI `kotoha-kanji` が `kotoha-romaji | kotoha-kanji --model <path>` の pipe 運用で end-to-end に動作すること
-3. 4 層 test 戦略 (unit / mock integration / Zenz smoke / E2E smoke) により、default features での lefthook pre-push が高速に完了し、かつ Zenz 実推論による smoke が opt-in で実行可能な状態にあること
+3. 4 層 test 戦略 (unit / mock integration / llama.cpp smoke / E2E smoke) により、default features での lefthook pre-push が高速に完了し、かつ実推論 (Phase 1 default: Gemma-2-2B-jpn-it) による smoke が opt-in で実行可能な状態にあること
 
 Phase 1 は `InputContext` との直接 wiring は行わない。IME engine 層との接合は Phase 3 で IBus 統合と同時に扱う。Phase 1 の CLI は stdin 1 行 1 ひらがな入力 → stdout 1 行 1 漢字混じり文出力の純粋変換ツールに徹する。
 
@@ -45,13 +45,13 @@ Phase 1 は `InputContext` との直接 wiring は行わない。IME engine 層�
 
 以下 8 項目を Phase 1 の実装範囲とする。6 section brainstorming により確定済み。
 
-1. 新規 module `kotoha-core::kanji/` を追加し、trait `KanjiBackend` と最初の具象実装 `ZenzBackend` (llama-cpp-2 経由) を実装する
+1. 新規 module `kotoha-core::kanji/` を追加し、trait `KanjiBackend` と最初の具象実装 `LlamaCppBackend` (llama-cpp-2 経由) を実装する
 2. `Candidate` struct (`#[non_exhaustive]`) と `ConvertOptions` struct (`top_k` / `temperature` / `seed`) を公開 API として定義する
 3. Config-driven backend factory `load_backend(&BackendConfig) -> Result<Box<dyn KanjiBackend>, KanjiError>` を実装する
 4. CLI `kotoha-kanji` を `kotoha-cli` crate に新設する。stdin 1 行 1 ひらがな、stdout 1 行 1 漢字混じり文とし、options として `--model <path>`, `--top-k N`, `--show-scores`, `--show-model-id`, `--temperature F`, `--seed U` を提供する
-5. Test 戦略を 4 層で整備する: default features での mock 使用 unit test、`mock-backend` feature による cross-crate integration test、`zenz-smoke` feature による Zenz 実推論 smoke (5-10 件、opt-in)、E2E smoke script
+5. Test 戦略を 4 層で整備する: default features での mock 使用 unit test、`mock-backend` feature による cross-crate integration test、`llama-cpp-smoke` feature による実推論 smoke (Phase 1 default: Gemma-2-2B-jpn-it、9 件、opt-in)、E2E smoke script
 6. `scripts/phase1-smoke.sh` を Phase 0 の `scripts/phase0-smoke.sh` と並列配置する
-7. Model placement は manual 前提とする (Q3=A 決定済み)。`README.md` に `Zenz-v2.5-medium` の GGUF 入手コマンドと配置先を明記する
+7. Model placement は manual 前提とする (Q3=A 決定済み)。`README.md` に `Gemma-2-2B-jpn-it` の GGUF 入手コマンドと配置先を明記する
 8. 共通 shell library `scripts/lib/assert.sh` を抽出する。Phase 0 smoke script も本 library を使うよう refactor する先行 PR (P1-0) を設ける
 
 ### 2.2 Out-of-scope (Phase 2+ 延期)
@@ -86,46 +86,57 @@ Phase 1 の変換単位は「単文 (1 行のひらがな列)」とする。Phas
 
 Phase 1 では `llama-cpp-2` を第一候補として採用し、採用事由と代替比較を ADR 0010 (後述) に記録する。
 
-### 3.2 Zenz model (HuggingFace GGUF)
+### 3.2 Default model: Gemma-2-2B-jpn-it (GGUF)
 
-- Default: **Zenz-v2.5-medium** (`Miwa-Keita/zenz-v2.5-medium-gguf`)
-- 選択可能な 3 サイズ: `small` / `medium` / `large`
-- 学習データ: 190M JSONL dataset + AJIMEE-Bench (かな→漢字変換 benchmark)
-- Release: 2025-01
-- Tokenizer: character-level + byte-level BPE。GGUF file に埋め込み済みのため、Rust 側で tokenizer 実装を別途用意する必要はない
+- Default: **Gemma-2-2B-jpn-it Q5_K_M** (`bartowski/gemma-2-2b-jpn-it-GGUF`, ファイル名 `gemma-2-2b-jpn-it-Q5_K_M.gguf`, 約 1.92 GB)
+- License: Gemma License (再配布可、attribution 必須。Kotoha repo に同梱はしない — 利用者が HuggingFace から download する。手順は `crates/kotoha-core/tests/kanji_llama_cpp_smoke.rs` の module docstring 参照)
+- Tokenizer: SentencePiece (Gemma 2 family), chat template は GGUF metadata の `tokenizer.chat_template` に埋め込み済
+- 採用根拠: P1-2-9 empirical verification (WBS `docs/wbs/2026-04-24-feature-69-zenz-backend-layer3-smoke.md` commit `718fd8e`) で Qwen2.5-1.5B-Instruct / Gemma-2-2B-jpn-it / Gemma-3-1B-it の 3-way 比較を実施し、Gemma-2-2B-jpn-it が 5/5 (敬称 `やまださん` → `山田さん` を含む) を達成した唯一のモデル
+- Phase 1 latency: cold load 約 10.6 秒 + warm inference 約 3 秒 / case。spec §8.3 の "30 秒以内" target に対し、9 件連続実行で約 30 秒 (9 件 × 平均 3 秒 + cold load 分) と境界付近。target 緩和可否は P1-4 の正式 ADR で決定する
+- Quantization 選択肢: Q4_K_M (品質劣化あり、Phase 1 default としては不適) / Q5_K_M (本採用) / Q6_K / Q8_0 (size 3.3 GB 超、Phase 1 budget 逼迫)
 
-Zenz-v2.5-medium を default とする理由:
+#### 3.2.1 IME-style prompt wrapper (実装上の補足)
 
-- `small` は品質が不足し、default として Phase 1 acceptance (smoke 5 件の目視品質判定) を通らない可能性がある
-- `large` は推論コストが高く、Phase 1 smoke の 30 秒以内完了 target を超過するリスクがある
-- `medium` は品質とコストのバランスが取れており、CPU 推論でも実用的 (brainstorming で確認済み)
+Gemma-2-2B-jpn-it は instruction-tuned なので、生のひらがな入力を `apply_chat_template(None)` に渡すだけでは chat-style 応答 (入力エコー + emoji + 改行) を返し、kana→kanji 変換を行わない。実装 (`crates/kotoha-core/src/kanji/llama_cpp.rs::build_chat_tuples`) では **multi-turn few-shot** 形式で以下の 3 例を pre-fill する:
 
-### 3.3 【必読】AzooKey Zenzai documentation
+1. 入力: `にほんご` → 出力: `日本語` (短語)
+2. 入力: `やまださん` → 出力: `山田さん` (敬称付き固有名詞)
+3. 入力: `わたしはがくせいです` → 出力: `私は学生です` (文章)
 
-> **本 Phase 1 の実装者は、P1-2 (ZenzBackend 実装) の着手前に必ず本ドキュメントを通読すること。**
->
-> - URL: <https://github.com/azooKey/AzooKeyKanaKanjiConverter/blob/main/Docs/zenzai.md>
-> - AzooKey IME (Swift 実装) の Zenzai system 設計を詳解する唯一の公開 reference
-> - Zenz モデルの prompt format / special token handling / decoding strategy は本 docs が 1 次情報源
-> - Phase 1 リスク #2 (prompt format 未確定) の 1 次緩和策として、参照は **mandatory**
-> - 解析結果は WBS の「prompt format 解析ログ」として必ず記録する
+この構造は `build_chat_tuples` の内部実装詳細であり、`KanjiBackend::convert` の公開契約 (spec §5.3) には影響しない。Phase 2 で別 backend (e.g. fine-tuned specialized IME model) を追加する際は、Gemma 系には few-shot が必要/不要という事実を踏まえ、`PromptTemplate` variant を増やして切り替える。
 
-AzooKey は Swift 実装の日本語 IME であり、Kotoha とは別プロジェクトであるが、Zenz model を使った kana→kanji 変換の公開 reference 実装として参考価値が極めて高い。Phase 1 実装者は本 docs を最初に読み、その上で llama-cpp-2 経由の Rust 実装に落とし込む作業を進める。
+#### 3.2.2 Historical context: Zenz (Miwa-Keita) reevaluation
 
-解析対象は以下:
+P1-2 着手時点では Zenz-v2.5-medium (`Miwa-Keita/zenz-v2.5-medium-gguf`) を default 候補とした。P1-2-9 empirical verification 時に以下を発見:
 
-1. Prompt template の特殊 token 配置 (BOS / EOS / separator 等)
-2. 入力ひらがな列の tokenize 方針 (character-level 単位での区切り)
-3. Decoding 時の stop condition (EOS token の検出 / max new tokens)
-4. Top-K / top-P / temperature の Zenz 文脈での推奨範囲
-5. Score (log-probability の aggregation) の扱い方
+- Miwa-Keita 配下の Zenz GGUF (v1 / v2 / v2.5-medium [gated] / v3.1-small) は `tokenizer.ggml.pre = "gpt2-small-japanese-char"` を使用
+- llama-cpp-2 0.1.145 (bundled llama.cpp commit `e21cdc11`) および upstream llama.cpp master の pre-tokenizer allow-list には `gpt2-small-japanese-char` が未登録
+- llama-cpp-2 version bump でも解消しない architectural blocker
 
-解析結果は本 Phase 1 の WBS log (P1-2 実装 PR の WBS) に「prompt format 解析ログ」セクションを設けて記録する。記録は Kotoha 実装が AzooKey と挙動差分を生んだ際に参照できる形で残す。
+結果として Zenz family は Phase 1 では採用しない。Phase 2+ で upstream llama.cpp が `gpt2-small-japanese-char` を allow-list に追加するか、Zenz 側が pre-tokenizer を変更した段階で再評価する。この経緯は ADR 0009 (P1-4 正式起票、先行メモは `docs/adr/0009-kanji-backend-model-selection-prep.md`) に記録する。
+
+#### 3.2.3 Phase 2 tiered-model candidates
+
+- **Qwen2.5-1.5B-Instruct Q5_K_M** (1.29 GB, Apache 2.0): 敬称対応は劣るが license の柔軟性が高く、将来 Kotoha を完全 OSS として再配布する際の fallback 候補
+- **Gemma-3-1B-it Q5_K_M** (0.85 GB, Gemma License): 軽量だが hallucination が 3/5 発生 (Phase 1 quality bar に到達せず、tiered-model の fast-path 候補としてのみ保留)
+- **Gemma-4-31B-it 系 Community GGUF** (13-18 GB, Gemma or Apache 2.0): Phase 1 size budget を 6-9 倍超過するため不採用。Phase 2+ の large-tier model 候補
+
+### 3.3 Historical reference: AzooKey Zenzai documentation
+
+> Phase 1 default model を Gemma-2-2B-jpn-it に pivot した結果、本 section は **実装必読ではなく歴史的参照** に降格する。Prompt format は llama-cpp-2 の `apply_chat_template` が GGUF metadata から読み取る `tokenizer.chat_template` を信頼する方針に切り替えた (ADR 0009 予定)。
+
+AzooKey は Swift 実装の日本語 IME であり、Zenz 系 GGUF を使う prompt format の公開 reference 実装として Kotoha Phase 1 の初期設計で参照された:
+
+- URL: <https://github.com/azooKey/AzooKeyKanaKanjiConverter/blob/main/Docs/zenzai.md>
+- P1-2 着手時点では「Zenz 系 GGUF の PUA token 利用 / context / input / output 分離 / EOS 扱い」が 1 次情報源として必須
+- P1-2-9 pivot により、Zenz 系 GGUF は本 Phase では採用しないため、上記解析ログは `docs/wbs/2026-04-24-feature-69-zenz-backend-layer3-smoke.md` に記録したまま残し、コードからは削除した (`crates/kotoha-core/src/kanji/llama_cpp.rs` からは PUA token / AzooKey 由来の実装は P1-2.5 で撤去済)
+
+Phase 2 以降で Zenz 系 GGUF が再評価された際、または upstream llama.cpp が `gpt2-small-japanese-char` pre-tokenizer を allow-list に追加した際には、本 section の内容を再度一次情報化するかを ADR で判断する。
 
 ### 3.4 その他の依存追加
 
 - `thiserror` — `KanjiError` の `#[derive(thiserror::Error)]` 用
-- `tempfile` (dev-dependency) — Zenz smoke test の一時 model path 確認用
+- `tempfile` (dev-dependency) — llama.cpp smoke test の一時 model path 確認用
 
 新規依存追加の都度、目的と代替案の比較を commit message または PR body に記載する (project CLAUDE.md の依存管理規約に従う)。
 
@@ -153,10 +164,10 @@ kotoha-ime/
 │   │   │       ├── backend.rs     # KanjiBackend trait, BackendConfig, load_backend
 │   │   │       ├── error.rs       # KanjiError
 │   │   │       ├── mock.rs        # MockBackend (feature = "mock-backend")
-│   │   │       └── zenz.rs        # ZenzBackend (feature = "zenz")
+│   │   │       └── llama_cpp.rs   # LlamaCppBackend (feature = "llama-cpp")
 │   │   └── tests/
-│   │       ├── kanji_mock.rs      # ★ Phase 1 新設 (feature = "mock-backend")
-│   │       └── kanji_zenz_smoke.rs# ★ Phase 1 新設 (feature = "zenz-smoke")
+│   │       ├── kanji_mock.rs           # ★ Phase 1 新設 (feature = "mock-backend")
+│   │       └── kanji_llama_cpp_smoke.rs# ★ Phase 1 新設 (feature = "llama-cpp-smoke")
 │   └── kotoha-cli/
 │       ├── Cargo.toml
 │       └── src/
@@ -175,9 +186,9 @@ kotoha-ime/
     │   └── plans/
     │       └── 2026-04-24-kotoha-phase-1-implementation.md  # 後続 PR で作成
     └── adr/
-        ├── 0009-zenz-model-version-policy.md        # ★ P1-4 で作成
+        ├── 0009-phase-1-default-model-selection.md  # ★ P1-4 で作成
         ├── 0010-kanji-backend-trait-design.md       # ★ P1-4 で作成
-        └── 0011-feature-flag-design-for-zenz.md     # ★ P1-4 で作成
+        └── 0011-feature-flag-design-for-llama-cpp.md # ★ P1-4 で作成
 ```
 
 ### 4.2 依存方向
@@ -200,7 +211,7 @@ layer 構造は Phase 0 の方針を踏襲する。`kotoha-cli` → `kotoha-core
 │         ├── KanjiBackend trait                          │
 │         ├── BackendConfig / load_backend factory        │
 │         ├── MockBackend   (feature = "mock-backend")    │
-│         └── ZenzBackend   (feature = "zenz") ─────┐     │
+│         └── LlamaCppBackend (feature = "llama-cpp")┐    │
 └───────────────────────────────────────────────────┼─────┘
                                                     │
                                                     ▼
@@ -211,8 +222,10 @@ layer 構造は Phase 0 の方針を踏襲する。`kotoha-cli` → `kotoha-core
                                                     │
                                                     ▼
                                           ┌────────────────────┐
-                                          │ Zenz GGUF model    │
-                                          │ (manual placement) │
+                                          │ GGUF model         │
+                                          │ (Phase 1 default:  │
+                                          │  Gemma-2-2B-jpn-it,│
+                                          │  manual placement) │
                                           └────────────────────┘
 ```
 
@@ -225,8 +238,8 @@ layer 構造は Phase 0 の方針を踏襲する。`kotoha-cli` → `kotoha-core
 ```toml
 [features]
 default = []
-zenz = ["dep:llama-cpp-2"]
-zenz-smoke = ["zenz"]
+llama-cpp = ["dep:llama-cpp-2"]
+llama-cpp-smoke = ["llama-cpp"]
 mock-backend = []
 ```
 
@@ -235,15 +248,15 @@ mock-backend = []
 | Feature | 目的 | 典型利用シーン |
 |---------|------|---------------|
 | `default` | 実依存を一切引き込まない最小構成 | pre-push gate の素早い build / test |
-| `zenz` | `ZenzBackend` を有効化。llama-cpp-2 を dependency に引き込む | 実機で Zenz 推論を行うとき |
-| `zenz-smoke` | `zenz` を包含した上で `tests/kanji_zenz_smoke.rs` を gate する | CI 風の opt-in smoke (手動 `cargo test --features zenz-smoke`) |
+| `llama-cpp` | `LlamaCppBackend` を有効化。llama-cpp-2 を dependency に引き込む | 実機で llama.cpp-family backend (Phase 1 default: Gemma-2-2B-jpn-it) 推論を行うとき |
+| `llama-cpp-smoke` | `llama-cpp` を包含した上で `tests/kanji_llama_cpp_smoke.rs` を gate する | CI 風の opt-in smoke (手動 `cargo test --features llama-cpp-smoke`) |
 | `mock-backend` | `MockBackend` を `#[cfg(feature = "mock-backend")]` として公開 | `kotoha-core` 外 (CLI crate) からの integration test |
 
 `mock-backend` は `#[cfg(test)]` では cross-crate 可視にならないため、feature flag で切り出す。これは Rust の標準的な "test-only public API" の公開手段である。
 
-`zenz-smoke` を `zenz` と分離する理由は、lefthook pre-push の default feature build では model load を試みず、opt-in (`--features zenz-smoke`) でのみ実行する設計にするためである。詳細は §8 test strategy を参照。
+`llama-cpp-smoke` を `llama-cpp` と分離する理由は、lefthook pre-push の default feature build では model load を試みず、opt-in (`--features llama-cpp-smoke`) でのみ実行する設計にするためである。詳細は §8 test strategy を参照。
 
-CLI 側 (`kotoha-cli/Cargo.toml`) は `kotoha-core` を `{ workspace = true, features = ["zenz"] }` で参照する。`kotoha-kanji` バイナリは常に `zenz` feature を有効化して build する。
+CLI 側 (`kotoha-cli/Cargo.toml`) は `kotoha-core` を `{ workspace = true, features = ["llama-cpp"] }` で参照する。`kotoha-kanji` バイナリは常に `llama-cpp` feature を有効化して build する。
 
 ## 5. Core API
 
@@ -300,7 +313,7 @@ impl Default for ConvertOptions {
 }
 ```
 
-`seed: Some(u64)` の採用理由: Zenz smoke test と E2E smoke test を deterministic にするため。default の `Some(0)` + `temperature = 0.0` (greedy) により、同じ入力に対して常に同じ出力を得られる。CLI の `--seed` option で override 可能。
+`seed: Some(u64)` の採用理由: llama.cpp smoke test と E2E smoke test を deterministic にするため。default の `Some(0)` + `temperature = 0.0` (greedy) により、同じ入力に対して常に同じ出力を得られる。CLI の `--seed` option で override 可能。
 
 ### 5.3 KanjiBackend trait
 
@@ -314,7 +327,7 @@ use crate::kanji::{Candidate, ConvertOptions, KanjiError};
 /// 可能性があるが、その時点で Phase 2 までの実装を再評価する。
 pub trait KanjiBackend {
     /// 実装固有の model identifier (debug 表示 / log 用)。
-    /// 例: "zenz-v2.5-medium" / "mock"
+    /// 例: "gemma-2-2b-jpn-it-q5_k_m" / "mock"
     fn model_id(&self) -> &str;
 
     /// ひらがな列 `input` を top-`options.top_k` 件の漢字候補に変換する。
@@ -344,6 +357,35 @@ pub trait KanjiBackend {
 ```rust
 use std::path::PathBuf;
 
+/// Prompt template dispatch hint。
+///
+/// llama-cpp-2 の `apply_chat_template` が読み取る GGUF metadata 上の
+/// `tokenizer.chat_template` が family ごとに異なるため、backend 側で
+/// template の family と few-shot wrapper の有無を選択する hint として使う。
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum PromptTemplate {
+    /// Gemma-2 instruction-tuned chat (`gemma-2-2b-jpn-it` 等)。
+    /// GGUF の `tokenizer.chat_template` を参照し、few-shot wrapper を差し込む。
+    Gemma2InstructChat,
+    /// Qwen2 instruction-tuned chat (`qwen2.5-1.5b-instruct` 等)。
+    /// Gemma2InstructChat 同様に GGUF chat_template + few-shot wrapper。
+    Qwen2Chat,
+    /// Custom escape hatch。Integrator が独自の chat template / wrapper を
+    /// 用いる場合 (Phase 2+ の想定)。GGUF が `tokenizer.chat_template` を埋め込ん
+    /// でいない model、あるいは別の IME directive を使いたい場合に使用する。
+    Custom {
+        /// 先頭に付与する `system` turn の内容 (不要なら `None`)。
+        system: Option<String>,
+        /// user turn を包む `(prefix, suffix)`。
+        /// 例: `("<start_of_turn>user\n", "<end_of_turn>")`
+        user_wrapper: (String, String),
+        /// assistant turn を開始する prefix。
+        /// 例: `"<start_of_turn>model\n"`
+        assistant_prefix: String,
+    },
+}
+
 /// Backend の構築パラメータ。
 #[non_exhaustive]
 #[derive(Debug, Clone)]
@@ -353,12 +395,14 @@ pub enum BackendConfig {
     /// `mock-backend` feature が有効な場合のみ構築可能。
     Mock,
 
-    /// Zenz model (llama-cpp-2 経由)。
+    /// llama.cpp 経由の GGUF backend (llama-cpp-2 経由)。
     ///
-    /// `zenz` feature が有効な場合のみ構築可能。
-    Zenz {
+    /// `llama-cpp` feature が有効な場合のみ構築可能。
+    LlamaCpp {
         /// GGUF file への絶対パス
         model_path: PathBuf,
+        /// prompt template dispatch hint (§3.2.1 参照)
+        prompt_template: PromptTemplate,
     },
 }
 
@@ -377,18 +421,23 @@ pub fn load_backend(
             feature: "mock-backend",
         }),
 
-        #[cfg(feature = "zenz")]
-        BackendConfig::Zenz { model_path } => {
-            Ok(Box::new(crate::kanji::ZenzBackend::load(model_path)?))
+        #[cfg(feature = "llama-cpp")]
+        BackendConfig::LlamaCpp { model_path, prompt_template } => {
+            Ok(Box::new(crate::kanji::LlamaCppBackend::load(
+                model_path,
+                prompt_template.clone(),
+            )?))
         }
 
-        #[cfg(not(feature = "zenz"))]
-        BackendConfig::Zenz { .. } => Err(KanjiError::FeatureDisabled {
-            feature: "zenz",
+        #[cfg(not(feature = "llama-cpp"))]
+        BackendConfig::LlamaCpp { .. } => Err(KanjiError::FeatureDisabled {
+            feature: "llama-cpp",
         }),
     }
 }
 ```
+
+`PromptTemplate` は llama-cpp-2 が `apply_chat_template` で読み出す GGUF-embedded `tokenizer.chat_template` の dispatch hint であり、同時に few-shot prompt wrapper の選択肢も担う。詳細は §3.2.1 参照。
 
 ### 5.5 KanjiError
 
@@ -431,6 +480,8 @@ Error message は英語で記述する (global CLAUDE.md の「backend-facing er
 1. **hiragana only**: `input` は Unicode の U+3040..=U+309F (Hiragana block) に加え、長音符 U+30FC ("ー") のみを含む。latin / 漢字 / 記号 / 数字 / 空白 (全角含む) は不可。
 2. **max 128 chars**: `input.chars().count() <= 128`。これを超える場合は `KanjiError::InvalidInput` を返す。
 3. **単文**: `input` は 1 文 (句点 / 読点を含まない) を想定する。句点を含んでも technical には変換されるが、品質保証の対象外とする。
+
+**Note on backend-internal preprocessing:** spec §5.6 の hiragana-only 契約は `KanjiBackend::convert` の **API boundary** で成立すればよく、backend の内部処理で kana casing を変換することは契約違反ではない。例えば Phase 2 で Zenz 系 GGUF が再採用された場合 (pre-tokenizer 問題が解消された場合)、当該 backend は自身の `convert` 実装内で hiragana → katakana 変換を行ってよい。Phase 1 default の `LlamaCppBackend + Gemma-2-2B-jpn-it` はこの変換を必要としない。
 
 CLI 側 (`kotoha-kanji`) は入力 line ごとに契約検査を行い、違反時は stderr へ診断を出力し exit code 2 で終了する (§7 参照)。
 
@@ -476,10 +527,12 @@ Dedupe は score 順 sort の後、先頭から見て既出 surface を skip す
 │        │ trait dispatch                                    │
 │        ▼                                                   │
 │    ┌───────────────────────────────────────────────────┐   │
-│    │ ZenzBackend                                       │   │
-│    │   prompt = format_prompt("にほんご")              │   │
+│    │ LlamaCppBackend                                   │   │
+│    │   chat = build_chat_tuples(template, "にほんご")  │   │
+│    │   tmpl = model.chat_template(None)?               │   │
+│    │   prompt = model.apply_chat_template(&tmpl, chat) │   │
 │    │   tokens = llama_cpp_2.tokenize(prompt)           │   │
-│    │   outputs = llama_cpp_2.generate(tokens, top_k=5) │   │
+│    │   outputs = llama_cpp_2.generate(tokens, greedy)  │   │
 │    │   candidates = parse_outputs(outputs)             │   │
 │    │   candidates = score_sort_dedupe(candidates)      │   │
 │    │   → Vec<Candidate>                                │   │
@@ -504,7 +557,7 @@ Dedupe は score 順 sort の後、先頭から見て既出 surface を skip す
 
 | Option | Required | Default | 意味 |
 |--------|----------|---------|------|
-| `--model <path>` | **yes** | — | Zenz GGUF file への絶対 or 相対 path |
+| `--model <path>` | **yes** | — | GGUF file への絶対 or 相対 path (Phase 1 default: Gemma-2-2B-jpn-it Q5_K_M) |
 | `--top-k <N>` | no | 5 | 表示する候補数 (1..=20) |
 | `--show-scores` | no | false | 出力行に score を tab 区切りで付与する |
 | `--show-model-id` | no | false | 起動時に stderr へ model id を 1 行出力 |
@@ -579,7 +632,7 @@ pub fn process_line(
 
 ## 8. Test strategy (4 layer)
 
-Phase 0 の test philosophy (unit / integration の独立、fixture ベースの golden、reproducibility) を踏襲しつつ、Zenz 実推論を伴う層を opt-in feature で分離する。
+Phase 0 の test philosophy (unit / integration の独立、fixture ベースの golden、reproducibility) を踏襲しつつ、LLM 実推論を伴う層を opt-in feature で分離する。
 
 ### 8.1 Layer 1: Unit (default features)
 
@@ -601,27 +654,24 @@ Phase 0 の test philosophy (unit / integration の独立、fixture ベースの
 
 `MockBackend` は deterministic な候補を返す実装とする。例: 入力 "にほんご" に対して常に `[Candidate { surface: "日本語", score: 0.9 }, Candidate { surface: "二本後", score: 0.3 }]` を返す。これにより contract test が golden 的に機能する。
 
-### 8.3 Layer 3: Zenz smoke (zenz-smoke feature)
+### 8.3 Layer 3: llama.cpp smoke (llama-cpp-smoke feature)
 
-- 配置: `crates/kotoha-core/tests/kanji_zenz_smoke.rs`
-- 対象: 実際の Zenz-v2.5-medium GGUF を load して 5 件の smoke input で変換し、品質ではなく「プロセスが通る」ことを確認
-- 件数目安: 5 件 (Phase 1 smoke fixture と同一の 5 fixture)
-- 所要時間: 10〜30 秒 (CPU 推論)
-- Feature: `zenz-smoke`
-- 実行: `cargo test --features zenz-smoke` (手動 / opt-in)
-- lefthook pre-push には **含めない** (所要時間と model 依存のため)
-- model path は環境変数 `KOTOHA_ZENZ_MODEL_PATH` で指定。未設定時は `#[ignore]` 相当で skip する
-
-Smoke 5 件 fixture は `crates/kotoha-core/tests/fixtures/kanji_smoke.tsv` に格納する (`input_hiragana<TAB>expected_substring` 形式)。「top-1 が `expected_substring` を含む」を assertion とする (厳密一致ではなく部分一致。model 更新による些細な揺らぎを許容するため)。
+- 配置: `crates/kotoha-core/tests/kanji_llama_cpp_smoke.rs`
+- 対象: 実際の GGUF モデル (Phase 1 default: Gemma-2-2B-jpn-it Q5_K_M) を load して 9 件の smoke input で変換し、品質ではなく「プロセスが通る」ことを確認
+- Model path: 環境変数 `KOTOHA_LLAMA_MODEL_PATH` で渡す (未設定時は SKIP して exit 0)
+- Feature: `llama-cpp-smoke` (`llama-cpp` を implies)
+- 実行: `cargo test --features llama-cpp-smoke` (手動 / opt-in)
+- lefthook pre-push には含めない (default features のみ実行)
+- 所要時間: 約 30 秒 (cold load 約 10 秒 + 9 件 × 約 3 秒、warm inference)
 
 ### 8.4 Layer 4: E2E smoke (scripts/phase1-smoke.sh)
 
 - 配置: `scripts/phase1-smoke.sh` (Phase 0 の `scripts/phase0-smoke.sh` と並列)
 - 対象: `kotoha-romaji | kotoha-kanji` の pipe を subshell 実行し、end-to-end に期待出力を確認
 - 件数目安: 5 件 (Layer 3 と parity を取る)
-- 所要時間: 10〜30 秒 (内部で Zenz 推論が走るため)
+- 所要時間: 10〜30 秒 (内部で LLM 推論が走るため)
 - 実行: 手動 `bash scripts/phase1-smoke.sh` or `make smoke` 相当
-- `KOTOHA_ZENZ_MODEL_PATH` 未設定時は SKIP と表示して exit 0 で終了 (CI fail を起こさない)
+- `KOTOHA_LLAMA_MODEL_PATH` 未設定時は SKIP と表示して exit 0 で終了 (CI fail を起こさない)
 
 Assertion は substring 一致 (`assert_contains`) とし、Layer 3 と同一 fixture を使って parity を保つ。
 
@@ -631,16 +681,16 @@ Assertion は substring 一致 (`assert_contains`) とし、Layer 3 と同一 fi
 |-------|---------|-------------|------------------|--------|
 | 1. Unit (default) | 〜25 | 0.2 秒 | ✅ | — |
 | 2. Integration (mock-backend) | 5 | 0.1 秒 | ✅ | — |
-| 3. Zenz smoke (zenz-smoke) | 5 | 10〜30 秒 | ❌ | ✅ |
+| 3. llama.cpp smoke (llama-cpp-smoke) | 9 | 約 30 秒 | ❌ | ✅ |
 | 4. E2E smoke (shell) | 5 | 10〜30 秒 | ❌ | ✅ |
 | **合計 (pre-push)** | 〜30 | 0.3 秒以内 | — | — |
 
 ### 8.6 Model 更新時の fixture regenerate 手順
 
-Zenz model version が更新された場合 (ADR 0009 の policy で判断)、以下の手順で fixture を再生成する。
+Default model version が更新された場合 (ADR 0009 の policy で判断)、以下の手順で fixture を再生成する。
 
-1. 新 model GGUF を `KOTOHA_ZENZ_MODEL_PATH` に配置する
-2. `cargo test --features zenz-smoke` を run し、Layer 3 が pass することを確認する
+1. 新 model GGUF を `KOTOHA_LLAMA_MODEL_PATH` に配置する
+2. `cargo test --features llama-cpp-smoke` を run し、Layer 3 が pass することを確認する
 3. `bash scripts/phase1-smoke.sh` を run し、Layer 4 が pass することを確認する
 4. Layer 3 / Layer 4 の期待出力が model update により揺らいでいる場合:
    - `tests/fixtures/kanji_smoke.tsv` の `expected_substring` を新 model の top-1 出力に合わせて更新する
@@ -713,7 +763,7 @@ assert_summary() {
 3 関数の role:
 
 - `assert_equal` — Phase 0 smoke の主用途 (stdout 完全一致)
-- `assert_contains` — Phase 1 smoke の主用途 (Zenz 出力の部分一致)
+- `assert_contains` — Phase 1 smoke の主用途 (LLM 出力の部分一致)
 - `assert_summary` — 全行処理後の集計と exit code 決定
 
 ### 9.2 Phase 0 smoke の refactor (先行 PR P1-0 で実施)
@@ -764,13 +814,13 @@ P1-0 は Phase 1 本体実装と分離した先行 PR として実施し、Phase
 | # | Risk | 影響 | 緩和策 |
 |---|------|------|-------|
 | 1 | llama-cpp-2 の API が bindgen 経由で llama.cpp 本体の breaking change に追随 | P1-2 の実装が version pinning に複雑化 | 実装時点 (P1-2 開始日) で Context7 / crates.io 最新 stable に pin し、ADR 0010 に version policy を明記 |
-| 2 | Zenz の prompt format (special token / separator) が非自明で reverse-engineer が必要 | P1-2 の着手でロスが発生 | **§3.3 の AzooKey Zenzai docs を mandatory 参照**、WBS に「prompt format 解析ログ」を記録、差分測定は Phase 2 以降 |
-| 3 | GGUF model file size (medium 約 150MB、large 数 GB) を repo に含められない | Smoke test の再現性低下 | Model placement は manual、`KOTOHA_ZENZ_MODEL_PATH` で指定、未設定時 smoke は SKIP |
+| 2 | Zenz の prompt format (special token / separator) が非自明で reverse-engineer が必要 | P1-2 の着手でロスが発生 | P1-2.5 で llama-cpp-2 の `apply_chat_template` に一本化し、GGUF metadata の `tokenizer.chat_template` を 1 次情報源とする方針に変更した。加えて、Gemma-2-2B-jpn-it が生入力だけでは kana→kanji 変換を行わない empirical finding (P1-2.5-8) を踏まえ、IME-style multi-turn few-shot wrapper (`build_chat_tuples`) を Phase 1 default prompt に組み込んだ。AzooKey Zenzai docs (§3.3) は歴史的参照に降格。Phase 2+ で Zenz 系が再採用される際は ADR で再評価する。 |
+| 3 | GGUF model file size (medium 約 150MB、large 数 GB) を repo に含められない | Smoke test の再現性低下 | Model placement は manual、`KOTOHA_LLAMA_MODEL_PATH` で指定、未設定時 smoke は SKIP |
 | 4 | CPU inference の latency が CLI pipe 運用で体感できるほど遅い | pipe 運用の UX 低下 | Phase 1 では pipe の proof-of-concept までを acceptance とし、latency 改善は Phase 5 advanced features に先送り |
-| 5 | Zenz の出力が同一 surface を複数 score で生成する | dedupe 漏れによる duplicate 候補表示 | `score_sort_dedupe` を trait dispatch の外 (helper 関数) に実装し unit test で覆う |
-| 6 | lefthook pre-push に Zenz smoke が混入して CI が遅くなる | 開発者体験の低下 | `zenz-smoke` を独立 feature 化、pre-push は default features のみ実行 |
+| 5 | LLM の出力が同一 surface を複数 score で生成する | dedupe 漏れによる duplicate 候補表示 | `score_sort_dedupe` を trait dispatch の外 (helper 関数) に実装し unit test で覆う |
+| 6 | lefthook pre-push に llama.cpp smoke が混入して CI が遅くなる | 開発者体験の低下 | `llama-cpp-smoke` を独立 feature 化、pre-push は default features のみ実行 |
 | 7 | CLI の `--model` 省略時に hard-to-debug error を出す | 初回利用者の困惑 | `--model` を clap の `required = true` とし、unset 時は exit code 1 + README 引用の 1 行診断を stderr に出す |
-| 8 | Zenz smoke の 5 fixture が model version 更新で一斉 fail する | 更新 PR のマージ阻害 | §8.6 の regenerate 手順を ADR 0009 と連動させ、PR 内で fixture update を明示許可する |
+| 8 | llama.cpp smoke の 9 fixture が model version 更新で一斉 fail する | 更新 PR のマージ阻害 | §8.6 の regenerate 手順を ADR 0009 と連動させ、PR 内で fixture update を明示許可する |
 
 ## 11. Milestone 分割
 
@@ -780,11 +830,11 @@ Phase 1 全体を 5 PR に分割する。合計見積もり約 5.3 日、各 mil
 |----|-----------|-----------|------|------|
 | **P1-0** | Shell library 抽出 | `scripts/lib/assert.sh` 新設、`scripts/phase0-smoke.sh` を library 利用に refactor | 0.3 日 | なし (develop から直接) |
 | **P1-1** | Kanji module skeleton + Mock backend | `kotoha-core::kanji/` module 追加、`KanjiBackend` trait、`Candidate` / `ConvertOptions` / `KanjiError`、`MockBackend` (feature = mock-backend)、`load_backend` factory、Layer 1 + Layer 2 test | 1.5 日 | P1-0 merge |
-| **P1-2** | ZenzBackend 実装 | `ZenzBackend` 具象実装、llama-cpp-2 依存追加、prompt format 解析 (AzooKey docs 参照)、Layer 3 zenz-smoke test | 2.0 日 | P1-1 merge |
+| **P1-2** | LlamaCppBackend 実装 | `LlamaCppBackend` 具象実装 (当初 ZenzBackend として着手、P1-2.5 で一般化)、llama-cpp-2 依存追加、llama-cpp-smoke test | 2.5 日 (P1-2 + P1-2.5 合計) | P1-1 merge |
 | **P1-3** | CLI kotoha-kanji + Phase 1 smoke | `kotoha-cli::bin::kotoha-kanji` バイナリ、`process_line` 純粋関数、`scripts/phase1-smoke.sh`、Layer 4 E2E smoke | 1.0 日 | P1-2 merge |
-| **P1-4** | ADR + closing | ADR 0009 / 0010 / 0011、README 更新 (Zenz 入手手順 + `--model` 使い方)、Phase 1 acceptance checklist の消化、implementation WBS log 確定 | 0.5 日 | P1-3 merge |
+| **P1-4** | ADR + closing | ADR 0009 / 0010 / 0011、README 更新 (Gemma-2-2B-jpn-it 入手手順 + `--model` 使い方)、Phase 1 acceptance checklist の消化、implementation WBS log 確定 | 0.5 日 | P1-3 merge |
 
-合計: 5.3 日、5 PR。各 PR は project CLAUDE.md「Branch Scope Policy」(10 files / 300 lines 目安) に収まる範囲で設計している。P1-2 のみ llama-cpp-2 依存追加と `ZenzBackend` 実装で lines が増えやすいため、テスト fixture の追加を含めて 300 lines を意識して分割する可能性がある。
+合計: 5.3 日、5 PR。各 PR は project CLAUDE.md「Branch Scope Policy」(10 files / 300 lines 目安) に収まる範囲で設計している。P1-2 のみ llama-cpp-2 依存追加と `LlamaCppBackend` 実装で lines が増えやすいため、テスト fixture の追加を含めて 300 lines を意識して分割する可能性がある。
 
 ## 12. ADR 候補 (Milestone P1-4 で作成想定)
 
@@ -792,9 +842,9 @@ Phase 1 終了時に以下 3 本の ADR を作成する。番号は Phase 0 ま�
 
 | # | タイトル (仮) | 主内容 |
 |---|--------------|--------|
-| 0009 | Zenz model version policy | default を v2.5-medium にする理由、更新判断基準、fixture regenerate procedure (§8.6 と連動) |
+| 0009 | Phase 1 default model selection (Gemma-2-2B-jpn-it) | Zenz → Gemma-2-2B-jpn-it pivot の根拠、quantization (Q5_K_M) 選択、fixture regenerate procedure (§8.6 と連動) |
 | 0010 | Kanji backend trait design | `KanjiBackend` trait + `BackendConfig` enum + `load_backend` factory の採用理由、llama_cpp-rs / mistral.rs / Candle との比較 |
-| 0011 | Feature flag design for Zenz | `default` / `zenz` / `zenz-smoke` / `mock-backend` 4 flags の分離理由、lefthook pre-push との整合 |
+| 0011 | Feature flag design for llama.cpp integration | `default` / `llama-cpp` / `llama-cpp-smoke` / `mock-backend` 4 flags の分離理由、lefthook pre-push との整合 |
 
 いずれも P1-4 で作成し、本設計書と相互参照する (本書 → ADR、ADR → 本書)。
 
@@ -805,7 +855,7 @@ Phase 1 終了時に以下 3 本の ADR を作成する。番号は Phase 0 ま�
 | # | Question | 解消 milestone |
 |---|----------|---------------|
 | Q1 | `llama-cpp-2` の具体 version pin (実装日の最新 stable) | P1-2 開始時点で Context7 確認し pin、ADR 0010 に記録 |
-| Q2 | Zenz prompt template の exact form (special token sequence) | P1-2 で AzooKey docs 参照 + 実機検証、WBS に解析ログ記載 |
+| Q2 | LLM prompt template の exact form (chat_template + few-shot wrapper) | P1-2.5 で llama-cpp-2 apply_chat_template + IME-style multi-turn few-shot wrapper を採用 (ADR 0009 prep note 参照)。decision close |
 | Q3 | `process_line` の公開場所 (`kotoha-core::kanji::cli_support` vs `kotoha-cli` lib target) | P1-3 実装時に 2 案比較、ADR 候補外 (実装判断) |
 | Q4 | `MockBackend` の fixture をハードコード vs TSV 外出し | P1-1 実装時に判断。小規模 (5 件) のため hard-code を優先候補とする |
 | Q5 | `--seed` が `0` のとき deterministic を保証するかの llama-cpp-2 側の挙動 | P1-2 で挙動確認、docs/README に注記 |
@@ -817,17 +867,17 @@ Phase 1 終了時に以下 3 本の ADR を作成する。番号は Phase 0 ま�
 - [ ] 1. `crates/kotoha-core/src/kanji/` module が公開されている
 - [ ] 2. `KanjiBackend` trait、`Candidate` / `ConvertOptions` / `BackendConfig` / `KanjiError` が `kotoha_core::kanji::*` から re-export されている
 - [ ] 3. `MockBackend` が `mock-backend` feature 下で公開されている
-- [ ] 4. `ZenzBackend` が `zenz` feature 下で公開されており、`load_backend(&BackendConfig::Zenz { .. })` で構築可能である
+- [ ] 4. `LlamaCppBackend` が `llama-cpp` feature 下で公開されており、`load_backend(&BackendConfig::LlamaCpp { .. })` で構築可能である
 - [ ] 5. `load_backend` factory が feature 未有効時に `KanjiError::FeatureDisabled` を返す
 - [ ] 6. Layer 1 unit test (default features、約 25 件) が pass する
 - [ ] 7. Layer 2 integration test (`--features mock-backend`、5 件) が pass する
-- [ ] 8. Layer 3 Zenz smoke (`--features zenz-smoke`、5 件) が `KOTOHA_ZENZ_MODEL_PATH` 指定で pass する
+- [ ] 8. Layer 3 llama.cpp smoke (`--features llama-cpp-smoke`、9 件) が `KOTOHA_LLAMA_MODEL_PATH` 指定で pass する
 - [ ] 9. Layer 4 E2E smoke (`scripts/phase1-smoke.sh`、5 件) が pass する
 - [ ] 10. CLI `kotoha-kanji` が `--model <path>` required、option `--top-k / --show-scores / --show-model-id / --temperature / --seed` を受け付ける
 - [ ] 11. CLI の exit code 仕様 (0 / 1 / 2) が Phase 0 `kotoha-romaji` と整合している
 - [ ] 12. `scripts/lib/assert.sh` が `assert_equal` / `assert_contains` / `assert_summary` を提供し、Phase 0 smoke が refactor 後も pass する
 - [ ] 13. ADR 0009 / 0010 / 0011 が作成され、本設計書と相互参照している
-- [ ] 14. `README.md` に Zenz-v2.5-medium の GGUF 入手コマンドと配置先、`kotoha-kanji --model` の使い方が記載されている
+- [ ] 14. `README.md` に Gemma-2-2B-jpn-it Q5_K_M の GGUF 入手コマンドと配置先、`kotoha-kanji --model` の使い方が記載されている
 - [ ] 15. `cargo fmt --all --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` が CI / lefthook pre-push で warning なく pass する
 
 ## 15. 参照
@@ -839,7 +889,8 @@ Phase 1 終了時に以下 3 本の ADR を作成する。番号は Phase 0 ま�
 - ADR 0008 (canonical romaji Phase 1 判断 = 選択肢 1 採用): `docs/adr/0008-canonical-romaji-and-partial-invertibility.md`
 - ADR 0006 (non-exhaustive on streaming enums): `docs/adr/0006-non-exhaustive-on-streaming-enums.md`
 - AzooKey Zenzai docs (§3.3 で詳述): <https://github.com/azooKey/AzooKeyKanaKanjiConverter/blob/main/Docs/zenzai.md>
-- Zenz-v2.5 collection: <https://huggingface.co/collections/Miwa-Keita/zenz-v25-6784cd5d57147f61bc4c3031>
+- Zenz-v2.5 collection (Phase 1 では採用見送り、§3.2.2 参照): <https://huggingface.co/collections/Miwa-Keita/zenz-v25-6784cd5d57147f61bc4c3031>
+- Gemma-2-2B-jpn-it GGUF (Phase 1 default): <https://huggingface.co/bartowski/gemma-2-2b-jpn-it-GGUF>
 - llama-cpp-2 crates.io: <https://crates.io/crates/llama-cpp-2>
 - User memory: future vision として「入力 convention 拡張は canonical romaji ではなく rule table 追加で対応」、「Phase 6 UI で model 管理機能を想定」の 2 点が確定済み (ADR 0008 §影響 参照)
 
@@ -847,10 +898,10 @@ Phase 1 終了時に以下 3 本の ADR を作成する。番号は Phase 0 ま�
 
 Phase 1 完了時点で以下が Phase 2 の前提として利用可能になる:
 
-- `kotoha-core::kanji::{KanjiBackend, ZenzBackend, Candidate, ConvertOptions, BackendConfig, KanjiError}` 公開 API
+- `kotoha-core::kanji::{KanjiBackend, LlamaCppBackend, PromptTemplate, Candidate, ConvertOptions, BackendConfig, KanjiError}` 公開 API
 - Feature flag 構成の確立 (将来 backend 追加は同じ pattern で拡張可能、ADR 0011)
 - `scripts/lib/assert.sh` 共通 shell library (Phase 2+ smoke でも継続利用)
-- Zenz model の manual placement 手順 (README 記載)
+- Model の manual placement 手順 (Phase 1 default: Gemma-2-2B-jpn-it、README 記載)
 - ADR 0009 の model version policy (Phase 2 で model 更新する際に参照)
 
 Phase 2 で `kotoha-core` に追加する予定:
@@ -860,4 +911,4 @@ Phase 2 で `kotoha-core` に追加する予定:
 - `kanji/hf_download.rs` (model auto-download、当初 Phase 1 予定 → Phase 2 に shift)
 - 品質評価インフラ (BLEU / exact-match metric、AJIMEE-Bench 採用検討)
 
-Phase 2 以降も本設計書の `KanjiBackend` trait / `BackendConfig` factory pattern を踏襲し、新 backend 追加時に既存 `ZenzBackend` / `MockBackend` と同じ公開形式で module 拡張する。
+Phase 2 以降も本設計書の `KanjiBackend` trait / `BackendConfig` factory pattern を踏襲し、新 backend 追加時に既存 `LlamaCppBackend` / `MockBackend` と同じ公開形式で module 拡張する。

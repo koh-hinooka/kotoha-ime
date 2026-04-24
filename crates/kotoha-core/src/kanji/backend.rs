@@ -3,7 +3,7 @@
 //! Spec: `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md` §5.3, §5.6, §5.7.
 //!
 //! The [`KanjiBackend`] trait defines the central abstraction for pluggable
-//! conversion backends (Mock / Zenz / future). The `pub(crate)` helpers
+//! conversion backends (Mock / LlamaCpp / future). The `pub(crate)` helpers
 //! [`validate_input`] and [`score_sort_dedupe`] live here so that every
 //! backend implementation enforces the same input contract and output
 //! guarantees without reimplementing the logic.
@@ -11,6 +11,52 @@
 use std::path::PathBuf;
 
 use crate::kanji::{Candidate, ConvertOptions, KanjiError};
+
+/// Chat/prompt template dispatched by `LlamaCppBackend` when building the
+/// inference prompt.
+///
+/// # Variants
+///
+/// - [`PromptTemplate::Gemma2InstructChat`] — Use the Gemma 2 Instruct built-in
+///   `chat_template` embedded in the GGUF (`<start_of_turn>{role}\n{content}<end_of_turn>`).
+///   This is the Phase 1 default and pairs with `Gemma-2-2B-jpn-it`.
+/// - [`PromptTemplate::Qwen2Chat`] — Use the Qwen 2 Instruct built-in
+///   `chat_template` (`<|im_start|>{role}\n{content}<|im_end|>`). Kept for
+///   Phase 2 side-by-side benchmarking against Qwen2.5-1.5B-Instruct.
+/// - [`PromptTemplate::Custom`] — Manual template for models whose GGUF does
+///   not embed `tokenizer.chat_template` (e.g. Phase 2 Zenz reinstatement
+///   should it return with a supported pre-tokenizer).
+///
+/// Marked `#[non_exhaustive]` per ADR 0006 so Phase 2+ can add new variants
+/// (`Phi4InstructChat`, `Llama3Chat`, ...) without breaking external match
+/// sites.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum PromptTemplate {
+    /// Gemma 2 Instruct chat template. Inference reads the GGUF-embedded
+    /// `tokenizer.chat_template` via `LlamaModel::chat_template(None)` and
+    /// hands the resulting `LlamaChatTemplate` to `apply_chat_template`.
+    Gemma2InstructChat,
+
+    /// Qwen 2 Instruct chat template. Same dispatch strategy as
+    /// [`PromptTemplate::Gemma2InstructChat`] — only the variant tag differs so
+    /// `LlamaCppBackend::model_id` can report the correct family label.
+    Qwen2Chat,
+
+    /// Hand-authored template for models whose GGUF lacks a `chat_template`.
+    ///
+    /// Phase 1 does not exercise this variant; it exists as an escape hatch.
+    Custom {
+        /// Optional `system` turn prepended before the user message.
+        system: Option<String>,
+        /// `(prefix, suffix)` pair wrapping the user turn. For example,
+        /// `("<start_of_turn>user\n", "<end_of_turn>")`.
+        user_wrapper: (String, String),
+        /// String appended after the user turn to open the assistant turn.
+        /// For example, `"<start_of_turn>model\n"`.
+        assistant_prefix: String,
+    },
+}
 
 /// Backend construction parameters.
 ///
@@ -26,11 +72,14 @@ pub enum BackendConfig {
     /// `mock-backend` feature flag is enabled at build time.
     Mock,
 
-    /// Zenz GGUF model backend (via llama-cpp-2). Constructible only when
-    /// the `zenz` feature flag is enabled at build time.
-    Zenz {
+    /// llama.cpp-family GGUF model backend (via llama-cpp-2). Constructible
+    /// only when the `llama-cpp` feature flag is enabled at build time.
+    LlamaCpp {
         /// Absolute path to the GGUF file on disk.
         model_path: PathBuf,
+        /// Chat / prompt template applied when constructing the inference
+        /// prompt. Dispatched by `LlamaCppBackend::convert`.
+        prompt_template: PromptTemplate,
     },
 }
 
@@ -70,7 +119,7 @@ pub enum BackendConfig {
 pub trait KanjiBackend {
     /// Returns a human-readable identifier for the active model.
     ///
-    /// Examples: `"mock"`, `"zenz-v2.5-medium"`. Used for logging and
+    /// Examples: `"mock"`, `"gemma-2-2b-jpn-it-Q5_K_M"`. Used for logging and
     /// CLI diagnostics.
     fn model_id(&self) -> &str;
 
@@ -99,7 +148,8 @@ pub trait KanjiBackend {
 ///
 /// - [`KanjiError::InvalidInput`] if `input` contains any character outside
 ///   the accepted ranges or if `input.chars().count() > 128`.
-// Consumed by `MockBackend` in P1-1-6 and by `ZenzBackend` in Phase B.
+// Consumed by `MockBackend` and `LlamaCppBackend` (each backend enforces the
+// spec §5.6 input contract uniformly via this helper).
 #[allow(dead_code)]
 pub(crate) fn validate_input(input: &str) -> Result<(), KanjiError> {
     let count = input.chars().count();
@@ -135,7 +185,8 @@ pub(crate) fn validate_input(input: &str) -> Result<(), KanjiError> {
 /// - `result.len() <= top_k`.
 /// - For every adjacent pair `(result[i], result[i+1])`, `result[i].score >= result[i+1].score`.
 /// - No two entries in `result` share the same `surface`.
-// Consumed by `MockBackend` in P1-1-6 and by `ZenzBackend` in Phase B.
+// Consumed by `MockBackend` and `LlamaCppBackend` (each backend enforces the
+// spec §5.6 input contract uniformly via this helper).
 #[allow(dead_code)]
 pub(crate) fn score_sort_dedupe(mut candidates: Vec<Candidate>, top_k: usize) -> Vec<Candidate> {
     if top_k == 0 {
@@ -170,7 +221,7 @@ pub(crate) fn score_sort_dedupe(mut candidates: Vec<Candidate>, top_k: usize) ->
 /// - [`KanjiError::FeatureDisabled`] if `config` names a backend whose Cargo
 ///   feature was not enabled at build time.
 /// - Errors bubbled up from the backend's loader
-///   (for example [`KanjiError::ModelNotFound`] from `ZenzBackend::load`
+///   (for example [`KanjiError::ModelNotFound`] from `LlamaCppBackend::load`
 ///   once P1-2 lands).
 #[allow(unused_variables)]
 pub fn load_backend(config: &BackendConfig) -> Result<Box<dyn KanjiBackend>, KanjiError> {
@@ -183,13 +234,19 @@ pub fn load_backend(config: &BackendConfig) -> Result<Box<dyn KanjiBackend>, Kan
             feature: "mock-backend",
         }),
 
-        #[cfg(feature = "zenz")]
-        BackendConfig::Zenz { model_path } => {
-            Ok(Box::new(crate::kanji::ZenzBackend::load(model_path)?))
-        }
+        #[cfg(feature = "llama-cpp")]
+        BackendConfig::LlamaCpp {
+            model_path,
+            prompt_template,
+        } => Ok(Box::new(crate::kanji::LlamaCppBackend::load(
+            model_path,
+            prompt_template.clone(),
+        )?)),
 
-        #[cfg(not(feature = "zenz"))]
-        BackendConfig::Zenz { .. } => Err(KanjiError::FeatureDisabled { feature: "zenz" }),
+        #[cfg(not(feature = "llama-cpp"))]
+        BackendConfig::LlamaCpp { .. } => Err(KanjiError::FeatureDisabled {
+            feature: "llama-cpp",
+        }),
     }
 }
 
@@ -344,10 +401,11 @@ mod tests {
     fn backend_config_is_clone() {
         let mock = BackendConfig::Mock;
         let _ = mock.clone();
-        let zenz = BackendConfig::Zenz {
-            model_path: PathBuf::from("/tmp/zenz.gguf"),
+        let llama_cpp = BackendConfig::LlamaCpp {
+            model_path: PathBuf::from("/tmp/gemma-2-2b-jpn-it.gguf"),
+            prompt_template: PromptTemplate::Gemma2InstructChat,
         };
-        let _ = zenz.clone();
+        let _ = llama_cpp.clone();
     }
 
     #[test]
@@ -359,13 +417,18 @@ mod tests {
             "Debug for Mock must contain \"Mock\": {msg}"
         );
 
-        let zenz = BackendConfig::Zenz {
-            model_path: PathBuf::from("/tmp/zenz.gguf"),
+        let llama_cpp = BackendConfig::LlamaCpp {
+            model_path: PathBuf::from("/tmp/gemma-2-2b-jpn-it.gguf"),
+            prompt_template: PromptTemplate::Gemma2InstructChat,
         };
-        let msg = format!("{zenz:?}");
+        let msg = format!("{llama_cpp:?}");
         assert!(
-            msg.contains("Zenz"),
-            "Debug for Zenz must contain \"Zenz\": {msg}"
+            msg.contains("LlamaCpp"),
+            "Debug for LlamaCpp must contain \"LlamaCpp\": {msg}"
+        );
+        assert!(
+            msg.contains("Gemma2InstructChat"),
+            "Debug for LlamaCpp must include PromptTemplate: {msg}"
         );
     }
 
@@ -385,17 +448,18 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "zenz"))]
+    #[cfg(not(feature = "llama-cpp"))]
     #[test]
-    fn zenz_config_without_feature_errors_feature_disabled() {
-        match load_backend(&BackendConfig::Zenz {
-            model_path: PathBuf::from("/tmp/zenz.gguf"),
+    fn llama_cpp_config_without_feature_errors_feature_disabled() {
+        match load_backend(&BackendConfig::LlamaCpp {
+            model_path: PathBuf::from("/tmp/gemma-2-2b-jpn-it.gguf"),
+            prompt_template: PromptTemplate::Gemma2InstructChat,
         }) {
             Err(KanjiError::FeatureDisabled { feature }) => {
-                assert_eq!(feature, "zenz");
+                assert_eq!(feature, "llama-cpp");
             }
             Err(other) => panic!("unexpected error: {other:?}"),
-            Ok(_) => panic!("Zenz must error when zenz feature is off"),
+            Ok(_) => panic!("LlamaCpp must error when llama-cpp feature is off"),
         }
     }
 
@@ -405,5 +469,35 @@ mod tests {
         let backend = load_backend(&BackendConfig::Mock)
             .expect("Mock must construct when mock-backend feature is on");
         assert_eq!(backend.model_id(), "mock");
+    }
+
+    // ======================================================================
+    // PromptTemplate
+    // ======================================================================
+
+    #[test]
+    fn prompt_template_is_clone_and_debug() {
+        let t = PromptTemplate::Gemma2InstructChat;
+        let cloned = t.clone();
+        let msg = format!("{cloned:?}");
+        assert!(
+            msg.contains("Gemma2InstructChat"),
+            "Debug must contain variant name: {msg}"
+        );
+    }
+
+    #[test]
+    fn prompt_template_custom_carries_fields() {
+        let t = PromptTemplate::Custom {
+            system: Some("you are a Japanese IME".to_string()),
+            user_wrapper: ("<u>".to_string(), "</u>".to_string()),
+            assistant_prefix: "<a>".to_string(),
+        };
+        let msg = format!("{t:?}");
+        assert!(msg.contains("Custom"), "Debug must mark variant: {msg}");
+        assert!(
+            msg.contains("<u>"),
+            "Debug must include user_wrapper: {msg}"
+        );
     }
 }

@@ -7,7 +7,7 @@ Kotoha プロジェクトの開発フェーズと、各フェーズの到達目�
 | Phase | 名称 | 内容 | 状態 |
 |---|---|---|---|
 | 0 | Foundation | Cargo workspace + ローマ字→かな変換 + 入力モード管理 + CLI | 完了 |
-| 1 | Kana→Kanji conversion | Zenz + llama.cpp によるかな→漢字変換 | 未着手 |
+| 1 | Kana→Kanji conversion | llama.cpp + Gemma-2-2B-jpn-it によるかな→漢字変換 | 未着手 |
 | 2 | Dictionary and learning | システム辞書 + ユーザ辞書 + 学習キャッシュ | 未着手 |
 | 3 | IBus integration | IBus engine(GNOME Mutter 用) | 未着手 |
 | 4 | fcitx5 integration | fcitx5 addon(KDE / wlroots 用) | 未着手 |

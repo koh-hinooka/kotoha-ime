@@ -74,21 +74,23 @@ mod tests {
     #[test]
     fn model_not_found_display_contains_path() {
         let err = KanjiError::ModelNotFound {
-            path: PathBuf::from("/tmp/zenz.gguf"),
+            path: PathBuf::from("/tmp/gemma-2-2b-jpn-it.gguf"),
         };
         let msg = format!("{err}");
         assert!(
-            msg.contains("/tmp/zenz.gguf"),
+            msg.contains("/tmp/gemma-2-2b-jpn-it.gguf"),
             "display should include the path: {msg}"
         );
     }
 
     #[test]
     fn feature_disabled_display_contains_feature_name() {
-        let err = KanjiError::FeatureDisabled { feature: "zenz" };
+        let err = KanjiError::FeatureDisabled {
+            feature: "llama-cpp",
+        };
         let msg = format!("{err}");
         assert!(
-            msg.contains("zenz"),
+            msg.contains("llama-cpp"),
             "display should include the feature name: {msg}"
         );
     }

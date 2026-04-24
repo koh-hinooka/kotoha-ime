@@ -9,7 +9,7 @@ mod backend;
 mod candidate;
 mod error;
 
-pub use backend::{load_backend, BackendConfig, KanjiBackend};
+pub use backend::{load_backend, BackendConfig, KanjiBackend, PromptTemplate};
 pub use candidate::{Candidate, ConvertOptions};
 pub use error::KanjiError;
 
@@ -18,7 +18,7 @@ mod mock;
 #[cfg(feature = "mock-backend")]
 pub use mock::MockBackend;
 
-#[cfg(feature = "zenz")]
-mod zenz;
-#[cfg(feature = "zenz")]
-pub use zenz::ZenzBackend;
+#[cfg(feature = "llama-cpp")]
+mod llama_cpp;
+#[cfg(feature = "llama-cpp")]
+pub use llama_cpp::LlamaCppBackend;

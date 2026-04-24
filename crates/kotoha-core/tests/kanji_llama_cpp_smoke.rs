@@ -1,49 +1,55 @@
-//! Layer 3 Zenz smoke integration tests.
+//! Layer 3 llama.cpp backend smoke integration tests.
 //!
-//! Runs the real `ZenzBackend` (via llama-cpp-2) against a short fixture of
-//! hiragana inputs and asserts that each top-1 candidate contains the
+//! Runs the real `LlamaCppBackend` (via llama-cpp-2) against a short fixture
+//! of hiragana inputs and asserts that each top-1 candidate contains the
 //! expected substring.
 //!
 //! # Enabling
 //!
-//! - Build-time: enable the `zenz-smoke` feature (which implies `zenz`).
-//! - Runtime: set `KOTOHA_ZENZ_MODEL_PATH` to the absolute path of a
-//!   Zenz-v2.5-medium GGUF file (download via HuggingFace — see below).
+//! - Build-time: enable the `llama-cpp-smoke` feature (which implies `llama-cpp`).
+//! - Runtime: set `KOTOHA_LLAMA_MODEL_PATH` to the absolute path of a
+//!   Gemma-2-2B-jpn-it GGUF file (Q5_K_M recommended for Phase 1).
 //!
 //! If the environment variable is unset, each test prints
-//! `SKIPPED: KOTOHA_ZENZ_MODEL_PATH not set` and exits early, so the test
+//! `SKIPPED: KOTOHA_LLAMA_MODEL_PATH not set` and exits early, so the test
 //! suite succeeds even when the model is missing. This follows spec §8.3
 //! ("lefthook pre-push には含めない、opt-in で実行") without relying on
 //! `#[ignore]`.
 //!
 //! # Model setup
 //!
-//! The default Phase 1 model is Zenz-v2.5-medium, hosted at
-//! <https://huggingface.co/Miwa-Keita/zenz-v2.5-medium-gguf>. Download with:
+//! The Phase 1 default model is Gemma-2-2B-jpn-it Q5_K_M, hosted at
+//! <https://huggingface.co/bartowski/gemma-2-2b-jpn-it-GGUF>. Download with:
 //!
 //! ```text
-//! huggingface-cli download Miwa-Keita/zenz-v2.5-medium-gguf \
-//!     --local-dir $HOME/.cache/kotoha/models
-//! export KOTOHA_ZENZ_MODEL_PATH=$HOME/.cache/kotoha/models/<gguf-filename>
-//! cargo test -p kotoha-core --features zenz-smoke --test kanji_zenz_smoke
+//! uvx --from huggingface_hub huggingface-cli download \
+//!   bartowski/gemma-2-2b-jpn-it-GGUF gemma-2-2b-jpn-it-Q5_K_M.gguf \
+//!   --local-dir $HOME/.cache/kotoha/models
+//! export KOTOHA_LLAMA_MODEL_PATH=$HOME/.cache/kotoha/models/gemma-2-2b-jpn-it-Q5_K_M.gguf
+//! cargo test -p kotoha-core --features llama-cpp-smoke --test kanji_llama_cpp_smoke
 //! ```
 //!
+//! License note: Gemma-2-2B-jpn-it is distributed under the Gemma License
+//! (redistribution allowed with attribution). Bundling the GGUF into the
+//! repository is out of scope for Phase 1; model acquisition is a user
+//! responsibility (spec §3.2).
+//!
 //! Spec: `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md` §3.2,
-//! §8.3, §8.6.
+//! §8.3.
 
-#![cfg(feature = "zenz-smoke")]
+#![cfg(feature = "llama-cpp-smoke")]
 
 use std::path::PathBuf;
 
-use kotoha_core::kanji::{load_backend, BackendConfig, ConvertOptions};
+use kotoha_core::kanji::{load_backend, BackendConfig, ConvertOptions, PromptTemplate};
 
-/// Returns the Zenz model path from `KOTOHA_ZENZ_MODEL_PATH`, or `None` with
-/// a SKIP message on stdout if the env var is unset.
+/// Returns the llama.cpp model path from `KOTOHA_LLAMA_MODEL_PATH`, or `None`
+/// with a SKIP message on stdout if the env var is unset.
 fn get_model_path_or_skip() -> Option<PathBuf> {
-    match std::env::var("KOTOHA_ZENZ_MODEL_PATH") {
+    match std::env::var("KOTOHA_LLAMA_MODEL_PATH") {
         Ok(p) => Some(PathBuf::from(p)),
         Err(_) => {
-            println!("SKIPPED: KOTOHA_ZENZ_MODEL_PATH not set");
+            println!("SKIPPED: KOTOHA_LLAMA_MODEL_PATH not set");
             None
         }
     }
@@ -69,7 +75,7 @@ fn load_fixture() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Asserts a single fixture row against the Zenz backend loaded from `model_path`.
+/// Asserts a single fixture row against the LlamaCpp backend loaded from `model_path`.
 ///
 /// `ConvertOptions` is `#[non_exhaustive]` (ADR 0006), so struct-literal
 /// construction from outside the defining crate is forbidden. We therefore
@@ -86,10 +92,11 @@ fn run_fixture(model_path: PathBuf, row_index: usize) {
     );
     let (input, expected_substring) = &fixtures[row_index];
 
-    let backend = load_backend(&BackendConfig::Zenz {
+    let backend = load_backend(&BackendConfig::LlamaCpp {
         model_path: model_path.clone(),
+        prompt_template: PromptTemplate::Gemma2InstructChat,
     })
-    .expect("Zenz backend must load from the pinned fixture path");
+    .expect("LlamaCpp backend must load from the pinned fixture path");
 
     let mut options = ConvertOptions::default();
     options.top_k = 5;
@@ -113,7 +120,7 @@ fn run_fixture(model_path: PathBuf, row_index: usize) {
 }
 
 #[test]
-fn zenz_smoke_1_nihongo() {
+fn llama_cpp_smoke_1_nihongo() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
@@ -121,7 +128,7 @@ fn zenz_smoke_1_nihongo() {
 }
 
 #[test]
-fn zenz_smoke_2_kanji() {
+fn llama_cpp_smoke_2_kanji() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
@@ -129,7 +136,7 @@ fn zenz_smoke_2_kanji() {
 }
 
 #[test]
-fn zenz_smoke_3_ashita() {
+fn llama_cpp_smoke_3_ashita() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
@@ -137,7 +144,7 @@ fn zenz_smoke_3_ashita() {
 }
 
 #[test]
-fn zenz_smoke_4_yamada_san() {
+fn llama_cpp_smoke_4_yamada_san() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
@@ -145,9 +152,41 @@ fn zenz_smoke_4_yamada_san() {
 }
 
 #[test]
-fn zenz_smoke_5_kotoba() {
+fn llama_cpp_smoke_5_kotoba() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
     run_fixture(path, 4);
+}
+
+#[test]
+fn llama_cpp_smoke_6_kyou_no_tenki() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 5);
+}
+
+#[test]
+fn llama_cpp_smoke_7_toukyou() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 6);
+}
+
+#[test]
+fn llama_cpp_smoke_8_watashi_wa_gakusei_desu() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 7);
+}
+
+#[test]
+fn llama_cpp_smoke_9_shinbun() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 8);
 }
