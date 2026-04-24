@@ -109,6 +109,17 @@ Phase 1 の全 milestone を時系列と対応 PR で記録する。
 | P1-3                  | `kotoha-cli::bin::kotoha-kanji` バイナリ + `process_line` 純粋関数 + `scripts/phase1-smoke.sh` + Layer 4 E2E smoke                   | #82     | `f9a820c`   |
 | P1-4 (本 WBS)         | ADR 0009 promote + ADR 0011 / 0012 / 0013 新規 + spec §14.1 + ROADMAP update                                                        | (本 PR) | (未作成)    |
 
+## glossary.md 全面更新
+
+P1-4 wrap の一環として、Phase 0 時点の stub 状態だった `docs/wiki/glossary.md`
+を実用版に置き換えた。Phase 0 (romaji / 入力モード) + Phase 1 (kanji conversion
+基盤 + LLM 推論) + Phase 5 foundation (custom model / data pipeline 用語) の
+累積用語を 9 カテゴリに整理して収録した。収録 entry は 64 件。
+
+以後、specs / plans / ADR / コードで新規ドメイン用語を導入する際は、本
+glossary.md にも同時追記する運用を確立する (global rule
+`~/.claude/rules/glossary-consistency.md` 準拠)。
+
 ## Phase 2 への申し送り
 
 Phase 2 (Dictionary and learning) 着手時には以下を前提とする。
