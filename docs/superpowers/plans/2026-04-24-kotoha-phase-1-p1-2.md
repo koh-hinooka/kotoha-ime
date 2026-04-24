@@ -1233,50 +1233,21 @@ fn infer(
 
 `convert` の `input` / `options` 引数は実際に使用されるため、attribute は書き換え前と同じ位置から削除済み (new_string には `#[allow(unused_variables)]` が含まれていないため)。
 
-- [ ] **Step 3: `build_prompt` の unit test を追加**
+- [ ] **Step 3: `build_prompt` の unit test は追加しない (方針メモのみ)**
 
-Edit `crates/kotoha-core/src/kanji/zenz.rs`: `mod tests` 末尾に以下を追加する。
+**方針 (PR #68 Medium review #3 反映)**: P1-2-7 では `build_prompt` の unit test を追加しない。理由は 2 点ある。
 
-old_string (現在の tests 末尾、Task P1-2-6 で追加した `// Note:` コメントを含む):
+1. **tautology 回避**: 初期版の plan に含まれていた空入力向け build_prompt test (`build_prompt("")` を呼んで戻り値を `let _ = ...` で捨てるだけの形) は behavioral な assertion を一切持たない tautological test だった。そのまま追加すると test カバレッジの誤解を招くため削除する。
+2. **research-dependent な output format**: `build_prompt` の実際の output format は P1-2-1 (AzooKey Zenzai docs 通読) の研究結果で確定する。研究結果が出る前に specific な assertion (例: `assert!(prompt.starts_with("<bos>"))`) を書くと投機的になり、研究結果と食い違うと PR 途中で書き直しが発生する。
 
-```rust
-    // Note: `zenz_model_id_is_zenz_prefix` is not registered here because
-    // constructing a `ZenzBackend` for the unit test requires a real GGUF
-    // file, which is out of scope for the in-source test module. Instead,
-    // Layer 3 smoke (see `tests/kanji_zenz_smoke.rs`) asserts that
-    // `model_id()` starts with "zenz" once a real backend is loaded.
-}
-```
+代わりに以下の運用とする。
 
-new_string:
+- `build_prompt` の behavioral verification は Layer 3 smoke tests (P1-2-8 で追加する `crates/kotoha-core/tests/kanji_zenz_smoke.rs`) が実 Zenz model を通した `convert` 呼び出しで end-to-end に行う。
+- P1-2-1 research で stable な observable invariant (例: prompt は常に `<bos>` で始まる、など) が確定した場合は、**follow-up PR** で unit test を追加する。P1-2-7 本体では追加しない。
 
-```rust
-    // Note: `zenz_model_id_is_zenz_prefix` is not registered here because
-    // constructing a `ZenzBackend` for the unit test requires a real GGUF
-    // file, which is out of scope for the in-source test module. Instead,
-    // Layer 3 smoke (see `tests/kanji_zenz_smoke.rs`) asserts that
-    // `model_id()` starts with "zenz" once a real backend is loaded.
+**Edit anchor 指針 (PR #68 Medium review #2 反映)**: 本 Step では zenz.rs への code 編集を行わない。P1-2-6 Step 2 で追加した `// Note:` コメントブロックを Step 3 の anchor として依存していた旧 plan は、P1-2-6 Step 2 の output が fmt / whitespace でドリフトすると Edit が壊れる脆弱な構造だった。追加編集を行わない方針にすることで、この脆弱な dependency を解消する。
 
-    #[test]
-    fn build_prompt_preserves_hiragana_input() {
-        // build_prompt must embed the input verbatim — the template wraps the
-        // input with special tokens but does not transform it.
-        let prompt = build_prompt("にほんご");
-        assert!(
-            prompt.contains("にほんご"),
-            "prompt must embed the input hiragana verbatim: {prompt}"
-        );
-    }
-
-    #[test]
-    fn build_prompt_empty_input_is_empty_or_templated() {
-        // An empty input should at least not panic; the caller in `convert`
-        // short-circuits before reaching build_prompt, but the helper must
-        // still be robust.
-        let _ = build_prompt("");
-    }
-}
-```
+（もし follow-up PR で unit test を追加する場合は、anchor として `mod tests` ブロックの closing `}` を使い、その直前に `#[test] fn ...` を挿入する。ただしその際も verbatim old_string を plan に埋め込むのではなく、実装者が zenz.rs を Read で読み込んで挿入位置を動的に特定する手順にする。）
 
 - [ ] **Step 4: `cargo check --features zenz` で compile 確認**
 
@@ -1714,11 +1685,15 @@ cargo test --workspace
 cargo test --workspace --features mock-backend
 ```
 
-Expected:
-- `cargo test --workspace`: baseline 160 件 (Task P1-2-0 Step 2) から、P1-2 で追加された zenz.rs unit test 分が増える。zenz.rs の unit test は `#[cfg(test)] mod tests` 内だが `#[cfg(feature = "zenz")]` 下なので default features では登録されない。したがって default features の件数は 160 のまま (`zenz_load_errors_on_missing_file` + `build_prompt_*` は 0 件登録)。
-- `cargo test --workspace --features mock-backend`: baseline 171 件 (P1-1 完了時) + zenz.rs の `feature = "zenz"` gate が外れないため同じく +0。171 件のまま。
-- `cargo test --workspace --features zenz`: 160 + zenz.rs の 3 tests (zenz_load_errors_on_missing_file + build_prompt_preserves_hiragana_input + build_prompt_empty_input_is_empty_or_templated) = 163 件。
-- `cargo test --workspace --all-features`: 171 + 3 = 174 件。
+Expected: 下表の `Registered tests` 列に従う。default + mock-backend の両 run はいずれも zenz.rs の `#[cfg(feature = "zenz")]` gate が外れないため、zenz 系 unit test は 0 件登録。
+
+| Feature flags | Registered tests | Notes |
+|---|---|---|
+| (default, no features) | 160 | Layer 2/3 と MockBackend/ZenzBackend の unit tests は cfg-skip (compile 単位で未登録) |
+| `--features mock-backend` | 171 (+5 Layer 2 + 6 MockBackend unit) | |
+| `--features zenz` | 162 (+2 ZenzBackend unit: `zenz_load_errors_on_missing_file` (P1-2-5) + `zenz_model_id_is_zenz_prefix` (P1-2-6、note-only の placement は Layer 3 に委譲)) | Layer 3 は cfg-skip (`zenz-smoke` 必須) |
+| `--features zenz-smoke` | 167 (+5 Layer 3; `zenz-smoke` は `zenz` を含意) | `KOTOHA_ZENZ_MODEL_PATH` 未設定時: Layer 3 全 5 件は `println!("SKIPPED: ...")` + early-return する。cargo test の判定上は全 5 件が PASS (test_result = ok)。env var 設定時: Layer 3 全 5 件が real model inference を実行する |
+| `--all-features` | 178 | 上記すべての union。Layer 3 の SKIP vs run 挙動は `KOTOHA_ZENZ_MODEL_PATH` に従う (上記と同じ) |
 
 verbatim head + tail を report に含める。
 
@@ -1731,8 +1706,8 @@ cargo test --workspace --features zenz-smoke
 ```
 
 Expected:
-- `KOTOHA_ZENZ_MODEL_PATH` 設定済み: 174 + 5 (Layer 3) = 179 件 PASS
-- `KOTOHA_ZENZ_MODEL_PATH` 未設定: 174 件 + 5 件 (各 SKIP println、ただし test 結果は PASS) = 179 件 PASS
+- `KOTOHA_ZENZ_MODEL_PATH` 設定済み: 167 件全 PASS (うち Layer 3 5 件は real inference)
+- `KOTOHA_ZENZ_MODEL_PATH` 未設定: 167 件全 PASS (うち Layer 3 5 件は SKIP println + early-return、test_result = ok で PASS 扱い)
 
 - [ ] **Step 6: lefthook pre-push trigger**
 
@@ -1806,15 +1781,20 @@ Closes #<IMPL_ISSUE>.
   - `model_id` returns `"zenz-v2.5-medium"` (dynamic metadata lookup is tracked for Phase 2).
   - `convert` runs `validate_input` → `build_prompt` → llama-cpp-2 inference → `score_sort_dedupe` so the trait contract (§5.3 / §5.6 / §5.7) is enforced uniformly.
   - `build_prompt` / `infer` are extracted helpers isolating llama-cpp-2 from the rest of the module.
-  - Unit tests: `zenz_load_errors_on_missing_file` (replaces the P1-1 skeleton test), `build_prompt_preserves_hiragana_input`, `build_prompt_empty_input_is_empty_or_templated`.
+  - Unit tests: `zenz_load_errors_on_missing_file` (replaces the P1-1 skeleton test) + `zenz_model_id_is_zenz_prefix`. No `build_prompt` unit test is added in P1-2 — `build_prompt`'s behavior is verified end-to-end via Layer 3 smoke in P1-2-8 (see P1-2-7 Step 3 note).
 - `crates/kotoha-core/tests/kanji_zenz_smoke.rs` (new, ~150 LOC): Layer 3 smoke suite (5 tests, file-level `#![cfg(feature = "zenz-smoke")]`). Each test short-circuits with `SKIPPED: ...` on stdout when `KOTOHA_ZENZ_MODEL_PATH` is unset, so the suite never fails a CI run that lacks the model.
 - `crates/kotoha-core/tests/fixtures/kanji_smoke.tsv` (new): 5 rows of `input_hiragana<TAB>expected_substring` shared with Layer 4 (P1-3).
 
 ## Verification
 
 - `cargo check -p kotoha-core` passes under all 6 feature configurations (no-default-features / default / mock-backend / zenz / zenz-smoke / all-features).
-- `cargo test --workspace` PASS (default features: 160 tests; `zenz` feature adds 3 ZenzBackend unit tests → 163; all-features → 174).
-- `cargo test --workspace --features zenz-smoke` with `KOTOHA_ZENZ_MODEL_PATH` set: Layer 3 5 tests PASS; without the env var: Layer 3 5 tests PASS (SKIP path, no failure).
+- `cargo test --workspace` PASS. Registered test counts per feature combo:
+  - (default, no features): 160
+  - `--features mock-backend`: 171 (+5 Layer 2 + 6 MockBackend unit)
+  - `--features zenz`: 162 (+2 ZenzBackend unit; Layer 3 is cfg-skipped — needs `zenz-smoke`)
+  - `--features zenz-smoke`: 167 (+5 Layer 3; `zenz-smoke` implies `zenz`)
+  - `--all-features`: 178 (union of all of the above)
+- `cargo test --workspace --features zenz-smoke` with `KOTOHA_ZENZ_MODEL_PATH` set: all 5 Layer 3 tests run real Zenz inference and PASS. Without the env var: all 5 Layer 3 tests print `SKIPPED: ...` and early-return; they still count as PASS (test_result = ok) so the 167-test total is unchanged. The same SKIP-vs-run rule applies under `--all-features`.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` reports zero warnings.
 - `cargo fmt --all --check` produces no diff.
 - lefthook pre-push PASS locally.
@@ -1948,18 +1928,19 @@ finished: 2026-04-XX
   - `convert`: `validate_input` → `build_prompt` → `infer` → `score_sort_dedupe` の 4 段 pipe 構成。spec §5.6 / §5.7 の契約を既存 helper で一元化。
   - `build_prompt` / `infer` を file 内 helper fn として extract、llama-cpp-2 type が file 外に漏れないようにする。
   - P1-1 の `#[allow(dead_code)]` / `#[allow(unused_variables)]` / `#[derive(Debug)]` はすべて削除 (field / 引数が本実装で使われるため不要)。
-  - unit test を 1 件削除 (`zenz_load_returns_backend_error_in_p1_1_skeleton`) + 3 件追加 (`zenz_load_errors_on_missing_file` / `build_prompt_preserves_hiragana_input` / `build_prompt_empty_input_is_empty_or_templated`)。
+  - unit test を 1 件削除 (`zenz_load_returns_backend_error_in_p1_1_skeleton`) + 2 件追加 (`zenz_load_errors_on_missing_file` / `zenz_model_id_is_zenz_prefix` の placement は Layer 3 側で保持される設計。`build_prompt` の behavioral verification は Layer 3 smoke 経由で行う方針。詳細は P1-2-7 Step 3 を参照)。
 - `crates/kotoha-core/tests/kanji_zenz_smoke.rs` (~150 LOC) を新設: Layer 3 smoke 5 件。file-level `#![cfg(feature = "zenz-smoke")]` で gate。`KOTOHA_ZENZ_MODEL_PATH` 未設定時は `println!("SKIPPED: ...")` + early return で skip。設定済み時は `load_backend(&BackendConfig::Zenz { model_path })` で backend を取得し、fixture 5 件の `expected_substring` が top-1 `surface` に含まれることを assertion。
 - `crates/kotoha-core/tests/fixtures/kanji_smoke.tsv` を新設: 5 行 (にほんご / かんじ / あした / やまださん / ことば)、TAB 区切りの `input_hiragana<TAB>expected_substring` 形式。Layer 4 (P1-3 で `scripts/phase1-smoke.sh`) と parity を保つ。
 
 ## テスト件数 (P1-1 baseline 160 default / 171 mock-backend からの差分)
 
-- `cargo test --workspace` (default features): 160 PASS — zenz.rs の unit test は `feature = "zenz"` gate のため default では登録されない。baseline と同数。
-- `cargo test --workspace --features mock-backend`: 171 PASS — mock-backend は zenz feature を含まないので同数。
-- `cargo test --workspace --features zenz`: 163 PASS (160 + zenz.rs 3 unit tests)。
-- `cargo test --workspace --features zenz-smoke` (`KOTOHA_ZENZ_MODEL_PATH` 設定済み): 179 PASS (174 all-features 相当 + Layer 3 5 件)。
-- `cargo test --workspace --features zenz-smoke` (env var 未設定): 179 件登録、Layer 3 5 件は SKIP println 出しつつ PASS、exit code 0。
-- `cargo test --workspace --all-features`: 174 PASS (160 + mock 6 + Layer 2 5 + zenz 3、env var 未設定なら Layer 3 5 件は SKIP で +0 fail)。
+| Feature flags | Registered tests | Notes |
+|---|---|---|
+| (default, no features) | 160 | Layer 2/3 と MockBackend/ZenzBackend unit tests は cfg-skip |
+| `--features mock-backend` | 171 (+5 Layer 2 + 6 MockBackend unit) | mock-backend は zenz feature を含まない |
+| `--features zenz` | 162 (+2 ZenzBackend unit: `zenz_load_errors_on_missing_file` + `zenz_model_id_is_zenz_prefix`) | Layer 3 は cfg-skip (`zenz-smoke` 必須) |
+| `--features zenz-smoke` | 167 (+5 Layer 3; `zenz-smoke` は `zenz` を implies) | env var 未設定時: Layer 3 全 5 件は `println!("SKIPPED: ...")` + early-return し、cargo test 上は PASS 扱い (test_result = ok)。env var 設定時: 5 件とも real inference を実行 |
+| `--all-features` | 178 | 上記 union。Layer 3 の SKIP vs run 挙動は `KOTOHA_ZENZ_MODEL_PATH` に従う (上記と同じ) |
 
 ## Prompt format 解析ログ
 
@@ -2031,9 +2012,10 @@ actual 発生分を記録する。)
 
 - `cargo test --workspace` (default): baseline 160 PASS、変化なし (zenz.rs は feature gate で compile skip)。
 - `cargo test --workspace --features mock-backend`: baseline 171 PASS、変化なし。
-- `cargo test --workspace --features zenz`: 163 PASS (160 + zenz.rs 3 unit tests)。
-- `cargo test --workspace --features zenz-smoke` (model 配置済み): 179 PASS (Layer 3 5 件が model inference を実行)。
-- `cargo test --workspace --features zenz-smoke` (model 未配置): 179 件登録 + Layer 3 5 件は SKIP println 出しつつ PASS、exit code 0。
+- `cargo test --workspace --features zenz`: 162 PASS (160 + zenz.rs の 2 unit tests: `zenz_load_errors_on_missing_file` + `zenz_model_id_is_zenz_prefix`)。
+- `cargo test --workspace --features zenz-smoke` (model 配置済み): 167 PASS (162 + Layer 3 5 件が model inference を実行)。
+- `cargo test --workspace --features zenz-smoke` (model 未配置): 167 件登録 + Layer 3 5 件は SKIP println 出しつつ PASS (test_result = ok)、exit code 0。
+- `cargo test --workspace --all-features`: 178 PASS (160 + mock 6 + Layer 2 5 + zenz 2 + Layer 3 5)。model 未配置時の Layer 3 5 件の挙動は `--features zenz-smoke` と同じ SKIP 経路。
 - `cargo check -p kotoha-core` を 6 通りの feature 組合せ (no-default / default / mock-backend / zenz / zenz-smoke / all-features) で走らせ、すべて PASS。
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` warnings ゼロ。
 - `cargo fmt --all --check` diff ゼロ。
@@ -2127,9 +2109,10 @@ gh issue close <IMPL_ISSUE>
 - [ ] `cargo check -p kotoha-core` が 6 通り (no-default / default / mock-backend / zenz / zenz-smoke / all-features) すべてで PASS
 - [ ] `cargo test --workspace` が PASS (default features 160)
 - [ ] `cargo test --workspace --features mock-backend` が PASS (171)
-- [ ] `cargo test --workspace --features zenz` が PASS (163)
-- [ ] `cargo test --workspace --features zenz-smoke` (model 配置済み) が PASS (179 Layer 3 実行)
-- [ ] `cargo test --workspace --features zenz-smoke` (model 未配置) が PASS (179 Layer 3 SKIP、exit 0)
+- [ ] `cargo test --workspace --features zenz` が PASS (162)
+- [ ] `cargo test --workspace --features zenz-smoke` (model 配置済み) が PASS (167 Layer 3 実行)
+- [ ] `cargo test --workspace --features zenz-smoke` (model 未配置) が PASS (167 Layer 3 SKIP、exit 0)
+- [ ] `cargo test --workspace --all-features` が PASS (model 配置済み: 178、model 未配置: 178 件で Layer 3 5 件が SKIP path + PASS)
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` warnings ゼロ
 - [ ] `cargo fmt --all --check` diff ゼロ
 - [ ] lefthook pre-push 全コマンド PASS (build / clippy / test 実行 + 成功)
