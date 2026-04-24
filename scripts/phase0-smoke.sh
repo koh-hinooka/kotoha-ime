@@ -19,11 +19,10 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/assert.sh"
 
-FAIL_COUNT=0
-PASS_COUNT=0
-TOTAL=10
+cd "$(dirname "$0")/.."
 
 # Pre-build once so per-assertion timings are uniform (the first
 # `cargo run` otherwise dominates the wall-clock of assertion #1).
@@ -32,69 +31,48 @@ cargo build -p kotoha-cli --quiet
 
 RUN=(cargo run --quiet -p kotoha-cli --bin kotoha-romaji --)
 
-assert_eq() {
-    local name="$1"
-    local expected="$2"
-    local actual="$3"
-    if [ "$actual" = "$expected" ]; then
-        PASS_COUNT=$((PASS_COUNT + 1))
-        printf 'PASS  %s\n' "$name"
-    else
-        FAIL_COUNT=$((FAIL_COUNT + 1))
-        printf 'FAIL  %s\n' "$name"
-        printf '      expected: %q\n' "$expected"
-        printf '      actual:   %q\n' "$actual"
-    fi
-}
-
-echo "=== phase0-smoke: running ${TOTAL} assertions ==="
+echo "=== phase0-smoke: running 10 assertions ==="
 
 # --- Romaji → kana (4 assertions, spec §13.2) -------------------------
 
 A1=$(printf 'konnnichiha\n' | "${RUN[@]}")
-assert_eq "1. konnnichiha → こんにちは"        "こんにちは" "$A1"
+assert_equal "1. konnnichiha → こんにちは"        "$A1" "こんにちは"
 
 A2=$(printf 'tsumugi\n'     | "${RUN[@]}")
-assert_eq "2. tsumugi → つむぎ"                  "つむぎ"     "$A2"
+assert_equal "2. tsumugi → つむぎ"                  "$A2" "つむぎ"
 
 A3=$(printf "n'ya\n"        | "${RUN[@]}")
-assert_eq "3. n'ya → んや"                       "んや"       "$A3"
+assert_equal "3. n'ya → んや"                       "$A3" "んや"
 
 A4=$(printf 'nya\n'         | "${RUN[@]}")
-assert_eq "4. nya → にゃ"                        "にゃ"       "$A4"
+assert_equal "4. nya → にゃ"                        "$A4" "にゃ"
 
 # --- Mode management (6 assertions, spec §13.2) -----------------------
 
 A5=$(printf 'HELLO\n'       | "${RUN[@]}")
-assert_eq "5. HELLO (Shift trigger) → HELLO"     "HELLO"      "$A5"
+assert_equal "5. HELLO (Shift trigger) → HELLO"     "$A5" "HELLO"
 
 EXPECTED6=$'Ko\nこんにちは'
 A6=$(printf 'Ko\nkonnnichiha\n' | "${RUN[@]}")
-assert_eq "6. Ko\\nkonnnichiha (Transient auto-return) → Ko\\nこんにちは" \
-          "$EXPECTED6" "$A6"
+assert_equal "6. Ko\\nkonnnichiha (Transient auto-return) → Ko\\nこんにちは" \
+          "$A6" "$EXPECTED6"
 
 EXPECTED7=$'hello\nworld'
 A7=$(printf 'hello\nworld\n' | "${RUN[@]}" --mode direct)
-assert_eq "7. hello\\nworld --mode direct (Sticky) → hello\\nworld" \
-          "$EXPECTED7" "$A7"
+assert_equal "7. hello\\nworld --mode direct (Sticky) → hello\\nworld" \
+          "$A7" "$EXPECTED7"
 
 EXPECTED8=$'Konnichiwa\nこんにちは'
 A8=$(printf 'Konnichiwa\nkonnnichiha\n' | "${RUN[@]}")
-assert_eq "8. Konnichiwa\\nkonnnichiha (mixed) → Konnichiwa\\nこんにちは" \
-          "$EXPECTED8" "$A8"
+assert_equal "8. Konnichiwa\\nkonnnichiha (mixed) → Konnichiwa\\nこんにちは" \
+          "$A8" "$EXPECTED8"
 
 A9=$(printf 'Hi\n'          | "${RUN[@]}" --show-mode)
-assert_eq "9. Hi --show-mode → Hi [H]"           "Hi [H]"     "$A9"
+assert_equal "9. Hi --show-mode → Hi [H]"           "$A9" "Hi [H]"
 
 A10=$(printf 'hi\n'         | "${RUN[@]}" --mode direct --show-mode)
-assert_eq "10. hi --mode direct --show-mode → hi [D]" "hi [D]" "$A10"
+assert_equal "10. hi --mode direct --show-mode → hi [D]" "$A10" "hi [D]"
 
 # --- Summary ----------------------------------------------------------
 
-echo "=== phase0-smoke: ${PASS_COUNT}/${TOTAL} PASS, ${FAIL_COUNT}/${TOTAL} FAIL ==="
-
-if [ "$FAIL_COUNT" -gt 0 ]; then
-    exit 1
-fi
-
-exit 0
+assert_summary "phase0-smoke"
