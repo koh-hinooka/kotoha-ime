@@ -31,7 +31,10 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
+use llama_cpp_2::llama_backend::LlamaBackend;
+use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::LlamaModel;
 
 use crate::kanji::{Candidate, ConvertOptions, KanjiBackend, KanjiError};
@@ -46,14 +49,14 @@ use crate::kanji::{Candidate, ConvertOptions, KanjiBackend, KanjiError};
 /// - `model` holds an initialized llama-cpp-2 `LlamaModel`.
 /// - `model_path` is the absolute path that was used to load `model`.
 /// - The backend is single-threaded; wrap externally for concurrent use.
-///
-/// `#[allow(dead_code)]` is a temporary marker: Task P1-2-5 replaces
-/// `ZenzBackend::load`'s current Err stub with a real constructor that
-/// populates `model`, at which point the attribute is removed.
-#[allow(dead_code)]
 pub struct ZenzBackend {
     /// Loaded llama-cpp-2 model. Kept private so llama-cpp-2 types do not leak
     /// into the public API surface.
+    ///
+    /// `#[allow(dead_code)]` is a temporary marker while `convert` still
+    /// carries `todo!()`; the subsequent P1-2 tasks (tokenizer wrapper +
+    /// inference loop) read `model` and the attribute will then be removed.
+    #[allow(dead_code)]
     model: LlamaModel,
     /// Path the model was loaded from. Used by logging and error diagnostics.
     model_path: PathBuf,
@@ -62,10 +65,9 @@ pub struct ZenzBackend {
 // Manual `Debug` impl: `LlamaModel` does not implement `Debug` (FFI-wrapping
 // type backed by `NonNull<llama_model>` with no derived impl in upstream
 // version 0.1.145), so `#[derive(Debug)]` on `ZenzBackend` would not compile.
-// The test `zenz_load_returns_backend_error_in_p1_1_skeleton` uses
-// `Result::expect_err`, which requires `T: Debug` on the `Ok` variant even
-// though the `Ok` branch is never taken in the P1-1 skeleton. Print only
-// `model_path` and replace the `model` field with a placeholder string.
+// The tests use `Result::expect_err`, which requires `T: Debug` on the `Ok`
+// variant. Print only `model_path` and replace the `model` field with a
+// placeholder string.
 impl fmt::Debug for ZenzBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ZenzBackend")
@@ -78,30 +80,84 @@ impl fmt::Debug for ZenzBackend {
 impl ZenzBackend {
     /// Loads a Zenz GGUF model from `model_path`.
     ///
-    /// # P1-1 status
+    /// # Preconditions
     ///
-    /// Returns [`KanjiError::Backend`] with a "not yet implemented (P1-2)"
-    /// reason. This is a safe error — not a panic — so that callers going
-    /// through [`crate::kanji::load_backend`] with the `zenz` feature enabled
-    /// receive a typed error instead of a process abort.
+    /// - `model_path` points to an existing file. Otherwise
+    ///   [`KanjiError::ModelNotFound`] is returned without touching
+    ///   llama-cpp-2.
     ///
-    /// # P1-2 (planned)
+    /// # Postconditions
     ///
-    /// Opens the GGUF file via llama-cpp-2, validates the architecture, and
-    /// caches the resulting context for subsequent `convert` calls.
+    /// On success, the returned `ZenzBackend` owns a llama-cpp-2
+    /// [`LlamaModel`] initialized from the GGUF file at `model_path`, and
+    /// the process-global [`LlamaBackend`] is guaranteed to be initialized.
     ///
     /// # Errors
     ///
-    /// - P1-1: [`KanjiError::Backend`] unconditionally.
-    /// - P1-2 (planned): [`KanjiError::ModelNotFound`] if `model_path` does
-    ///   not exist; [`KanjiError::ModelLoadFailed`] if llama-cpp-2 rejects
-    ///   the file.
-    #[allow(unused_variables)]
+    /// - [`KanjiError::ModelNotFound`] if the file does not exist.
+    /// - [`KanjiError::ModelLoadFailed`] if llama-cpp-2 fails to initialize
+    ///   the global backend or parse / initialize the GGUF (wrapping the
+    ///   underlying error as `source`).
     pub fn load(model_path: &Path) -> Result<Self, KanjiError> {
-        Err(KanjiError::Backend {
-            reason: "ZenzBackend is a P1-1 skeleton; real implementation lands in Phase 1 milestone P1-2".to_string(),
+        if !model_path.exists() {
+            return Err(KanjiError::ModelNotFound {
+                path: model_path.to_path_buf(),
+            });
+        }
+
+        let model = load_llama_model(model_path)
+            .map_err(|source| KanjiError::ModelLoadFailed { source })?;
+
+        Ok(Self {
+            model,
+            model_path: model_path.to_path_buf(),
         })
     }
+}
+
+/// Returns the process-global [`LlamaBackend`], initializing it on the first
+/// call.
+///
+/// # Invariants
+///
+/// - `llama_cpp_sys_2::llama_backend_init` is invoked at most once per
+///   process; `LlamaBackend::init()` itself enforces that via an internal
+///   `AtomicBool` and returns
+///   [`llama_cpp_2::LlamaCppError::BackendAlreadyInitialized`] on a second
+///   call.
+/// - A successful first init is cached in the `OnceLock`; subsequent callers
+///   receive the shared `&LlamaBackend` reference and do not pay FFI cost.
+/// - A failed first init is *not* cached — the caller receives the error
+///   directly from `LlamaBackend::init()` so a retry can observe a newly
+///   resolved cause (for example after loading a missing shared library).
+fn llama_backend() -> Result<&'static LlamaBackend, llama_cpp_2::LlamaCppError> {
+    static BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
+    if let Some(existing) = BACKEND.get() {
+        return Ok(existing);
+    }
+    let backend = LlamaBackend::init()?;
+    // `set` returns `Err(backend)` only if another thread won the race; in
+    // that case we discard our instance and return the cached one. The
+    // second `LlamaBackend` value from `init()` is safe to drop because it
+    // is a zero-sized type and `llama_backend_init` is guarded by the
+    // crate-internal `AtomicBool`.
+    Ok(BACKEND.get_or_init(|| backend))
+}
+
+/// Initializes the global [`LlamaBackend`] (once per process) and loads the
+/// given GGUF file.
+///
+/// Errors are type-erased into `Box<dyn Error + Send + Sync>` so that
+/// [`KanjiError::ModelLoadFailed`] can wrap either a backend-init failure or
+/// a model-parse failure under a single `source` without leaking llama-cpp-2
+/// types into the public API surface.
+fn load_llama_model(
+    model_path: &Path,
+) -> Result<LlamaModel, Box<dyn std::error::Error + Send + Sync>> {
+    let backend = llama_backend()?;
+    let params = LlamaModelParams::default();
+    let model = LlamaModel::load_from_file(backend, model_path, &params)?;
+    Ok(model)
 }
 
 impl KanjiBackend for ZenzBackend {
@@ -120,17 +176,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn zenz_load_returns_backend_error_in_p1_1_skeleton() {
-        let err = ZenzBackend::load(Path::new("/tmp/nonexistent.gguf"))
-            .expect_err("ZenzBackend::load must error in P1-1 skeleton, not panic");
+    fn zenz_load_errors_on_missing_file() {
+        let err = ZenzBackend::load(Path::new("/tmp/definitely-does-not-exist-kotoha-p1-2.gguf"))
+            .expect_err("load must error when the path does not exist");
         match err {
-            KanjiError::Backend { reason } => {
+            KanjiError::ModelNotFound { path } => {
                 assert!(
-                    reason.contains("P1-2"),
-                    "reason should point to P1-2 implementation: {reason}"
+                    path.to_string_lossy().contains("definitely-does-not-exist"),
+                    "ModelNotFound path should echo the input: {}",
+                    path.display()
                 );
             }
-            other => panic!("unexpected error variant: {other:?}"),
+            other => panic!("expected ModelNotFound, got: {other:?}"),
         }
     }
 }
