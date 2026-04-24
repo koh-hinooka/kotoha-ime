@@ -10,7 +10,7 @@ ADR 0010 (`docs/adr/0010-kotoha-custom-romaji-base-model.md`) の決定により
 |---|---|---|---|
 | 0 | Foundation | Cargo workspace + ローマ字→かな変換 + 入力モード管理 + CLI | 完了 |
 | 1 | Kana→Kanji conversion | llama.cpp + Gemma-2-2B-jpn-it baseline によるかな→漢字変換 (P1-2.5 follow-up で Layer 3 smoke 14/15 達成) | 完了 (14/15 PASS, P1-4 で close 2026-04-25) |
-| 2 | Dictionary and learning | システム辞書 + ユーザ辞書 + 学習キャッシュ | 未着手 |
+| 2 | Dictionary and learning | システム辞書 + ユーザ辞書 + 学習キャッシュ | **進行中 (foundation docs 完了)** |
 | 3 | IBus integration | IBus engine(GNOME Mutter 用) | 未着手 |
 | 4 | fcitx5 integration | fcitx5 addon(KDE / wlroots 用) | 未着手 |
 | 5 | **Kotoha custom romaji-base model** | raw romaji keystrokes を直接受理する Kotoha 専用 90〜180M parameter モデルの自作 (data pipeline + training + GGUF 推論統合 + evaluation)。row 3 類の ICL 限界 + typo robustness + partial-input 対応を同時解決する | 未着手 |
@@ -32,6 +32,37 @@ Phase 0 完了時に Phase 1 へ引き継ぐ設計判断事項を記録する。
 Phase 1 P1-2.5 follow-up (PR #76 / ISSUE #75 / merge commit `3eccaa1`) で、Gemma-2-2B-jpn-it Q5_K_M の Layer 3 smoke fixture 15 行のうち 14 行を PASS、1 行 (row 3「あした → 明日」) のみ FAIL (「翌日」出力) で close した。row 3 の FAIL は v5〜v12 の 8 世代 prompt iteration で解消不能であり、Gemma-2-2B-jpn-it の 2B parameter instruction-tuning における in-context learning (ICL) 限界として Phase 1 は 14/15 を受容した。根本解消は Phase 5「Kotoha custom romaji-base model」で task-specific fine-tune モデルにより達成する方針を ADR 0010 に記録した。Phase 2 (Dictionary and learning) 着手時には、Gemma baseline 14/15 を前提として Dictionary / 学習キャッシュ設計を進める。
 
 P1-4 (PR: 本 ISSUE #83) で ADR 0009 を正式化 (rename + Status: Accepted)、ADR 0011 (backend trait design) / ADR 0012 (feature flag design) / ADR 0013 (latency target relaxation) を新規起票、spec §14.1 で Phase 1 完了宣言を記録した。Phase 2 (Dictionary and learning) 着手時には、Gemma-2-2B-jpn-it 14/15 baseline + Backend trait の既存拡張点を前提として、辞書検索 + 学習キャッシュを追加する BackendConfig variant を設計する。
+
+P1-4 (PR #84, merge `95e7df9`) での Phase 1 close 後、Phase 2 foundation docs (本 ISSUE #85) を整備した。ADR 0014 (dictionary layer architecture) と Phase 2 spec draft を起票し、P2-A kick-off で SudachiDict-core を実装対象として確定する。Phase 5 (ADR 0010 custom model) は Phase 2 の dictionary / learning cache / BackendConfig 拡張を継承して自作モデルに置換する予定 (Phase 5 spec §3.3 との整合を Phase 2 spec §9 Open Q6 で明示)。
+
+## Phase 2 マイルストーン分割
+
+Phase 2「Dictionary and learning」は 4 milestone に分割する。詳細は `docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md` および ADR 0014 を参照。各 milestone の exact スコープは P2-A kick-off で確定する。
+
+### P2-A: Dictionary layer (工数目安 1〜2 週)
+
+- SudachiDict-core を runtime load する DictionaryBackend 実装
+- Kotoha 独自語彙 (敬称、IME 固有) の merge
+- Dictionary lookup の unit test / golden fixture (敬称 / 固有名詞 30+ cases)
+- BackendConfig 新 variant 追加 (ADR 0011 の non_exhaustive 拡張方針)
+
+### P2-B: User dictionary (工数目安 3〜5 日)
+
+- User dict entry 追加 / 削除 / 列挙の API
+- TOML or JSONL persistence
+- CLI サブコマンド (kotoha-dict add / remove / list) の draft
+
+### P2-C: Learning cache (工数目安 3〜5 日)
+
+- in-memory LRU + 起動時 load + shutdown save
+- data model: (kana_input, chosen_kanji, frequency, last_used_at)
+- eviction policy
+
+### P2-D: Integration + rerank (工数目安 1〜2 週)
+
+- hybrid backend (dict + LLM) の factory 実装
+- 候補 merge / dedupe / rerank (初期重み dict=0.95 / LLM=1.0)
+- regression test: Phase 1 14/15 が保たれること
 
 ## Phase 5 マイルストーン分割
 
