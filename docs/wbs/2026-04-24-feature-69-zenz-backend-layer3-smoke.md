@@ -118,14 +118,88 @@ Zenz-v2.5-medium GGUF model が実装セッション内で未入手のため、e
 
 ## P1-2-9 empirical verification (deferred — requires user-provided model)
 
-Zenz-v2.5-medium GGUF が実装セッション内で未入手のため、以下 6 ステップを Phase 1 follow-up として user が実施する:
+Zenz-v2.5-medium GGUF が実装セッション内で未入手のため、Phase 1 follow-up として user が実施する。本セッションで確認した環境制約と代替手段を以下に記す。
 
-1. `huggingface-cli download Miwa-Keita/zenz-v2.5-medium-gguf` で GGUF を取得する (または HuggingFace Web UI から手動 download)。
-2. `export KOTOHA_ZENZ_MODEL_PATH=/path/to/zenz-v2.5-medium.gguf` で環境変数を設定する。
-3. `cargo test -p kotoha-core --features zenz-smoke --test kanji_zenz_smoke -- --nocapture` で Layer 3 smoke を走らせる。
-4. fixture TSV (`crates/kotoha-core/tests/fixtures/kanji_smoke.tsv`) の `expected_substring` 値 (日本語 / 漢字 / 明日 / 山田 / 言葉) が top-1 出力と一致しない場合、実測値で調整し `test(kanji): adjust Layer 3 fixture for actual Zenz-v2.5-medium output` として commit する。
-5. `build_prompt` の PUA separator codepoint (U+EE00..U+EE02) を GGUF tokenizer の `added_tokens` metadata と照合し、相違があれば修正する。
-6. cold start latency (first `load`) + warm cache latency (同一 process 内 2 回目の `load`) を測定し、spec §8.3 target (10〜30 秒) に照らして本 WBS の「Cold start / warm cache latency 測定」section に追記する。
+### 環境前提 (2026-04-24 時点の調査結果)
+
+- `huggingface-cli` は本プロジェクト開発環境に未 install。
+- `uv` / `uvx` は install 済み (CLAUDE.md modern-toolchain.md 推奨 Python tool)。`uvx --from huggingface_hub huggingface-cli ...` で一時実行できる。
+- `curl` / `wget` は利用可能。HuggingFace の file URL (`https://huggingface.co/<repo>/resolve/main/<file>`) を直接 download することも可能。
+
+### Zenz GGUF model の入手先: 公開 repo と gated repo の区別
+
+spec §3.2 の default である **`Miwa-Keita/zenz-v2.5-medium-gguf` は gated repository** (HuggingFace API が HTTP 401 "Invalid username or password" を返す)。download には HuggingFace account の login + 当該 gated access の approval が必要である。
+
+非 gated の公開 GGUF 代替 (本セッションで `curl` + HuggingFace API により files section を確認済み):
+
+| Repo | 主要 GGUF file | quantization |
+|------|----------------|-------------|
+| `Miwa-Keita/zenz-v1` | `ggml-model-Q8_0.gguf` | Q8_0 |
+| `Miwa-Keita/zenz-v2-gguf` | `zenz-v2-Q5_K_M.gguf` | Q5_K_M |
+| `Miwa-Keita/zenz-v3-small-gguf` | (`curl ... siblings` で要確認) | — |
+| `Miwa-Keita/zenz-v3.1-small-gguf` | `ggml-model-Q5_K_M.gguf` | Q5_K_M |
+| `Miwa-Keita/zenz-v3.1-xsmall-gguf` | (`curl ... siblings` で要確認) | — |
+
+### download 手順 (3 option — user の環境と model 選択に応じて選ぶ)
+
+**Option A — 公開 GGUF を `curl` で直接 download (auth 不要、最短)**
+
+例: `zenz-v3.1-small-gguf` を `$HOME/.cache/kotoha/models/` に配置する場合:
+
+```bash
+mkdir -p "$HOME/.cache/kotoha/models"
+curl -L -o "$HOME/.cache/kotoha/models/zenz-v3.1-small-Q5_K_M.gguf" \
+  "https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf/resolve/main/ggml-model-Q5_K_M.gguf"
+export KOTOHA_ZENZ_MODEL_PATH="$HOME/.cache/kotoha/models/zenz-v3.1-small-Q5_K_M.gguf"
+```
+
+別候補として `Miwa-Keita/zenz-v2-gguf` の `zenz-v2-Q5_K_M.gguf` も同じ URL pattern で取得可能。
+
+**Option B — `uvx` 経由で `huggingface-cli` を使う (複数 file / snapshot 単位の取得に便利)**
+
+```bash
+uvx --from huggingface_hub huggingface-cli download \
+  Miwa-Keita/zenz-v3.1-small-gguf \
+  --local-dir "$HOME/.cache/kotoha/models/zenz-v3.1-small-gguf"
+export KOTOHA_ZENZ_MODEL_PATH="$HOME/.cache/kotoha/models/zenz-v3.1-small-gguf/ggml-model-Q5_K_M.gguf"
+```
+
+**Option C — spec default (`zenz-v2.5-medium-gguf`) を使いたい場合 (auth 必要)**
+
+1. <https://huggingface.co/Miwa-Keita/zenz-v2.5-medium-gguf> にアクセスし、gated access を request (HuggingFace account が前提)。
+2. approval 後に HuggingFace token を発行 (<https://huggingface.co/settings/tokens>)。
+3. `uvx --from huggingface_hub huggingface-cli login` で token を登録。
+4. `uvx --from huggingface_hub huggingface-cli download Miwa-Keita/zenz-v2.5-medium-gguf --local-dir "$HOME/.cache/kotoha/models/zenz-v2.5-medium-gguf"` で取得。
+
+### Layer 3 smoke 実行と fixture 調整
+
+上記 Option のいずれかで `KOTOHA_ZENZ_MODEL_PATH` を設定した後:
+
+```bash
+cargo test -p kotoha-core --features zenz-smoke --test kanji_zenz_smoke -- --nocapture
+```
+
+- 全 5 件 PASS が理想。FAIL した場合、top-1 出力と `tests/fixtures/kanji_smoke.tsv` の `expected_substring` が不一致。
+- 不一致時は実測値で TSV を更新し、`test(kanji): adjust Layer 3 fixture for actual <model-id> output` commit で反映する。
+- `build_prompt` の PUA separator codepoint (U+EE00..U+EE02) を GGUF tokenizer の `added_tokens` metadata と照合。相違があれば `zenz.rs` 側の `CONTEXT` / `INPUT` / `OUTPUT` 定数を実値で置換して `fix(kanji): align build_prompt PUA tokens with Zenz GGUF added_tokens` として commit する。
+
+### latency 測定手順
+
+```bash
+cargo test -p kotoha-core --features zenz-smoke --test kanji_zenz_smoke -- --nocapture --test-threads=1
+```
+
+`--test-threads=1` で逐次実行し、1 件目の load (cold start) と 2 件目以降 (warm cache) の実行時間差を観測する。測定値は spec §8.3 target (10〜30 秒 / CPU inference) に照らして本 WBS の「Cold start / warm cache latency 測定」section に追記する。
+
+### ADR 0009 (P1-4 起票予定) への input
+
+gated default が実使用上の障壁となる場合、ADR 0009 で Phase 1 default を以下のいずれかに切替える選択肢を比較検討する:
+
+- **選択肢 1 — 現状維持**: spec §3.2 の `zenz-v2.5-medium-gguf` を default として継続。ユーザに HF login + gated access 許可を求める。
+- **選択肢 2 — 公開代替に差し替え**: default を `zenz-v3.1-small-gguf` (Q5_K_M、公開) に変更。quality 低下の影響評価が必要。
+- **選択肢 3 — 両対応**: CLI の `--model` option で明示指定を必須とし、README に「spec default: v2.5-medium (gated)、quick start: v3.1-small (公開)」を併記。
+
+判断材料として、P1-2-9 を v3.1-small で empirical に走らせた結果 (品質 / latency) を ADR 0009 に記載する。
 
 ## P1-3 への申し送り
 
