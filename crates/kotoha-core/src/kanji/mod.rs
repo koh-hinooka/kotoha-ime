@@ -12,3 +12,8 @@ mod error;
 pub use backend::{BackendConfig, KanjiBackend};
 pub use candidate::{Candidate, ConvertOptions};
 pub use error::KanjiError;
+
+#[cfg(feature = "mock-backend")]
+mod mock;
+#[cfg(feature = "mock-backend")]
+pub use mock::MockBackend;
