@@ -10,7 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
-// pub use self::backend::DictionaryBackend; // Task 8 で uncomment(struct 未定義のため)
+pub use self::backend::DictionaryBackend;
 pub use self::engine::{EngineCandidate, MorphologicalEngine};
 pub use self::vocab::{VocabEntry, VocabularyLookup};
 
