@@ -161,6 +161,38 @@ pub(crate) fn score_sort_dedupe(mut candidates: Vec<Candidate>, top_k: usize) ->
     out
 }
 
+/// Constructs the backend described by `config`.
+///
+/// Spec: `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md` §5.4.
+///
+/// # Errors
+///
+/// - [`KanjiError::FeatureDisabled`] if `config` names a backend whose Cargo
+///   feature was not enabled at build time.
+/// - Errors bubbled up from the backend's loader
+///   (for example [`KanjiError::ModelNotFound`] from `ZenzBackend::load`
+///   once P1-2 lands).
+#[allow(unused_variables)]
+pub fn load_backend(config: &BackendConfig) -> Result<Box<dyn KanjiBackend>, KanjiError> {
+    match config {
+        #[cfg(feature = "mock-backend")]
+        BackendConfig::Mock => Ok(Box::new(crate::kanji::MockBackend::new())),
+
+        #[cfg(not(feature = "mock-backend"))]
+        BackendConfig::Mock => Err(KanjiError::FeatureDisabled {
+            feature: "mock-backend",
+        }),
+
+        #[cfg(feature = "zenz")]
+        BackendConfig::Zenz { model_path } => {
+            Ok(Box::new(crate::kanji::ZenzBackend::load(model_path)?))
+        }
+
+        #[cfg(not(feature = "zenz"))]
+        BackendConfig::Zenz { .. } => Err(KanjiError::FeatureDisabled { feature: "zenz" }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +367,43 @@ mod tests {
             msg.contains("Zenz"),
             "Debug for Zenz must contain \"Zenz\": {msg}"
         );
+    }
+
+    // ======================================================================
+    // load_backend
+    // ======================================================================
+
+    #[cfg(not(feature = "mock-backend"))]
+    #[test]
+    fn mock_config_without_feature_errors_feature_disabled() {
+        match load_backend(&BackendConfig::Mock) {
+            Err(KanjiError::FeatureDisabled { feature }) => {
+                assert_eq!(feature, "mock-backend");
+            }
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("Mock must error when mock-backend feature is off"),
+        }
+    }
+
+    #[cfg(not(feature = "zenz"))]
+    #[test]
+    fn zenz_config_without_feature_errors_feature_disabled() {
+        match load_backend(&BackendConfig::Zenz {
+            model_path: PathBuf::from("/tmp/zenz.gguf"),
+        }) {
+            Err(KanjiError::FeatureDisabled { feature }) => {
+                assert_eq!(feature, "zenz");
+            }
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("Zenz must error when zenz feature is off"),
+        }
+    }
+
+    #[cfg(feature = "mock-backend")]
+    #[test]
+    fn mock_config_with_feature_returns_box() {
+        let backend = load_backend(&BackendConfig::Mock)
+            .expect("Mock must construct when mock-backend feature is on");
+        assert_eq!(backend.model_id(), "mock");
     }
 }
