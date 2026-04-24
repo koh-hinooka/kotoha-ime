@@ -8,7 +8,31 @@
 //! backend implementation enforces the same input contract and output
 //! guarantees without reimplementing the logic.
 
+use std::path::PathBuf;
+
 use crate::kanji::{Candidate, ConvertOptions, KanjiError};
+
+/// Backend construction parameters.
+///
+/// Spec: `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md` §5.4.
+///
+/// Marked `#[non_exhaustive]` per ADR 0006 so Phase 2+ can add new backend
+/// kinds (system dictionary / remote HTTP / learning-cache hybrid) without
+/// breaking external match sites.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum BackendConfig {
+    /// Deterministic mock backend (for tests). Constructible only when the
+    /// `mock-backend` feature flag is enabled at build time.
+    Mock,
+
+    /// Zenz GGUF model backend (via llama-cpp-2). Constructible only when
+    /// the `zenz` feature flag is enabled at build time.
+    Zenz {
+        /// Absolute path to the GGUF file on disk.
+        model_path: PathBuf,
+    },
+}
 
 /// Abstraction for a kana-to-kanji conversion backend.
 ///
@@ -278,5 +302,38 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].surface, "first");
         assert_eq!(out[1].surface, "second");
+    }
+
+    // ======================================================================
+    // BackendConfig
+    // ======================================================================
+
+    #[test]
+    fn backend_config_is_clone() {
+        let mock = BackendConfig::Mock;
+        let _ = mock.clone();
+        let zenz = BackendConfig::Zenz {
+            model_path: PathBuf::from("/tmp/zenz.gguf"),
+        };
+        let _ = zenz.clone();
+    }
+
+    #[test]
+    fn backend_config_debug_contains_variant_name() {
+        let mock = BackendConfig::Mock;
+        let msg = format!("{mock:?}");
+        assert!(
+            msg.contains("Mock"),
+            "Debug for Mock must contain \"Mock\": {msg}"
+        );
+
+        let zenz = BackendConfig::Zenz {
+            model_path: PathBuf::from("/tmp/zenz.gguf"),
+        };
+        let msg = format!("{zenz:?}");
+        assert!(
+            msg.contains("Zenz"),
+            "Debug for Zenz must contain \"Zenz\": {msg}"
+        );
     }
 }

@@ -9,6 +9,6 @@ mod backend;
 mod candidate;
 mod error;
 
-pub use backend::KanjiBackend;
+pub use backend::{BackendConfig, KanjiBackend};
 pub use candidate::{Candidate, ConvertOptions};
 pub use error::KanjiError;
