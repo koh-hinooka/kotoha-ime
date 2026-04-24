@@ -12,6 +12,52 @@ use std::path::PathBuf;
 
 use crate::kanji::{Candidate, ConvertOptions, KanjiError};
 
+/// Chat/prompt template dispatched by `LlamaCppBackend` when building the
+/// inference prompt.
+///
+/// # Variants
+///
+/// - [`PromptTemplate::Gemma2InstructChat`] — Use the Gemma 2 Instruct built-in
+///   `chat_template` embedded in the GGUF (`<start_of_turn>{role}\n{content}<end_of_turn>`).
+///   This is the Phase 1 default and pairs with `Gemma-2-2B-jpn-it`.
+/// - [`PromptTemplate::Qwen2Chat`] — Use the Qwen 2 Instruct built-in
+///   `chat_template` (`<|im_start|>{role}\n{content}<|im_end|>`). Kept for
+///   Phase 2 side-by-side benchmarking against Qwen2.5-1.5B-Instruct.
+/// - [`PromptTemplate::Custom`] — Manual template for models whose GGUF does
+///   not embed `tokenizer.chat_template` (e.g. Phase 2 Zenz reinstatement
+///   should it return with a supported pre-tokenizer).
+///
+/// Marked `#[non_exhaustive]` per ADR 0006 so Phase 2+ can add new variants
+/// (`Phi4InstructChat`, `Llama3Chat`, ...) without breaking external match
+/// sites.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum PromptTemplate {
+    /// Gemma 2 Instruct chat template. Inference reads the GGUF-embedded
+    /// `tokenizer.chat_template` via `LlamaModel::chat_template(None)` and
+    /// hands the resulting `LlamaChatTemplate` to `apply_chat_template`.
+    Gemma2InstructChat,
+
+    /// Qwen 2 Instruct chat template. Same dispatch strategy as
+    /// [`PromptTemplate::Gemma2InstructChat`] — only the variant tag differs so
+    /// `LlamaCppBackend::model_id` can report the correct family label.
+    Qwen2Chat,
+
+    /// Hand-authored template for models whose GGUF lacks a `chat_template`.
+    ///
+    /// Phase 1 does not exercise this variant; it exists as an escape hatch.
+    Custom {
+        /// Optional `system` turn prepended before the user message.
+        system: Option<String>,
+        /// `(prefix, suffix)` pair wrapping the user turn. For example,
+        /// `("<start_of_turn>user\n", "<end_of_turn>")`.
+        user_wrapper: (String, String),
+        /// String appended after the user turn to open the assistant turn.
+        /// For example, `"<start_of_turn>model\n"`.
+        assistant_prefix: String,
+    },
+}
+
 /// Backend construction parameters.
 ///
 /// Spec: `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md` §5.4.
@@ -405,5 +451,35 @@ mod tests {
         let backend = load_backend(&BackendConfig::Mock)
             .expect("Mock must construct when mock-backend feature is on");
         assert_eq!(backend.model_id(), "mock");
+    }
+
+    // ======================================================================
+    // PromptTemplate
+    // ======================================================================
+
+    #[test]
+    fn prompt_template_is_clone_and_debug() {
+        let t = PromptTemplate::Gemma2InstructChat;
+        let cloned = t.clone();
+        let msg = format!("{cloned:?}");
+        assert!(
+            msg.contains("Gemma2InstructChat"),
+            "Debug must contain variant name: {msg}"
+        );
+    }
+
+    #[test]
+    fn prompt_template_custom_carries_fields() {
+        let t = PromptTemplate::Custom {
+            system: Some("you are a Japanese IME".to_string()),
+            user_wrapper: ("<u>".to_string(), "</u>".to_string()),
+            assistant_prefix: "<a>".to_string(),
+        };
+        let msg = format!("{t:?}");
+        assert!(msg.contains("Custom"), "Debug must mark variant: {msg}");
+        assert!(
+            msg.contains("<u>"),
+            "Debug must include user_wrapper: {msg}"
+        );
     }
 }

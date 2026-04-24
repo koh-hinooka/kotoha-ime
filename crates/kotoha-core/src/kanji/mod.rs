@@ -9,7 +9,7 @@ mod backend;
 mod candidate;
 mod error;
 
-pub use backend::{load_backend, BackendConfig, KanjiBackend};
+pub use backend::{load_backend, BackendConfig, KanjiBackend, PromptTemplate};
 pub use candidate::{Candidate, ConvertOptions};
 pub use error::KanjiError;
 
