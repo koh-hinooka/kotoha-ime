@@ -45,7 +45,7 @@ Karukan (Linux 向け日本語 IME) は `jinen-v1-small` (90M parameter、GPT-2 
 
 Kotoha の想定利用者はプログラマおよび技術ライターが主要セグメントである。このセグメントが日常入力する文面 (コミットメッセージの編集、GitHub issue / PR 本文、技術 blog、コード内コメント) では、日本語と英語が 1 行内で混在する形が常態化している。具体例として、romaji 入力 `tuginocommitwoshuuseisitepull requestwodasite` はユーザー意図として「次のcommitを修正してpull requestを出して」を表し、以下 3 条件を同時に満たす変換を期待する。(a) `commit` / `pull request` は英字列のまま出力する、(b) 2 語の間の空白 (`pull request` の中間) は word separator として保持され変換 trigger 扱いしない、(c) `tugi no` / `wo shuusei site` / `wo dasite` の JP 部分は既存の kana→kanji 経路を通って漢字仮名混じり表現に変換される。
 
-Phase 0 ADR 0002 は「Shift 起動で `InputMode::Direct` に一時遷移し Enter 確定で `InputMode::Hiragana` に自動復帰する Transient モード」を決定したが、当該 ADR が扱うのは「行末に短い英字列が入る」ケースであり、「行内に EN span が挟まる」ケースは扱っていない。従って C4 は ADR 0002 を前提として別問題と位置付ける。なお本要件は Phase 1 row 3 (C1) と同系統の LLM ICL 限界事例である。汎用 instruction-tuned LLM の prompt 指示では「context 依存の言語判定」を安定させるのは困難であり、Phase 5 task-specific fine-tune で学習分布内に mixed JP/EN 文面を含めることで根本解決する方が構造的に正しい。
+Phase 0 ADR 0002 は「Shift trigger 起動時に `InputMode::Direct` へ一時遷移し Enter 確定で `InputMode::Hiragana` へ自動復帰する Transient policy」を決定した。本 ADR の C4 が対象とするのは、Shift trigger 起動を伴わず行内に EN span (`commit` / `pull request` 等) が挟まる連続入力であり、ADR 0002 の Transient policy の scope とは別問題である。なお本要件は Phase 1 row 3 (C1) と同系統の LLM ICL 限界事例である。汎用 instruction-tuned LLM の prompt 指示では「context 依存の言語判定」を安定させるのは困難であり、Phase 5 task-specific fine-tune で学習分布内に mixed JP/EN 文面を含めることで根本解決する方が構造的に正しい。
 
 ## Decision
 
@@ -129,7 +129,7 @@ Context C4 を受け、Phase 5 custom model は kana→kanji 変換に加えて�
 
 1. **Language-context detection**: モデルは input romaji stream を prefix から逐次 consume し、各位置で「現在 EN span 中か JP 変換対象か」を decoder の hidden state に保持する。boundary の推定には空白 / punctuation / 語彙 plausibility を利用する。本機能は明示的 classifier ではなく暗黙学習で実現する方針とし、P5-A kick-off で empirical に妥当性を検証する。
 2. **Context-aware space handling**: モデルは space 文字を変換 trigger ではなく「EN 文脈では word separator、JP 文脈では区切り記号」として解釈する。training data 側で space を含む mixed sentence を十分 sampling することで学習分布に含める。
-3. **Mixed output generation**: 単一推論 pass で JP 部は kanji / kana surface、EN 部は ASCII 文字列として混在 decode する。special tokens ({ctx}, {romaji}, {out}, {eos}) に加えて {en-span} / {jp-span} の明示 marker を導入するか、暗黙で通すかは P5-A kick-off で empirical 判断する。
+3. **Mixed output generation**: 単一推論 pass で JP 部は kanji / kana surface、EN 部は ASCII 文字列として混在 decode する。special tokens (`<ctx>`, `<romaji>`, `<out>`, `<eos>`) に加えて `<en-span>` / `<jp-span>` の明示 marker を導入するか、暗黙で通すかは P5-A kick-off で empirical 判断する。
 
 training data は以下 2 源から構成する mixed コーパスで補強する (詳細は Phase 5 spec §4.7 を参照)。
 
@@ -149,7 +149,10 @@ training data は以下 2 源から構成する mixed コーパスで補強す�
 - **Size の大幅削減**: Gemma-2-2B-jpn-it の 2.6B / 1.92GB から 90〜180M / ≤ 200MB へ縮小する。IME 常駐用途に適合する
 - **プログラマ / 技術ライター use case の IME 体験が根本改善する**: C4 で示した `tuginocommitwoshuuseisitepull requestwodasite` のような mixed JP/EN 入力が Tier 1 (モデル自動判定) で成立するため、ユーザは明示的モード切替を意識せずに混在文章を打鍵できる。
 - **Phase 5 完成後、Tier 2 / Tier 3 の明示 mode 切替 UX は不要になる**: Phase 5 モデルが context 判定を担うため、Alternatives E が想定する `InputMode::Latin` sticky mode を実装する必要が無くなる。結果として Phase 0 ADR 0002 が決定した 2 値 InputMode (Hiragana / Direct) を Phase 5 完了後も維持できる。
-- **row 3 類と mixed JP/EN の両方を単一モデルで解決する (投資集約)**: C1 の synonym bias と C4 の言語判定は別症状だが、いずれも「task-specific fine-tune で学習分布を制御する」ことで同時に解決可能である。Phase 5 の 1 本の training run で 2 要件を同時に満たせる。
+- **row 3 類と mixed JP/EN の両方を単一モデルで解決する (投資集約)**:
+  - C1 (synonym bias) と C4 (言語判定) は別症状だが、根本原因は同一 (汎用 LLM の ICL 限界) である
+  - 両症状は task-specific fine-tune で training 分布内に含める同一解法で解決できる
+  - Phase 5 の 1 本の training run で 2 要件 (row 3 類 + mixed JP/EN) を同時に満たせる投資集約が成立する
 
 ### 負の帰結
 
@@ -159,7 +162,7 @@ training data は以下 2 源から構成する mixed コーパスで補強す�
 - **Phase 6 完遂までの schedule が延びる**: Phase 5 の data pipeline + training + evaluation で 3〜6 ヶ月程度を見込む。Phase 6 (旧 Phase 5) の着手時期は Phase 5 完了に連動する
 - Phase 5 は手動 training を前提とし、CI-driven training pipeline の自動化は Phase 6 以降へ延期する (spec §7 参照)。
 - **training data の scope が Wikipedia JP 単独から多 source へ拡大する**: D8 で定義した programming context + 一般 loanword context の 2 追加源 (GitHub issues / OSS README / 技術 blog / Wikipedia JP IT カテゴリ / 青空文庫) を P5-A corpus に取り込む必要があり、ライセンス確認と抽出スクリプトの整備工数が増える。
-- **model complexity が増す (multi-language vocabulary + context span 管理)**: 単一言語 (JP) を想定した vocabulary から JP + EN 両対応の vocabulary へ拡張する必要があり、tokenizer 設計と special tokens 設計 (D4 + D8 で言及した `{en-span}` / `{jp-span}` marker) の empirical 検証工数が増える。
+- **model complexity が増す (multi-language vocabulary + context span 管理)**: 単一言語 (JP) を想定した vocabulary から JP + EN 両対応の vocabulary へ拡張する必要があり、tokenizer 設計と special tokens 設計 (D4 + D8 で言及した `<en-span>` / `<jp-span>` marker) の empirical 検証工数が増える。
 - **評価 fixture に mixed ケースを追加する必要がある**: Phase 5 spec §6 の smoke / regression / golden / typo robustness の 4 fixture に加え、「row 3 系 synonym bias + commit / pull request 等 programming context + 一般 loanword context」の 3 カテゴリを mixed fixture として新設する。測定項目 (EN 単語の英字出力 F1 / JP span の変換精度 / space handling 正答率) も追加する。
 
 ## Alternatives considered
@@ -184,9 +187,9 @@ training data は以下 2 源から構成する mixed コーパスで補強す�
 
 ### E. Tier 2 採用 (Shift → EN sticky mode) + Phase 0 ADR 0002 の InputMode 拡張
 
-Phase 5 custom model で Tier 1 (D8 の language-context detection) が empirical に達成困難と判明した場合の fallback として、新 variant `InputMode::Latin` を Phase 0 input state machine に追加する案である。ADR 0002 が決定した「Transient vs Sticky」の判断を拡張し、Shift 起動で Latin に入り明示的に Hiragana へ戻るまで EN 入力を継続する Sticky 挙動を採用する。行内 EN span (C4) と行末 Transient (ADR 0002) の両要件を共存させる必要から、Direct (Phase 0 で実装済、行末 Transient 専用) と Latin (新規、行内 Sticky 専用) は別モードとして分離する。
+Phase 5 custom model で Tier 1 (D8 の language-context detection) が empirical に達成困難と判明した場合の fallback として、新 variant `InputMode::Latin` を Phase 0 input state machine に追加する案である。ADR 0002 が決定した「Transient vs Sticky」の判断を拡張し、Shift trigger 起動で Latin に入り明示的に Hiragana へ戻るまで EN 入力を継続する Sticky 挙動を採用する。行内 EN span (C4) と Shift trigger 起動の Transient Direct policy (ADR 0002) の両要件を共存させる必要から、Direct (Phase 0 で実装済、Shift trigger 起動時の Transient 専用) と Latin (新規、行内 Sticky 専用) は別モードとして分離する。
 
-**Status**: Tier 1 (Phase 5 model auto-detect) の empirical 検証後に判断する。Tier 1 成功なら本 Alternative E は不要、Tier 1 失敗なら本 Alternative E を ADR 0015 で正式採用する。**現時点では Rejected**、Phase 5 model の学習可能性を優先検証する。
+**Status**: Tier 1 (Phase 5 custom model の auto-detect) の empirical 検証を優先する。Phase 5 spec §8 Q7 の最低基準 **F1 ≥ 0.90** を P5-A kick-off 前の PoC で達成できる見込みならば本 Alternative E は永続的 Rejected とする。F1 < 0.90 で baseline が届かない場合は ADR 0015 で本 Alternative E を正式採用として昇格する。**現時点 (PR #89 時点) では Rejected**、Phase 5 model の学習可能性を優先検証する。
 
 ### F. Dictionary (Phase 2) のみで英語 loanword を辞書 lookup 解決
 

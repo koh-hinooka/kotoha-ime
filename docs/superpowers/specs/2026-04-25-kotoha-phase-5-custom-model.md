@@ -80,7 +80,7 @@ Phase 5 は §1.4 の G1-G4 に加え、以下 3 点を G5-G7 として追加す
 - **G6**: context-aware space handling (space を word separator と変換 trigger の両義として context で解釈)
 - **G7**: mixed output generation (単一推論 pass で JP 部 = kanji / kana surface、EN 部 = ASCII 文字列を混在 decode)
 
-詳細は Phase 5 kick-off で確定する。
+§3.5 と §4.7 の下位節は本 PR 時点では stub であり、詳細パラメータ (boundary detection 精度、corpus 実比率、token 符号化) は Phase 5 kick-off で確定する。
 
 ## 2. スコープ
 
@@ -189,7 +189,7 @@ Phase 5 モデルは space 文字を単一意味の変換 trigger として扱�
 
 Phase 5 モデルは単一推論 pass で JP 部 (kanji / kana surface) と EN 部 (ASCII 文字列) を混在させた 1 本の出力列を decode する。2 パス方式 (JP decode → EN overlay) は採用しない (context の整合性を単一 pass で保証するため)。
 
-明示的 span marker として `{en-span}` / `{jp-span}` を special tokens に追加する案と、暗黙で通す (marker なし、hidden state と出力 surface の連動で判別) 案の 2 候補がある。明示 marker は debug しやすく再現性が高い一方で、training data の構築工数と output decode の後処理工数が増える。Phase 5 kick-off で empirical 比較する。
+明示的 span marker として `<en-span>` / `<jp-span>` を special tokens に追加する案と、暗黙で通す (marker なし、hidden state と出力 surface の連動で判別) 案の 2 候補がある。明示 marker は debug しやすく再現性が高い一方で、training data の構築工数と output decode の後処理工数が増える。Phase 5 kick-off で empirical 比較する。
 
 詳細は Phase 5 kick-off で確定する。
 
