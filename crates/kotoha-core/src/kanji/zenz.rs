@@ -162,7 +162,13 @@ fn load_llama_model(
 
 impl KanjiBackend for ZenzBackend {
     fn model_id(&self) -> &str {
-        todo!("P1-2: implement via llama-cpp-2")
+        // NOTE: llama-cpp-2 0.1.145 does not expose a clean public API for
+        // reading GGUF `general.name` metadata from `LlamaModel`; the underlying
+        // `llama_model_meta_val_str` FFI is not re-exported in this version.
+        // For Phase 1 we return the spec §3.2 default Zenz-v2.5-medium literal.
+        // Phase 2 can revisit once llama-cpp-2 surfaces a Rust-side metadata
+        // accessor or we reach for the `-sys` crate directly.
+        "zenz-v2.5-medium"
     }
 
     #[allow(unused_variables)]
@@ -190,4 +196,11 @@ mod tests {
             other => panic!("expected ModelNotFound, got: {other:?}"),
         }
     }
+
+    // Note: `zenz_model_id_is_zenz_prefix` is intentionally absent from the
+    // in-source test module because constructing a `ZenzBackend` for the test
+    // requires a real GGUF file, which is out of scope here. Layer 3 smoke
+    // (`tests/kanji_zenz_smoke.rs`) asserts that `model_id()` returns a
+    // "zenz"-prefixed string once a real backend is loaded via
+    // `KOTOHA_ZENZ_MODEL_PATH`.
 }
