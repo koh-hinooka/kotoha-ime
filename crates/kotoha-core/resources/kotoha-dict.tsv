@@ -1,0 +1,8 @@
+# kotoha-dict.tsv — Kotoha custom vocabulary
+# Schema: surface<TAB>reading<TAB>pos<TAB>score
+# Curation policy (P2-A spec §3.7 Q7):
+#   1. SudachiDict-core baseline で recall 可能な語彙は追加しない
+#   2. golden fixture で観察される gap のみを証拠ベースで追加する
+#   3. 同 reading で SudachiDict が出す surface を上書きする entry は
+#      P2-B 以降で機械的多義性チェックを通すこと
+# (P2-A: 空 start。entry は後続 milestone で追加する)
