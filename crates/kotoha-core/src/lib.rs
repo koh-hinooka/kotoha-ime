@@ -11,7 +11,7 @@ pub mod romaji;
 
 pub use error::{Error, Result};
 pub use input::{InputContext, InputMode, InputStep};
-pub use kanji::{Candidate, ConvertOptions};
+pub use kanji::{load_backend, BackendConfig, Candidate, ConvertOptions, KanjiBackend, KanjiError};
 pub use romaji::{ConvertStep, RomajiConverter};
 
 /// Test-only accessor for the romaji rule table.
