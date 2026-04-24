@@ -6,5 +6,7 @@
 //! Spec: `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md` §4-§8.
 
 mod candidate;
+mod error;
 
 pub use candidate::{Candidate, ConvertOptions};
+pub use error::KanjiError;
