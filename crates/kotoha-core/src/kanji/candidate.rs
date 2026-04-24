@@ -86,7 +86,7 @@ mod tests {
     fn convert_options_default_is_top_k_5_temp_0_seed_0() {
         let opt = ConvertOptions::default();
         assert_eq!(opt.top_k, 5);
-        assert_eq!(opt.temperature, 0.0);
+        assert!((opt.temperature - 0.0).abs() < 1e-6);
         assert_eq!(opt.seed, Some(0));
     }
 
@@ -105,7 +105,7 @@ mod tests {
             seed: None,
         };
         assert_eq!(opt.top_k, 10);
-        assert_eq!(opt.temperature, 0.7);
+        assert!((opt.temperature - 0.7).abs() < 1e-6);
         assert!(opt.seed.is_none());
     }
 }
