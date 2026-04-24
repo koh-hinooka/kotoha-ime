@@ -43,7 +43,7 @@ use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
+use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 
 use crate::kanji::{Candidate, ConvertOptions, KanjiBackend, KanjiError, PromptTemplate};
@@ -210,53 +210,61 @@ impl KanjiBackend for LlamaCppBackend {
     }
 }
 
-/// Produces the role/content tuples consumed by llama-cpp-2
-/// `apply_chat_template`. Phase 1 submits a single user turn; the model is
-/// expected to return the kanji string as its assistant turn.
+/// Builds the raw prompt string consumed by `infer`.
 ///
-/// For `Gemma2InstructChat` / `Qwen2Chat`, the user content is wrapped in an
-/// IME-style instruction + 2 few-shot examples so the chat-tuned base model
-/// performs kana→kanji conversion instead of responding conversationally.
-/// Empirical observation (P1-2.5-8): without this instruction wrapper,
-/// Gemma-2-2B-jpn-it echoes the hiragana input plus whitespace/emoji noise.
+/// Phase 1 bypasses llama-cpp-2's `apply_chat_template` for Gemma / Qwen
+/// instruct variants because the chat turn structure triggers their
+/// conversational short-answer bias (empirical P1-2.5-8: Gemma-2-2B-jpn-it
+/// under `apply_chat_template` stops at `日本` for input `にほんご`
+/// instead of producing `日本語`). Instead, a plain-text few-shot prompt is
+/// assembled and the model completes in text-completion mode — matching the
+/// harness that produced 5/5 PASS in the original P1-2-9 empirical
+/// verification (llama-cpp-python text completion).
 ///
-/// For [`PromptTemplate::Custom`] with `system: Some(s)`, a `"system"` turn
-/// is prepended. `Custom` does not add the instruction wrapper — callers who
-/// use `Custom` are expected to bake their own directive into the wrapper
-/// strings.
-fn build_chat_tuples(template: &PromptTemplate, user_input: &str) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = Vec::with_capacity(2);
-    if let PromptTemplate::Custom {
-        system: Some(system),
-        ..
-    } = template
-    {
-        out.push(("system".to_string(), system.clone()));
-    }
+/// The 7 few-shot pairs cover: short single kanji (えき → 駅) / multi-char
+/// kanji compound (にほんご → 日本語, directly reinforcing the row that
+/// regressed) / yōon (ちゃわん → 茶碗) / okurigana compound (たべもの →
+/// 食べ物) / honorific suffix (やまださん → 山田さん) / loanword mid-phrase
+/// (パソコンをつかう → パソコンを使う) / full sentence with particles
+/// (わたしはがくせいです → 私は学生です).
+///
+/// For [`PromptTemplate::Custom`], the caller's `system` + `user_wrapper` +
+/// `assistant_prefix` fields are composed verbatim; no few-shot scaffold is
+/// injected.
+fn build_prompt(template: &PromptTemplate, user_input: &str) -> String {
     match template {
         PromptTemplate::Gemma2InstructChat | PromptTemplate::Qwen2Chat => {
-            // Multi-turn few-shot: Gemma-2-2B-jpn-it follows the conversion
-            // pattern more reliably when each example is a full user→assistant
-            // exchange than when few-shot examples are embedded as plain text
-            // in a single turn (empirical P1-2.5-8 observation).
-            let directive = "あなたは日本語IMEです。ひらがな入力を漢字交じりの自然な日本語に変換して、変換結果のみを出力してください。";
-            // Turn 1 example
-            out.push(("user".to_string(), format!("{directive}\n\n入力: にほんご")));
-            out.push(("assistant".to_string(), "日本語".to_string()));
-            // Turn 2 example
-            out.push(("user".to_string(), "入力: やまださん".to_string()));
-            out.push(("assistant".to_string(), "山田さん".to_string()));
-            // Turn 3 example
-            out.push(("user".to_string(), "入力: わたしはがくせいです".to_string()));
-            out.push(("assistant".to_string(), "私は学生です".to_string()));
-            // Actual query
-            out.push(("user".to_string(), format!("入力: {user_input}")));
+            format!(
+                "あなたは正確な日本語IMEエンジンです。入力されたひらがな文字列の音韻をそのまま保った漢字表記に変換してください。これは音声的な1対1の写像であり、意味を同じくする別の語への翻訳・類義語置換・言い換えは行いません。例えば「あした」は「明日」であり「翌日」ではありません。「ぎゅうにゅう」は「牛乳」であり「ミルク」ではありません。「りょうり」は「料理」であり「クッキング」ではありません。入力の全ての文字を省略せず最後まで変換し、単独の単語であっても標準的な漢字表記に変換します。カタカナ由来の外来語は長音符「ー」を含めて正しくカタカナで復元します。変換結果のみを1行で出力し、説明・記号・引用符は付けません。\n\n\
+                 入力: えき\n出力: 駅\n\n\
+                 入力: にほんご\n出力: 日本語\n\n\
+                 入力: ちゃわん\n出力: 茶碗\n\n\
+                 入力: ぎゅうにゅう\n出力: 牛乳\n\n\
+                 入力: きっぷ\n出力: 切符\n\n\
+                 入力: こーひー\n出力: コーヒー\n\n\
+                 入力: はっぴょう\n出力: 発表\n\n\
+                 入力: りょうり\n出力: 料理\n\n\
+                 入力: たべもの\n出力: 食べ物\n\n\
+                 入力: やまださん\n出力: 山田さん\n\n\
+                 入力: パソコンをつかう\n出力: パソコンを使う\n\n\
+                 入力: わたしはがくせいです\n出力: 私は学生です\n\n\
+                 入力: あした\n出力: 明日\n\n\
+                 入力: {user_input}\n出力: "
+            )
         }
-        PromptTemplate::Custom { .. } => {
-            out.push(("user".to_string(), user_input.to_string()));
+        PromptTemplate::Custom {
+            user_wrapper,
+            assistant_prefix,
+            system,
+        } => {
+            let system_part = system
+                .as_ref()
+                .map(|s| format!("{s}\n"))
+                .unwrap_or_default();
+            let (prefix, suffix) = user_wrapper;
+            format!("{system_part}{prefix}{user_input}{suffix}{assistant_prefix}")
         }
     }
-    out
 }
 
 /// Runs greedy inference against the loaded model and returns a single raw
@@ -301,48 +309,26 @@ fn infer(
 
     let backend = llama_backend().map_err(|e| format!("LlamaBackend init failed: {e}"))?;
 
-    // Dispatch prompt construction by template variant.
-    let prompt = match template {
-        PromptTemplate::Custom {
-            user_wrapper,
-            assistant_prefix,
-            system,
-        } => {
-            let system_part = system
-                .as_ref()
-                .map(|s| format!("{s}\n"))
-                .unwrap_or_default();
-            let (prefix, suffix) = user_wrapper;
-            format!("{system_part}{prefix}{input}{suffix}{assistant_prefix}")
-        }
-        PromptTemplate::Gemma2InstructChat | PromptTemplate::Qwen2Chat => {
-            let tmpl: LlamaChatTemplate = model
-                .chat_template(None)
-                .map_err(|e| format!("chat_template(None) failed: {e}"))?;
-            let chat_tuples = build_chat_tuples(template, input);
-            let chat: Vec<LlamaChatMessage> = chat_tuples
-                .into_iter()
-                .map(|(r, c)| LlamaChatMessage::new(r, c))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("LlamaChatMessage::new failed: {e}"))?;
-            model
-                .apply_chat_template(&tmpl, &chat, true)
-                .map_err(|e| format!("apply_chat_template failed: {e}"))?
-        }
-    };
+    // Build the raw prompt string. Phase 1 uses plain-text completion (not
+    // chat-template wrapping) for llama.cpp-family instruct models; see the
+    // `build_prompt` rustdoc for the empirical rationale.
+    let prompt = build_prompt(template, input);
 
     // Default context parameters are sufficient for ≤128-char hiragana inputs;
     // Phase 2+ may explicitly tune `n_ctx` once we benchmark longer queries.
-    let ctx_params = LlamaContextParams::default();
+    // n_ctx 1024: default 512 is tight with the 7-pair few-shot prompt
+    // (~350-400 tokens) plus generation headroom. 1024 absorbs fluctuation
+    // while keeping memory footprint well under Phase 1 2 GB budget.
+    let ctx_params = LlamaContextParams::default().with_n_ctx(std::num::NonZeroU32::new(1024));
     let mut ctx = model
         .new_context(backend, ctx_params)
         .map_err(|e| format!("context init failed: {e}"))?;
 
-    // Tokenize the prompt. The chat template (GGUF-embedded or hand-authored
-    // via `Custom`) already supplies any required BOS/role markers, so we
-    // tell llama-cpp-2 to skip its own BOS injection.
+    // Tokenize the prompt. Plain-text completion mode: llama-cpp-2 must
+    // prepend the model's `<bos>` token because the hand-built prompt does
+    // not include it explicitly.
     let tokens = model
-        .str_to_token(&prompt, AddBos::Never)
+        .str_to_token(&prompt, AddBos::Always)
         .map_err(|e| format!("tokenize failed: {e}"))?;
     if tokens.is_empty() {
         return Ok(Vec::new());
@@ -378,6 +364,11 @@ fn infer(
     // that without pulling in `encoding_rs` (a transitive dep of llama-cpp-2
     // that we do not want to surface in Kotoha's direct dependency list).
     let mut surface_bytes: Vec<u8> = Vec::new();
+    // Plain-text completion stop signal: once the model has emitted any
+    // non-whitespace content, the first subsequent newline terminates the
+    // answer. Without this guard the model would continue generating the
+    // next fake `入力: ... 出力: ...` example up to `max_new_tokens`.
+    let mut has_non_whitespace = false;
 
     for step in 0..max_new_tokens {
         // Sample the next token from the most recent logits. `-1` selects the
@@ -389,15 +380,31 @@ fn infer(
             break;
         }
 
-        // Detokenize. `special = false` keeps any GGUF special tokens (chat
-        // template role markers, separator tokens, etc.) from leaking into
-        // the candidate surface. Buffer size 64 fits any single Japanese
-        // token (UTF-8 max 4 bytes per code point, typical subword fragments
-        // are ≤ a few code points); `token_to_piece_bytes` retries
+        // Detokenize. `special = false` keeps any GGUF special tokens from
+        // leaking into the candidate surface. Buffer size 64 fits any single
+        // Japanese token (UTF-8 max 4 bytes per code point, typical subword
+        // fragments are ≤ a few code points); `token_to_piece_bytes` retries
         // internally if undersized.
         let piece = model
             .token_to_piece_bytes(next, 64, false, None)
             .map_err(|e| format!("detokenize failed at step {step}: {e}"))?;
+
+        // Stop on first newline after content. The plain-text few-shot
+        // prompt ends with `出力: `; a single line of completion is the
+        // expected answer. `\n` in ASCII is byte 0x0A and cannot appear as
+        // a UTF-8 continuation byte (0x80-0xBF), so byte-level scan is safe.
+        if has_non_whitespace {
+            if let Some(nl_pos) = piece.iter().position(|&b| b == b'\n') {
+                surface_bytes.extend_from_slice(&piece[..nl_pos]);
+                break;
+            }
+        }
+        if piece
+            .iter()
+            .any(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+        {
+            has_non_whitespace = true;
+        }
         surface_bytes.extend_from_slice(&piece);
 
         // Feed the new token so the next step sees the updated KV cache.
@@ -416,7 +423,9 @@ fn infer(
     }
     // Lossy decode: replacement characters indicate a truncated final token,
     // which Phase 2+ can guard against with a stateful streaming decoder.
-    let surface = String::from_utf8_lossy(&surface_bytes).into_owned();
+    // Trim trailing ASCII whitespace (stop loop may include leading spaces
+    // that the prompt's `出力: ` suffix did not absorb).
+    let surface = String::from_utf8_lossy(&surface_bytes).trim().to_string();
 
     // Phase 1 placeholder score. Real per-token log-prob aggregation requires
     // pulling the `LlamaTokenDataArray` snapshot before each greedy pick;

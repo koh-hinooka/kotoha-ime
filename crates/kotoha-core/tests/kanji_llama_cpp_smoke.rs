@@ -184,9 +184,57 @@ fn llama_cpp_smoke_8_watashi_wa_gakusei_desu() {
 }
 
 #[test]
-fn llama_cpp_smoke_9_shinbun() {
+fn llama_cpp_smoke_9_gyuunyuu() {
     let Some(path) = get_model_path_or_skip() else {
         return;
     };
     run_fixture(path, 8);
+}
+
+#[test]
+fn llama_cpp_smoke_10_kippu() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 9);
+}
+
+#[test]
+fn llama_cpp_smoke_11_kohii() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 10);
+}
+
+#[test]
+fn llama_cpp_smoke_12_happyou() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 11);
+}
+
+#[test]
+fn llama_cpp_smoke_13_jisho() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 12);
+}
+
+#[test]
+fn llama_cpp_smoke_14_ryouri() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 13);
+}
+
+#[test]
+fn llama_cpp_smoke_15_shinbun() {
+    let Some(path) = get_model_path_or_skip() else {
+        return;
+    };
+    run_fixture(path, 14);
 }
