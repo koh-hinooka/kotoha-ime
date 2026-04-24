@@ -10,7 +10,7 @@
 | PR                  | 作成予定 (本 WBS commit 後に別 commit で issue/PR 作成する)                                      |
 | 実装起点            | `02cf035` (develop, #74 merge commit)                                                           |
 | 最終 pass rate      | 14/15 (row 3「あした → 明日」のみ FAIL)                                                          |
-| 受容判断            | 14/15 を Phase 1 受容。row 3 の根本解決は Phase 3 「Kotoha 専用 romaji-base モデル」へ繰越し   |
+| 受容判断            | 14/15 を Phase 1 受容。row 3 の根本解決は Phase 5 「Kotoha custom romaji-base model」へ繰越し (ADR 0010 で確定) |
 
 ## 概要
 
@@ -18,7 +18,7 @@
 
 本セッションでは v5 から v12 まで合計 8 世代の prompt を試行した結果、Gemma-2-2B-jpn-it Q5_K_M の in-context learning (ICL) で到達可能な上限は 14/15 であると実証的に判断した。具体的には row 3「あした → 明日」が、positive few-shot・negative few-shot・直接指示のいずれの誘導でも「翌日」から覆せなかった。
 
-本 follow-up は 14/15 を Phase 1 acceptance として受容し、row 3 の完全解消は Phase 3 の「Kotoha 専用 romaji-base モデル」(Karukan jinen-v1-small を参照する task-specific fine-tune) で根本解決する方針で close する。
+本 follow-up は 14/15 を Phase 1 acceptance として受容し、row 3 の完全解消は Phase 5 の「Kotoha custom romaji-base model」(Karukan jinen-v1-small を参照する task-specific fine-tune) で根本解決する方針で close する。
 
 ## 実装差分の要約
 
@@ -132,22 +132,22 @@ row 3「あした」だけが v5 から v12 まで一貫して「翌日」を出
 
 これは「汎用 instruction-tuned small LLM の ICL で kana→kanji IME タスクを完全に誘導することの限界」の実例である。参照として、Karukan の jinen-v1-small (90M parameter、GPT-2 ベース、kana→kanji 専用 fine-tune + PUA special tokens による構造的入力保証) は同類タスクで成功しているが、これは「学習分布内」での推論であり、ICL に依存していない点が本質的な違いである。
 
-## Phase 3 への引き継ぎ
+## Phase 5 への引き継ぎ
 
-row 3「あした → 翌日」問題は既知制約として Phase 3 に繰越し、以下の方針で根本解決する予定である (詳細仕様は本 WBS の範囲外で、別 PR で ADR 0010 および ROADMAP Phase 3 spec draft として起票される)。
+row 3「あした → 翌日」問題は既知制約として Phase 5 に繰越し、以下の方針で根本解決する予定である (詳細仕様は本 WBS の範囲外で、別 PR で ADR 0010 および ROADMAP Phase 5 spec draft として起票される)。
 
-- Phase 3 の採用予定方針: raw romaji (ASCII 列) 入力 → kanji 直接変換を担う、Kotoha 専用の task-specific 小型モデル (目標 90M 前後、distillation または scratch training)
+- Phase 5 の採用予定方針: raw romaji (ASCII 列) 入力 → kanji 直接変換を担う、Kotoha 専用の task-specific 小型モデル (目標 90M 前後、distillation または scratch training)
 - 参照設計: Karukan jinen-v1-small (90M GPT-2 base + PUA special tokens + kana→kanji 専用 fine-tune)
 - 学習データ: Kotoha fixture + 公開 IME コーパスからの synthetic pair
-- 位置づけ: Phase 1 の Gemma-2-2B-jpn-it backend は general-purpose fallback として残しつつ、Phase 3 model を primary dispatch とする
+- 位置づけ: Phase 1 の Gemma-2-2B-jpn-it backend は general-purpose fallback として残しつつ、Phase 5 model を primary dispatch とする
 
-本方針の記述: Phase 3 着手時に `docs/adr/0010-phase3-custom-romaji-base-model.md` および `docs/ROADMAP.md` Phase 3 section で詳細化する (本 follow-up の scope 外)。
+本方針の記述: Phase 5 着手時に `docs/adr/0010-kotoha-custom-romaji-base-model.md` および `docs/ROADMAP.md` Phase 5 section で詳細化する (本 follow-up の scope 外)。
 
 ## Open Question の close 宣言
 
 | Q                                                         | Close 判断                                                                                                         |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| ISSUE #75「15-row Layer 3 fixture で 15/15 PASS を達成する」 | **条件付き close**: 14/15 PASS を Phase 1 acceptance として受容し、row 3 の残 1 件は Phase 3 で解消する計画で合意 |
+| ISSUE #75「15-row Layer 3 fixture で 15/15 PASS を達成する」 | **条件付き close**: 14/15 PASS を Phase 1 acceptance として受容し、row 3 の残 1 件は Phase 5 で解消する計画で合意 |
 
 ## 検証 commands (final、本 follow-up ブランチで実行)
 
@@ -172,9 +172,9 @@ cargo test -p kotoha-core --features llama-cpp-smoke --test kanji_llama_cpp_smok
 
 本 follow-up で残る作業 (別 ISSUE として起票予定):
 
-1. **row 3 の意図的 ignore / skip**: 14/15 を Phase 1 smoke の goal として宣言する場合、row 3 を `#[ignore]` 扱いにするか、fixture から `# KNOWN_PHASE3` コメントでマーキングするかを決定する。現状は「FAIL を test failure として残し、Phase 3 で修正する」方針としており、本 follow-up ブランチでは対処しない
-2. **ADR 0010 起票**: Phase 3 「Kotoha 専用 romaji-base モデル」の正式 ADR を別 PR で起票する
-3. **ROADMAP Phase 3 section 詳細化**: `docs/ROADMAP.md` の Phase 3 section に本 follow-up の decision (14/15 acceptance + Phase 3 根本解決) を反映する
-4. **README.md の Phase 1 known limitation 記載**: README の Phase 1 セクションに「row 3 は Phase 3 で解消予定」の注記を追加する
+1. **row 3 の意図的 ignore / skip**: 14/15 を Phase 1 smoke の goal として宣言する場合、row 3 を `#[ignore]` 扱いにするか、fixture から `# KNOWN_PHASE5` コメントでマーキングするかを決定する。現状は「FAIL を test failure として残し、Phase 5 で修正する」方針としており、本 follow-up ブランチでは対処しない
+2. **ADR 0010 起票**: Phase 5 「Kotoha custom romaji-base model」の正式 ADR を別 PR で起票する
+3. **ROADMAP Phase 5 section 詳細化**: `docs/ROADMAP.md` の Phase 5 section に本 follow-up の decision (14/15 acceptance + Phase 5 根本解決) を反映する
+4. **README.md の Phase 1 known limitation 記載**: README の Phase 1 セクションに「row 3 は Phase 5 で解消予定」の注記を追加する
 
 Phase 1 残マイルストーン: P1-3 (CLI `kotoha-kanji` + Layer 4 E2E smoke) → P1-4 (ADR 0009 / 0010 / 0011 正式起票 + Phase 1 acceptance checklist 消化 + implementation WBS final log)
