@@ -133,8 +133,14 @@ def _write_row(
 
     ``--with-tokens`` が有効なときは ``tokenized`` 列を
     :func:`wrap_with_tokens` で生成、無効なときは空文字列で埋める。
+
+    ``tokenized`` 列は ``noisy_romaji`` (typo 注入後) を PUA トークンで
+    包む。理由: Phase 5 モデルは inference 時に typo を含んだ入力を
+    受け取るため、training-ready format も noisy_romaji をベースにする
+    必要がある。``typo_distance == 0`` の行では ``noisy_romaji`` は
+    ``clean_romaji`` と等しいため、挙動は変わらない。
     """
-    tokenized = wrap_with_tokens(romaji=clean_romaji, kanji=kanji) if with_tokens else ""
+    tokenized = wrap_with_tokens(romaji=noisy_romaji, kanji=kanji) if with_tokens else ""
     writer.writerow(
         (
             noisy_romaji,

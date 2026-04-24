@@ -140,10 +140,15 @@ def compose_mixed_sentence(rng: random.Random) -> MixedSentence:
         # 場合でも、cursor 更新により左から右へ順序通り処理する)
         idx = composed.find(en_word, cursor)
         if idx < 0:
-            # template 内の placeholder 個数と 2 個の EN 単語投入が
-            # 一致しない異常系。PoC の template 設計上は発生しないが
-            # 防御的にスキップする。
-            continue
+            # template 内の {en} / {en2} 個数が設計と一致しない異常系。
+            # silent skip すると「segments を連結すると composed に等しい」
+            # という postcondition が崩れるため、template 設計の誤りを
+            # 早期に検出できるよう明示的に raise する。
+            raise RuntimeError(
+                f"EN word {en_word!r} not found in composed sentence "
+                f"{composed!r} (cursor={cursor}). "
+                "Template or EN word list design error."
+            )
         if idx > cursor:
             segments.append(
                 {

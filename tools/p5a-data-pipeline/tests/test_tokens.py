@@ -13,11 +13,11 @@ from kotoha_p5a.tokens import (
 
 
 def test_pua_code_points_match_spec() -> None:
-    """PUA トークンの code point は ADR 0010 D4 の初期値と一致する。"""
-    assert ord(ROMAJI_TOKEN) == 0xE000
-    assert ord(OUT_TOKEN) == 0xE001
-    assert ord(CTX_TOKEN) == 0xE002
-    assert ord(EOS_TOKEN) == 0xE003
+    """PUA トークンの code point は ADR 0010 D4 / Phase 5 spec §4.5 の初期値と一致する。"""
+    assert ord(ROMAJI_TOKEN) == 0xEE00
+    assert ord(OUT_TOKEN) == 0xEE01
+    assert ord(CTX_TOKEN) == 0xEE02
+    assert ord(EOS_TOKEN) == 0xEE03
 
 
 def test_wrap_without_context_omits_ctx_token() -> None:

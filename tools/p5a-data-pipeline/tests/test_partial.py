@@ -63,3 +63,21 @@ def test_generate_partials_capped_by_available_unique_count() -> None:
     partials = generate_partials("abc", rng, count=10, min_prefix_len=1)
     assert len(partials) == 3
     assert set(partials) == {"a", "ab", "abc"}
+
+
+def test_generate_partials_short_text_is_deterministic() -> None:
+    """``max_unique <= count`` の短文では exhaustive enumeration で確定的に返す。
+
+    修正前の random sampling 実装では ``count * 10`` の最大試行内に全 distinct
+    prefix を取得できない確率的失敗が起こり得た。修正後は全列挙 path に
+    入るため、seed に依らず常に同一の結果を返す。
+    """
+    # len("ab") = 2, min_prefix_len = 1 -> distinct prefix は 2 個 ("a", "ab")
+    # count=5 > max_unique=2 なので exhaustive enumeration path に入る
+    rng_a = random.Random(0)
+    rng_b = random.Random(999)
+    result_a = generate_partials("ab", rng_a, count=5, min_prefix_len=1)
+    result_b = generate_partials("ab", rng_b, count=5, min_prefix_len=1)
+    # seed に関係なく決定的に 2 要素を返す
+    assert result_a == ["a", "ab"]
+    assert result_b == ["a", "ab"]

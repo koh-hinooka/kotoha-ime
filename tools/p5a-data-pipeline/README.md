@@ -69,20 +69,20 @@ uv run -m kotoha_p5a \
 | 5 | `romaji_style` | string | `hepburn` / `kunrei` / `waapuro` |
 | 6 | `is_partial` | int | `1` のとき partial 行、`0` は full 行 |
 | 7 | `partial_len` | int | partial の char 長(full 行は `0`) |
-| 8 | `tokenized` | string | `--with-tokens` 有効時の PUA 包み文字列、無効時は空文字列 |
+| 8 | `tokenized` | string | `--with-tokens` 有効時、`noisy_romaji` と `kanji` を PUA token (U+EE00..U+EE03) で包んだ training-ready 文字列。無効時は空文字列。`typo_distance=0` 行では `noisy_romaji == clean_romaji` のため挙動差はないが、`typo_distance >= 1` 行では typo 入り入力を包む(inference 時に model が受け取る noisy 入力と整合) |
 | 9 | `language_segments` | string | mixed JP/EN 行のみ `jp:0-3;en:3-9;jp:9-14` 形式、他は空文字列 |
 | 10 | `has_en_words` | int | mixed 行は `1`、他は `0` |
 
 ## PUA トークン(`--with-tokens`)
 
-Karukan 踏襲の PUA code point を初期値として採用しています(ADR 0010 D4)。最終確定は Phase 5 kick-off のモデル学習検証後。
+Karukan 踏襲の PUA code point を初期値として採用しています(ADR 0010 D4 / Phase 5 spec §4.5)。最終確定は Phase 5 kick-off のモデル学習検証後。
 
 | 定数名 | Code point | 意味 |
 | --- | --- | --- |
-| `ROMAJI_TOKEN` | U+E000 | `<romaji>` |
-| `OUT_TOKEN` | U+E001 | `<out>` |
-| `CTX_TOKEN` | U+E002 | `<ctx>`(空 context 時は省略) |
-| `EOS_TOKEN` | U+E003 | `<eos>` |
+| `ROMAJI_TOKEN` | U+EE00 | `<romaji>` |
+| `OUT_TOKEN` | U+EE01 | `<out>` |
+| `CTX_TOKEN` | U+EE02 | `<ctx>`(空 context 時は省略) |
+| `EOS_TOKEN` | U+EE03 | `<eos>` |
 
 フォーマット:
 
@@ -137,7 +137,7 @@ uv run mypy src tests
 uv run pytest -v
 ```
 
-iter1 時点のテスト数: 51(既存 28 + 新規 23)。内訳は `tests/test_*.py` を参照。
+iter1 時点のテスト数: 54(既存 extract 5 + romaji 18 + typo 7 = 30、新規 partial 8 + tokens 7 + mixed_jp_en 7 + main integration 2 = 24)。新しい integration tests は `tests/test_main.py` にあり、CLI を subprocess 起動して 10 列 schema / mixed 行生成 / flag なし fallback を検証する。
 
 ## License
 

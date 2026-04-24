@@ -3,16 +3,17 @@
 Karukan 踏襲の Private Use Area (PUA) id を初期候補として採用する
 (ADR 0010 D4)。最終確定は Phase 5 kick-off のモデル学習検証後に行う。
 
-採用する PUA code point (初期値):
+採用する PUA code point (初期値, ADR 0010 D4 / Phase 5 spec §4.5 に整合):
 
-- ``CTX_TOKEN``    : U+E002 (``<ctx>``)
-- ``ROMAJI_TOKEN`` : U+E000 (``<romaji>``)
-- ``OUT_TOKEN``    : U+E001 (``<out>``)
-- ``EOS_TOKEN``    : U+E003 (``<eos>``)
+- ``ROMAJI_TOKEN`` : U+EE00 (``<romaji>``)
+- ``OUT_TOKEN``    : U+EE01 (``<out>``)
+- ``CTX_TOKEN``    : U+EE02 (``<ctx>``)
+- ``EOS_TOKEN``    : U+EE03 (``<eos>``)
 
 PUA 領域 (U+E000..U+F8FF) は Unicode 標準が用途を定めない範囲であり、
 通常のテキストに混入する可能性が低いため、学習データの tokenizer が
-これらの文字を正しく学習用トークンとして分離しやすい。
+これらの文字を正しく学習用トークンとして分離しやすい。U+EE00..U+EE03
+は Karukan (京大 SNLP) の採用帯と整合する初期値である。
 
 Public API:
     - :func:`wrap_with_tokens`: romaji + kanji を PUA 包んで 1 つの
@@ -22,10 +23,10 @@ Public API:
 
 from typing import Final, TypedDict
 
-CTX_TOKEN: Final[str] = ""
-ROMAJI_TOKEN: Final[str] = ""
-OUT_TOKEN: Final[str] = ""
-EOS_TOKEN: Final[str] = ""
+CTX_TOKEN: Final[str] = ""
+ROMAJI_TOKEN: Final[str] = ""
+OUT_TOKEN: Final[str] = ""
+EOS_TOKEN: Final[str] = ""
 
 
 class Unwrapped(TypedDict):
