@@ -3,7 +3,7 @@
 //! Spec: `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md` §5.3, §5.6, §5.7.
 //!
 //! The [`KanjiBackend`] trait defines the central abstraction for pluggable
-//! conversion backends (Mock / Zenz / future). The `pub(crate)` helpers
+//! conversion backends (Mock / LlamaCpp / future). The `pub(crate)` helpers
 //! [`validate_input`] and [`score_sort_dedupe`] live here so that every
 //! backend implementation enforces the same input contract and output
 //! guarantees without reimplementing the logic.
@@ -119,7 +119,7 @@ pub enum BackendConfig {
 pub trait KanjiBackend {
     /// Returns a human-readable identifier for the active model.
     ///
-    /// Examples: `"mock"`, `"zenz-v2.5-medium"`. Used for logging and
+    /// Examples: `"mock"`, `"gemma-2-2b-jpn-it-Q5_K_M"`. Used for logging and
     /// CLI diagnostics.
     fn model_id(&self) -> &str;
 
@@ -148,7 +148,8 @@ pub trait KanjiBackend {
 ///
 /// - [`KanjiError::InvalidInput`] if `input` contains any character outside
 ///   the accepted ranges or if `input.chars().count() > 128`.
-// Consumed by `MockBackend` in P1-1-6 and by `ZenzBackend` in Phase B.
+// Consumed by `MockBackend` and `LlamaCppBackend` (each backend enforces the
+// spec §5.6 input contract uniformly via this helper).
 #[allow(dead_code)]
 pub(crate) fn validate_input(input: &str) -> Result<(), KanjiError> {
     let count = input.chars().count();
@@ -184,7 +185,8 @@ pub(crate) fn validate_input(input: &str) -> Result<(), KanjiError> {
 /// - `result.len() <= top_k`.
 /// - For every adjacent pair `(result[i], result[i+1])`, `result[i].score >= result[i+1].score`.
 /// - No two entries in `result` share the same `surface`.
-// Consumed by `MockBackend` in P1-1-6 and by `ZenzBackend` in Phase B.
+// Consumed by `MockBackend` and `LlamaCppBackend` (each backend enforces the
+// spec §5.6 input contract uniformly via this helper).
 #[allow(dead_code)]
 pub(crate) fn score_sort_dedupe(mut candidates: Vec<Candidate>, top_k: usize) -> Vec<Candidate> {
     if top_k == 0 {
@@ -219,7 +221,7 @@ pub(crate) fn score_sort_dedupe(mut candidates: Vec<Candidate>, top_k: usize) ->
 /// - [`KanjiError::FeatureDisabled`] if `config` names a backend whose Cargo
 ///   feature was not enabled at build time.
 /// - Errors bubbled up from the backend's loader
-///   (for example [`KanjiError::ModelNotFound`] from `ZenzBackend::load`
+///   (for example [`KanjiError::ModelNotFound`] from `LlamaCppBackend::load`
 ///   once P1-2 lands).
 #[allow(unused_variables)]
 pub fn load_backend(config: &BackendConfig) -> Result<Box<dyn KanjiBackend>, KanjiError> {
