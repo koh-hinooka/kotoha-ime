@@ -424,5 +424,5 @@ mod tests {
     // because constructing a real backend requires a live GGUF file. Layer 3
     // smoke (`tests/kanji_llama_cpp_smoke.rs`) asserts that `model_id()`
     // returns a file-stem-derived string once a real backend is loaded via
-    // `KOTOHA_ZENZ_MODEL_PATH` (env rename deferred to Task P1-2.5-13).
+    // `KOTOHA_LLAMA_MODEL_PATH`.
 }

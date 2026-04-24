@@ -1,4 +1,4 @@
-//! Layer 3 LlamaCpp smoke integration tests.
+//! Layer 3 llama.cpp backend smoke integration tests.
 //!
 //! Runs the real `LlamaCppBackend` (via llama-cpp-2) against a short fixture
 //! of hiragana inputs and asserts that each top-1 candidate contains the
@@ -6,33 +6,36 @@
 //!
 //! # Enabling
 //!
-//! - Build-time: enable the `llama-cpp-smoke` feature (which implies
-//!   `llama-cpp`).
-//! - Runtime: set `KOTOHA_ZENZ_MODEL_PATH` to the absolute path of a
-//!   GGUF model file (download via HuggingFace — see below). The env var
-//!   name keeps its legacy `ZENZ` prefix for this commit; Task P1-2.5-13
-//!   renames it.
+//! - Build-time: enable the `llama-cpp-smoke` feature (which implies `llama-cpp`).
+//! - Runtime: set `KOTOHA_LLAMA_MODEL_PATH` to the absolute path of a
+//!   Gemma-2-2B-jpn-it GGUF file (Q5_K_M recommended for Phase 1).
 //!
 //! If the environment variable is unset, each test prints
-//! `SKIPPED: KOTOHA_ZENZ_MODEL_PATH not set` and exits early, so the test
+//! `SKIPPED: KOTOHA_LLAMA_MODEL_PATH not set` and exits early, so the test
 //! suite succeeds even when the model is missing. This follows spec §8.3
 //! ("lefthook pre-push には含めない、opt-in で実行") without relying on
 //! `#[ignore]`.
 //!
 //! # Model setup
 //!
-//! The default Phase 1 model is Zenz-v2.5-medium, hosted at
-//! <https://huggingface.co/Miwa-Keita/zenz-v2.5-medium-gguf>. Download with:
+//! The Phase 1 default model is Gemma-2-2B-jpn-it Q5_K_M, hosted at
+//! <https://huggingface.co/bartowski/gemma-2-2b-jpn-it-GGUF>. Download with:
 //!
 //! ```text
-//! huggingface-cli download Miwa-Keita/zenz-v2.5-medium-gguf \
-//!     --local-dir $HOME/.cache/kotoha/models
-//! export KOTOHA_ZENZ_MODEL_PATH=$HOME/.cache/kotoha/models/<gguf-filename>
+//! uvx --from huggingface_hub huggingface-cli download \
+//!   bartowski/gemma-2-2b-jpn-it-GGUF gemma-2-2b-jpn-it-Q5_K_M.gguf \
+//!   --local-dir $HOME/.cache/kotoha/models
+//! export KOTOHA_LLAMA_MODEL_PATH=$HOME/.cache/kotoha/models/gemma-2-2b-jpn-it-Q5_K_M.gguf
 //! cargo test -p kotoha-core --features llama-cpp-smoke --test kanji_llama_cpp_smoke
 //! ```
 //!
+//! License note: Gemma-2-2B-jpn-it is distributed under the Gemma License
+//! (redistribution allowed with attribution). Bundling the GGUF into the
+//! repository is out of scope for Phase 1; model acquisition is a user
+//! responsibility (spec §3.2).
+//!
 //! Spec: `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md` §3.2,
-//! §8.3, §8.6.
+//! §8.3.
 
 #![cfg(feature = "llama-cpp-smoke")]
 
@@ -40,13 +43,13 @@ use std::path::PathBuf;
 
 use kotoha_core::kanji::{load_backend, BackendConfig, ConvertOptions, PromptTemplate};
 
-/// Returns the Zenz model path from `KOTOHA_ZENZ_MODEL_PATH`, or `None` with
-/// a SKIP message on stdout if the env var is unset.
+/// Returns the llama.cpp model path from `KOTOHA_LLAMA_MODEL_PATH`, or `None`
+/// with a SKIP message on stdout if the env var is unset.
 fn get_model_path_or_skip() -> Option<PathBuf> {
-    match std::env::var("KOTOHA_ZENZ_MODEL_PATH") {
+    match std::env::var("KOTOHA_LLAMA_MODEL_PATH") {
         Ok(p) => Some(PathBuf::from(p)),
         Err(_) => {
-            println!("SKIPPED: KOTOHA_ZENZ_MODEL_PATH not set");
+            println!("SKIPPED: KOTOHA_LLAMA_MODEL_PATH not set");
             None
         }
     }
