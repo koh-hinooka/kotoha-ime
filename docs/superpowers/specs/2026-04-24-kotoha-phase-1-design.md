@@ -561,7 +561,7 @@ Dedupe は score 順 sort の後、先頭から見て既出 surface を skip す
 └──────────────────┘
 ```
 
-註 (P1-2.5 follow-up / PR #76): 上記データフローは Phase 1 acceptance 14/15 (row 3 `あした → 翌日` のみ不合格) に対応する最終形である。row 3 は Gemma-2-2B-jpn-it Q5_K_M の pretrain bias に起因する既知の制約 (v5–v12 の prompt 反復でも解消せず) であり、task-specific fine-tuned romaji-base model を使う Phase 3 で解消する方針として deferral する。
+註 (P1-2.5 follow-up / PR #76): 上記データフローは Phase 1 acceptance 14/15 (row 3 `あした → 翌日` のみ不合格) に対応する最終形である。row 3 は Gemma-2-2B-jpn-it Q5_K_M の pretrain bias に起因する既知の制約 (v5–v12 の prompt 反復でも解消せず) であり、task-specific fine-tuned romaji-base model を使う Phase 5 で解消する方針として deferral する (ADR 0010)。
 
 `kotoha-romaji` と `kotoha-kanji` は独立したプロセスであり、shell pipe でのみ連結する。両者間で共有メモリ / IPC を使わないため、Phase 0 / Phase 1 の CLI 仕様は shell tooling で柔軟に組み合わせ可能である。
 
@@ -671,12 +671,12 @@ Phase 0 の test philosophy (unit / integration の独立、fixture ベースの
 ### 8.3 Layer 3: llama.cpp smoke (llama-cpp-smoke feature)
 
 - 配置: `crates/kotoha-core/tests/kanji_llama_cpp_smoke.rs`
-- 対象: 実際の GGUF モデル (Phase 1 default: Gemma-2-2B-jpn-it Q5_K_M) を load して 9 件の smoke input で変換し、品質ではなく「プロセスが通る」ことを確認
+- 対象: 実際の GGUF モデル (Phase 1 default: Gemma-2-2B-jpn-it Q5_K_M) を load して 15 件の smoke input (Layer 3 fixture、row 3 は Phase 5 deferral として skip、有効 14 件) で変換し、品質ではなく「プロセスが通る」ことを確認
 - Model path: 環境変数 `KOTOHA_LLAMA_MODEL_PATH` で渡す (未設定時は SKIP して exit 0)
 - Feature: `llama-cpp-smoke` (`llama-cpp` を implies)
 - 実行: `cargo test --features llama-cpp-smoke` (手動 / opt-in)
 - lefthook pre-push には含めない (default features のみ実行)
-- 所要時間: 約 30 秒 (cold load 約 10 秒 + 9 件 × 約 3 秒、warm inference)
+- 所要時間: 約 52 秒 (cold load 約 10.6 秒 + 14 件 warm × 約 3 秒、詳細は ADR 0013 を参照)
 
 ### 8.4 Layer 4: E2E smoke (scripts/phase1-smoke.sh)
 
@@ -695,7 +695,7 @@ Assertion は substring 一致 (`assert_contains`) とし、Layer 3 と同一 fi
 |-------|---------|-------------|------------------|--------|
 | 1. Unit (default) | 〜25 | 0.2 秒 | ✅ | — |
 | 2. Integration (mock-backend) | 5 | 0.1 秒 | ✅ | — |
-| 3. llama.cpp smoke (llama-cpp-smoke) | 9 | 約 30 秒 | ❌ | ✅ |
+| 3. llama.cpp smoke (llama-cpp-smoke) | 15 (row 3 skip で有効 14) | 約 52 秒 | ❌ | ✅ |
 | 4. E2E smoke (shell) | 5 | 10〜30 秒 | ❌ | ✅ |
 | **合計 (pre-push)** | 〜30 | 0.3 秒以内 | — | — |
 
@@ -846,7 +846,7 @@ Phase 1 全体を 5 PR に分割する。合計見積もり約 5.3 日、各 mil
 | **P1-1** | Kanji module skeleton + Mock backend | `kotoha-core::kanji/` module 追加、`KanjiBackend` trait、`Candidate` / `ConvertOptions` / `KanjiError`、`MockBackend` (feature = mock-backend)、`load_backend` factory、Layer 1 + Layer 2 test | 1.5 日 | P1-0 merge |
 | **P1-2** | LlamaCppBackend 実装 | `LlamaCppBackend` 具象実装 (当初 ZenzBackend として着手、P1-2.5 で一般化)、llama-cpp-2 依存追加、llama-cpp-smoke test | 2.5 日 (P1-2 + P1-2.5 合計) | P1-1 merge |
 | **P1-3** | CLI kotoha-kanji + Phase 1 smoke | `kotoha-cli::bin::kotoha-kanji` バイナリ、`process_line` 純粋関数、`scripts/phase1-smoke.sh`、Layer 4 E2E smoke | 1.0 日 | P1-2 merge |
-| **P1-4** | ADR + closing | ADR 0009 / 0010 / 0011、README 更新 (Gemma-2-2B-jpn-it 入手手順 + `--model` 使い方)、Phase 1 acceptance checklist の消化、implementation WBS log 確定 | 0.5 日 | P1-3 merge |
+| **P1-4** | ADR + closing | ADR 0009 (promote) / 0011 / 0012 / 0013 (ADR 番号競合の詳細は §12 末尾の注参照)、README 更新 (Gemma-2-2B-jpn-it 入手手順 + `--model` 使い方)、Phase 1 acceptance checklist の消化、implementation WBS log 確定 | 0.5 日 | P1-3 merge |
 
 合計: 5.3 日、5 PR。各 PR は project CLAUDE.md「Branch Scope Policy」(10 files / 300 lines 目安) に収まる範囲で設計している。P1-2 のみ llama-cpp-2 依存追加と `LlamaCppBackend` 実装で lines が増えやすいため、テスト fixture の追加を含めて 300 lines を意識して分割する可能性がある。
 
@@ -861,6 +861,8 @@ Phase 1 終了時に以下 3 本の ADR を作成する。番号は Phase 0 ま�
 | 0011 | Feature flag design for llama.cpp integration | `default` / `llama-cpp` / `llama-cpp-smoke` / `mock-backend` 4 flags の分離理由、lefthook pre-push との整合 |
 
 いずれも P1-4 で作成し、本設計書と相互参照する (本書 → ADR、ADR → 本書)。
+
+**注 (P1-4 実施時の結果)**: 上記は Phase 1 早期計画時点の ADR 番号想定である。実際は ADR 0010 が Phase 5 方針で先に確定した (PR #78) ため、P1-4 で作成した ADR は 0009 (promote) / 0011 / 0012 / 0013 に繰り上がった。詳細経緯は `docs/wbs/2026-04-25-docs-83-p1-4-phase1-wrap.md` §背景を参照。
 
 ## 13. Open Questions (spec 執筆中 / 実装中に解消)
 
@@ -890,7 +892,7 @@ Phase 1 終了時に以下 3 本の ADR を作成する。番号は Phase 0 ま�
 - [ ] 10. CLI `kotoha-kanji` が `--model <path>` required、option `--top-k / --show-scores / --show-model-id / --temperature / --seed` を受け付ける
 - [ ] 11. CLI の exit code 仕様 (0 / 1 / 2) が Phase 0 `kotoha-romaji` と整合している
 - [ ] 12. `scripts/lib/assert.sh` が `assert_equal` / `assert_contains` / `assert_summary` を提供し、Phase 0 smoke が refactor 後も pass する
-- [ ] 13. ADR 0009 / 0010 / 0011 が作成され、本設計書と相互参照している
+- [ ] 13. ADR 0009 / 0011 / 0012 / 0013 が作成され、本設計書と相互参照している (ADR 0010 は Phase 5 方針 ADR、番号競合の経緯は `docs/wbs/2026-04-25-docs-83-p1-4-phase1-wrap.md` §背景を参照)
 - [ ] 14. `README.md` に Gemma-2-2B-jpn-it Q5_K_M の GGUF 入手コマンドと配置先、`kotoha-kanji --model` の使い方が記載されている
 - [ ] 15. `cargo fmt --all --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` が CI / lefthook pre-push で warning なく pass する
 

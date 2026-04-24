@@ -156,9 +156,10 @@
 ### BackendConfig
 
 - **定義**: kanji backend 選択のための `#[non_exhaustive]` 属性付き enum。Phase 1 時点の variant は `Mock` と `LlamaCpp`。Phase 5 で `KotohaNative` variant を追加予定。
-- **初出**: ADR 0006 (feature flag 初期方針) / ADR 0011 (trait 設計) / ADR 0012 (feature flag 設計)
+- **初出**: Phase 1 P1-1 (実装) / ADR 0011 (trait 設計) / ADR 0012 (feature flag 設計)
 - **対応する identifier**: `BackendConfig` enum (`crates/kotoha-core/src/kanji/backend.rs`)
 - **備考**: `#[non_exhaustive]` により、後続 Phase での variant 追加が breaking change にならない保証を持つ。
+- `#[non_exhaustive]` の適用方針は ADR 0006 (non-exhaustive on streaming enums) に準拠する
 
 ### MockBackend
 
@@ -185,10 +186,10 @@
 
 ### PromptTemplate
 
-- **定義**: 推論時の prompt 構築戦略を表す enum。variant は `Gemma2InstructChat` / `Qwen2Chat` / `Custom { system, user_format, assistant_prefix }` の 3 種。
+- **定義**: 推論時の prompt 構築戦略を表す enum。variant は `Gemma2InstructChat` / `Qwen2Chat` / `Custom { system, user_wrapper: (String, String), assistant_prefix }` の 3 種 (`user_wrapper` は prefix / suffix のペアで、実装は `crates/kotoha-core/src/kanji/backend.rs` を参照)。
 - **初出**: ADR 0011 / PR #74 (`docs/adr/0011-kanji-backend-trait-design.md`)
 - **対応する identifier**: `PromptTemplate` enum (`crates/kotoha-core/src/kanji/llama_cpp.rs`)
-- **備考**: Phase 1 は `Gemma2InstructChat` を chat template 経由で試した後、plain-text completion へ pivot した (PR #76)。`Qwen2Chat` は将来の model 差替を想定した placeholder。
+- **備考**: Phase 1 は最初に `apply_chat_template` 経路で `Gemma2InstructChat` variant を試みたが conversational echo が発生したため、PR #76 で plain-text completion 経路に pivot した。variant 自体は将来の dispatch 拡張余地として実装に保持されており、現行 Phase 1 の prompt 構築は plain-text completion 経路を使用する。`Qwen2Chat` は将来の model 差替を想定した placeholder。
 
 ### GGUF
 
