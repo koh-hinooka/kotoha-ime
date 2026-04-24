@@ -6,10 +6,12 @@
 pub mod error;
 pub mod input;
 pub mod kana;
+pub mod kanji;
 pub mod romaji;
 
 pub use error::{Error, Result};
 pub use input::{InputContext, InputMode, InputStep};
+pub use kanji::{Candidate, ConvertOptions};
 pub use romaji::{ConvertStep, RomajiConverter};
 
 /// Test-only accessor for the romaji rule table.
