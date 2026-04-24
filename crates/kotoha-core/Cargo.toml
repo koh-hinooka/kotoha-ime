@@ -12,7 +12,7 @@ description = "Kotoha: core library for a Japanese IME (conversion, input mode m
 thiserror = { workspace = true }
 tracing = { workspace = true }
 # `llama-cpp-2` is optional so default features do not pull in the C++ library and
-# its bindgen build step. Activated only when the `zenz` feature is enabled.
+# its bindgen build step. Activated only when the `llama-cpp` feature is enabled.
 llama-cpp-2 = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -24,11 +24,11 @@ default = []
 # Cannot be reduced to `#[cfg(test)]` because downstream test files live in a separate
 # crate (the `tests/` directory) and need the public surface.
 mock-backend = []
-# `zenz` gates ZenzBackend. P1-2 wires in llama-cpp-2 as the actual inference
-# backend (previously an empty flag during the P1-1 skeleton). Activating this
-# feature pulls in llama.cpp via llama-cpp-2 (C++ build required).
-zenz = ["dep:llama-cpp-2"]
-# `zenz-smoke` is the opt-in gate for Layer 3 live-inference smoke tests (added in P1-2).
-# Kept separate from `zenz` so that lefthook pre-push, which only runs default features,
-# does not attempt to load a real GGUF model.
-zenz-smoke = ["zenz"]
+# `llama-cpp` gates LlamaCppBackend. P1-2.5 adopts Gemma-2-2B-jpn-it as the
+# Phase 1 default model (spec §3.2). Activating this feature pulls in
+# llama.cpp via llama-cpp-2 (C++ build required).
+llama-cpp = ["dep:llama-cpp-2"]
+# `llama-cpp-smoke` is the opt-in gate for Layer 3 live-inference smoke tests.
+# Kept separate from `llama-cpp` so that lefthook pre-push, which only runs
+# default features, does not attempt to load a real GGUF model.
+llama-cpp-smoke = ["llama-cpp"]

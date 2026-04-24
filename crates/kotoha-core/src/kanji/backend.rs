@@ -72,11 +72,14 @@ pub enum BackendConfig {
     /// `mock-backend` feature flag is enabled at build time.
     Mock,
 
-    /// Zenz GGUF model backend (via llama-cpp-2). Constructible only when
-    /// the `zenz` feature flag is enabled at build time.
-    Zenz {
+    /// llama.cpp-family GGUF model backend (via llama-cpp-2). Constructible
+    /// only when the `llama-cpp` feature flag is enabled at build time.
+    LlamaCpp {
         /// Absolute path to the GGUF file on disk.
         model_path: PathBuf,
+        /// Chat / prompt template applied when constructing the inference
+        /// prompt. Dispatched by `LlamaCppBackend::convert`.
+        prompt_template: PromptTemplate,
     },
 }
 
@@ -229,13 +232,19 @@ pub fn load_backend(config: &BackendConfig) -> Result<Box<dyn KanjiBackend>, Kan
             feature: "mock-backend",
         }),
 
-        #[cfg(feature = "zenz")]
-        BackendConfig::Zenz { model_path } => {
-            Ok(Box::new(crate::kanji::ZenzBackend::load(model_path)?))
-        }
+        #[cfg(feature = "llama-cpp")]
+        BackendConfig::LlamaCpp {
+            model_path,
+            prompt_template,
+        } => Ok(Box::new(crate::kanji::LlamaCppBackend::load(
+            model_path,
+            prompt_template.clone(),
+        )?)),
 
-        #[cfg(not(feature = "zenz"))]
-        BackendConfig::Zenz { .. } => Err(KanjiError::FeatureDisabled { feature: "zenz" }),
+        #[cfg(not(feature = "llama-cpp"))]
+        BackendConfig::LlamaCpp { .. } => Err(KanjiError::FeatureDisabled {
+            feature: "llama-cpp",
+        }),
     }
 }
 
@@ -390,10 +399,11 @@ mod tests {
     fn backend_config_is_clone() {
         let mock = BackendConfig::Mock;
         let _ = mock.clone();
-        let zenz = BackendConfig::Zenz {
-            model_path: PathBuf::from("/tmp/zenz.gguf"),
+        let llama_cpp = BackendConfig::LlamaCpp {
+            model_path: PathBuf::from("/tmp/gemma-2-2b-jpn-it.gguf"),
+            prompt_template: PromptTemplate::Gemma2InstructChat,
         };
-        let _ = zenz.clone();
+        let _ = llama_cpp.clone();
     }
 
     #[test]
@@ -405,13 +415,18 @@ mod tests {
             "Debug for Mock must contain \"Mock\": {msg}"
         );
 
-        let zenz = BackendConfig::Zenz {
-            model_path: PathBuf::from("/tmp/zenz.gguf"),
+        let llama_cpp = BackendConfig::LlamaCpp {
+            model_path: PathBuf::from("/tmp/gemma-2-2b-jpn-it.gguf"),
+            prompt_template: PromptTemplate::Gemma2InstructChat,
         };
-        let msg = format!("{zenz:?}");
+        let msg = format!("{llama_cpp:?}");
         assert!(
-            msg.contains("Zenz"),
-            "Debug for Zenz must contain \"Zenz\": {msg}"
+            msg.contains("LlamaCpp"),
+            "Debug for LlamaCpp must contain \"LlamaCpp\": {msg}"
+        );
+        assert!(
+            msg.contains("Gemma2InstructChat"),
+            "Debug for LlamaCpp must include PromptTemplate: {msg}"
         );
     }
 
@@ -431,17 +446,18 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "zenz"))]
+    #[cfg(not(feature = "llama-cpp"))]
     #[test]
-    fn zenz_config_without_feature_errors_feature_disabled() {
-        match load_backend(&BackendConfig::Zenz {
-            model_path: PathBuf::from("/tmp/zenz.gguf"),
+    fn llama_cpp_config_without_feature_errors_feature_disabled() {
+        match load_backend(&BackendConfig::LlamaCpp {
+            model_path: PathBuf::from("/tmp/gemma-2-2b-jpn-it.gguf"),
+            prompt_template: PromptTemplate::Gemma2InstructChat,
         }) {
             Err(KanjiError::FeatureDisabled { feature }) => {
-                assert_eq!(feature, "zenz");
+                assert_eq!(feature, "llama-cpp");
             }
             Err(other) => panic!("unexpected error: {other:?}"),
-            Ok(_) => panic!("Zenz must error when zenz feature is off"),
+            Ok(_) => panic!("LlamaCpp must error when llama-cpp feature is off"),
         }
     }
 
