@@ -1,33 +1,23 @@
-//! Zenz GGUF model backend (via llama-cpp-2).
+//! llama.cpp-family GGUF backend (via llama-cpp-2).
 //!
-//! # Status (P1-2)
+//! # Status (P1-2.5)
 //!
-//! This module holds the real kanji conversion backend. An instance owns a
-//! llama-cpp-2 `LlamaModel` loaded from a GGUF file, re-used across every
-//! `convert` call.
-//!
-//! # Prompt format
-//!
-//! Zenz was trained on katakana input per the upstream dataset contract
-//! (`Miwa-Keita/zenz-v2.5-dataset` README: `"input": 入力のカタカナ文字列`).
-//! `ZenzBackend::convert` therefore applies `crate::kana::hiragana_to_katakana`
-//! to the caller-supplied hiragana before building the prompt; Kotoha's
-//! public input contract (spec §5.6) stays hiragana-only so the preprocessing
-//! is an internal concern of this backend.
-//!
-//! The wider prompt template (context / input / output separators, EOS token
-//! `</s>`, the PUA separator tokens `U+EE00..=U+EE06`) follows the AzooKey
-//! Zenzai reference implementation and is documented in the WBS
-//! "prompt format 解析ログ" section.
+//! This module owns a llama-cpp-2 `LlamaModel` loaded from a GGUF file,
+//! re-used across every `convert` call. The PromptTemplate stored at load
+//! time dispatches the prompt construction path; Task P1-2.5-6 switches the
+//! internals from the Zenz-era AzooKey-style manual PUA-token prompt to
+//! llama-cpp-2's `apply_chat_template` (reading the GGUF-embedded
+//! `tokenizer.chat_template`). This commit keeps the intermediate manual
+//! path in place so the rename lands as a self-contained change.
 //!
 //! # Deterministic output
 //!
 //! When `ConvertOptions::temperature == 0.0` and `ConvertOptions::seed == Some(0)`
 //! (the default), the backend performs greedy decoding with a fixed seed so
-//! the Layer 3 smoke tests and the E2E smoke tests are reproducible.
+//! Layer 3 and Layer 4 smoke tests are reproducible.
 //!
 //! Spec: `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md` §3.1,
-//! §3.2, §3.3, §5.3, §6.
+//! §3.2, §5.3, §6.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -40,44 +30,55 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 
-use crate::kanji::{Candidate, ConvertOptions, KanjiBackend, KanjiError};
+use crate::kanji::{Candidate, ConvertOptions, KanjiBackend, KanjiError, PromptTemplate};
 
-/// Zenz GGUF model backend, backed by llama-cpp-2. Enabled by `feature = "zenz"`.
+/// llama.cpp-family GGUF model backend, backed by llama-cpp-2. Enabled by
+/// `feature = "llama-cpp"`.
 ///
-/// Construct with [`ZenzBackend::load`] or via
-/// [`crate::kanji::load_backend`] applied to [`crate::kanji::BackendConfig::Zenz`].
+/// Construct via [`crate::kanji::load_backend`] applied to
+/// [`crate::kanji::BackendConfig::LlamaCpp`].
 ///
 /// # Invariants
 ///
 /// - `model` holds an initialized llama-cpp-2 `LlamaModel`.
 /// - `model_path` is the absolute path that was used to load `model`.
+/// - `model_id` is the file stem of `model_path` captured at load time.
+/// - `prompt_template` dispatches the prompt construction path per request.
 /// - The backend is single-threaded; wrap externally for concurrent use.
-pub struct ZenzBackend {
+pub struct LlamaCppBackend {
     /// Loaded llama-cpp-2 model. Kept private so llama-cpp-2 types do not leak
     /// into the public API surface. Read by `convert` to spin up a per-call
     /// `LlamaContext` for inference.
     model: LlamaModel,
     /// Path the model was loaded from. Used by logging and error diagnostics.
     model_path: PathBuf,
+    /// GGUF file stem captured at load time. Returned by
+    /// [`KanjiBackend::model_id`] and used in Layer 3 smoke test assertions.
+    model_id: String,
+    /// Chat/prompt template to apply when constructing the inference prompt.
+    /// Dispatched by `convert` via `infer`. Currently held but not yet read
+    /// by `infer` — Task P1-2.5-6 wires the apply_chat_template path.
+    #[allow(dead_code)]
+    prompt_template: PromptTemplate,
 }
 
 // Manual `Debug` impl: `LlamaModel` does not implement `Debug` (FFI-wrapping
-// type backed by `NonNull<llama_model>` with no derived impl in upstream
-// version 0.1.145), so `#[derive(Debug)]` on `ZenzBackend` would not compile.
-// The tests use `Result::expect_err`, which requires `T: Debug` on the `Ok`
-// variant. Print only `model_path` and replace the `model` field with a
-// placeholder string.
-impl fmt::Debug for ZenzBackend {
+// type backed by `NonNull<llama_model>` with no derived impl in llama-cpp-2
+// 0.1.145), so `#[derive(Debug)]` on `LlamaCppBackend` would not compile.
+// Print the three side fields and a placeholder for `model`.
+impl fmt::Debug for LlamaCppBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ZenzBackend")
+        f.debug_struct("LlamaCppBackend")
             .field("model", &"<LlamaModel>")
             .field("model_path", &self.model_path)
+            .field("model_id", &self.model_id)
+            .field("prompt_template", &self.prompt_template)
             .finish()
     }
 }
 
-impl ZenzBackend {
-    /// Loads a Zenz GGUF model from `model_path`.
+impl LlamaCppBackend {
+    /// Loads a GGUF model from `model_path` and captures the dispatch template.
     ///
     /// # Preconditions
     ///
@@ -87,9 +88,10 @@ impl ZenzBackend {
     ///
     /// # Postconditions
     ///
-    /// On success, the returned `ZenzBackend` owns a llama-cpp-2
-    /// [`LlamaModel`] initialized from the GGUF file at `model_path`, and
-    /// the process-global [`LlamaBackend`] is guaranteed to be initialized.
+    /// On success, the returned `LlamaCppBackend` owns a llama-cpp-2
+    /// [`LlamaModel`] initialized from the GGUF file at `model_path`, the
+    /// process-global [`LlamaBackend`] is guaranteed to be initialized, and
+    /// `prompt_template` is the value supplied by the caller.
     ///
     /// # Errors
     ///
@@ -97,7 +99,7 @@ impl ZenzBackend {
     /// - [`KanjiError::ModelLoadFailed`] if llama-cpp-2 fails to initialize
     ///   the global backend or parse / initialize the GGUF (wrapping the
     ///   underlying error as `source`).
-    pub fn load(model_path: &Path) -> Result<Self, KanjiError> {
+    pub fn load(model_path: &Path, prompt_template: PromptTemplate) -> Result<Self, KanjiError> {
         if !model_path.exists() {
             return Err(KanjiError::ModelNotFound {
                 path: model_path.to_path_buf(),
@@ -106,10 +108,17 @@ impl ZenzBackend {
 
         let model = load_llama_model(model_path)
             .map_err(|source| KanjiError::ModelLoadFailed { source })?;
+        let model_id = model_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("llama-cpp")
+            .to_string();
 
         Ok(Self {
             model,
             model_path: model_path.to_path_buf(),
+            model_id,
+            prompt_template,
         })
     }
 }
@@ -159,15 +168,9 @@ fn load_llama_model(
     Ok(model)
 }
 
-impl KanjiBackend for ZenzBackend {
+impl KanjiBackend for LlamaCppBackend {
     fn model_id(&self) -> &str {
-        // NOTE: llama-cpp-2 0.1.145 does not expose a clean public API for
-        // reading GGUF `general.name` metadata from `LlamaModel`; the underlying
-        // `llama_model_meta_val_str` FFI is not re-exported in this version.
-        // For Phase 1 we return the spec §3.2 default Zenz-v2.5-medium literal.
-        // Phase 2 can revisit once llama-cpp-2 surfaces a Rust-side metadata
-        // accessor or we reach for the `-sys` crate directly.
-        "zenz-v2.5-medium"
+        &self.model_id
     }
 
     fn convert(&self, input: &str, options: &ConvertOptions) -> Result<Vec<Candidate>, KanjiError> {
@@ -180,23 +183,17 @@ impl KanjiBackend for ZenzBackend {
             return Ok(Vec::new());
         }
 
-        // Step 3: Zenz expects katakana per the upstream dataset contract
-        // (`Miwa-Keita/zenz-v2.5-dataset` README). Kotoha's public API is
-        // hiragana-only, so the conversion is an internal concern.
+        // NOTE (P1-2.5 intermediate state): Task P1-2.5-6 replaces the
+        // Zenz-era hiragana→katakana preprocessing + AzooKey-style PUA-token
+        // prompt with llama-cpp-2's apply_chat_template dispatch. Task
+        // P1-2.5-7 then removes the katakana preprocessing entirely. Keep
+        // the existing path in place so the rename lands as a self-contained
+        // commit.
         let katakana = crate::kana::hiragana_to_katakana(input);
-
-        // Step 4: build the AzooKey-derived prompt (see WBS log).
         let prompt = build_prompt(&katakana);
-
-        // Step 5: inference. Phase 1 produces a single greedy candidate;
-        // Phase 2+ expands to beam search / n-best sampling once the Zenz
-        // scoring story (per-token log-prob aggregation, diverse candidate
-        // generation) is nailed down.
         let raw = infer(&self.model, &prompt, options)
             .map_err(|reason| KanjiError::Backend { reason })?;
 
-        // Step 6: enforce spec §5.7 output guarantees (descending sort,
-        // surface dedupe, top_k truncation) uniformly with MockBackend.
         Ok(crate::kanji::backend::score_sort_dedupe(raw, options.top_k))
     }
 }
@@ -360,9 +357,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn zenz_load_errors_on_missing_file() {
-        let err = ZenzBackend::load(Path::new("/tmp/definitely-does-not-exist-kotoha-p1-2.gguf"))
-            .expect_err("load must error when the path does not exist");
+    fn llama_cpp_load_errors_on_missing_file() {
+        let err = LlamaCppBackend::load(
+            Path::new("/tmp/definitely-does-not-exist-kotoha-p1-2-5.gguf"),
+            PromptTemplate::Gemma2InstructChat,
+        )
+        .expect_err("load must error when the path does not exist");
         match err {
             KanjiError::ModelNotFound { path } => {
                 assert!(
@@ -375,10 +375,9 @@ mod tests {
         }
     }
 
-    // Note: `zenz_model_id_is_zenz_prefix` is intentionally absent from the
-    // in-source test module because constructing a `ZenzBackend` for the test
-    // requires a real GGUF file, which is out of scope here. Layer 3 smoke
-    // (`tests/kanji_zenz_smoke.rs`) asserts that `model_id()` returns a
-    // "zenz"-prefixed string once a real backend is loaded via
-    // `KOTOHA_ZENZ_MODEL_PATH`.
+    // Note: `llama_cpp_model_id_echoes_file_stem` is not covered here
+    // because constructing a real backend requires a live GGUF file. Layer 3
+    // smoke (`tests/kanji_llama_cpp_smoke.rs`) asserts that `model_id()`
+    // returns a file-stem-derived string once a real backend is loaded via
+    // `KOTOHA_ZENZ_MODEL_PATH` (env rename deferred to Task P1-2.5-13).
 }

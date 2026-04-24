@@ -1,14 +1,17 @@
-//! Layer 3 Zenz smoke integration tests.
+//! Layer 3 LlamaCpp smoke integration tests.
 //!
-//! Runs the real `ZenzBackend` (via llama-cpp-2) against a short fixture of
-//! hiragana inputs and asserts that each top-1 candidate contains the
+//! Runs the real `LlamaCppBackend` (via llama-cpp-2) against a short fixture
+//! of hiragana inputs and asserts that each top-1 candidate contains the
 //! expected substring.
 //!
 //! # Enabling
 //!
-//! - Build-time: enable the `zenz-smoke` feature (which implies `zenz`).
+//! - Build-time: enable the `llama-cpp-smoke` feature (which implies
+//!   `llama-cpp`).
 //! - Runtime: set `KOTOHA_ZENZ_MODEL_PATH` to the absolute path of a
-//!   Zenz-v2.5-medium GGUF file (download via HuggingFace — see below).
+//!   GGUF model file (download via HuggingFace — see below). The env var
+//!   name keeps its legacy `ZENZ` prefix for this commit; Task P1-2.5-13
+//!   renames it.
 //!
 //! If the environment variable is unset, each test prints
 //! `SKIPPED: KOTOHA_ZENZ_MODEL_PATH not set` and exits early, so the test
@@ -25,17 +28,17 @@
 //! huggingface-cli download Miwa-Keita/zenz-v2.5-medium-gguf \
 //!     --local-dir $HOME/.cache/kotoha/models
 //! export KOTOHA_ZENZ_MODEL_PATH=$HOME/.cache/kotoha/models/<gguf-filename>
-//! cargo test -p kotoha-core --features zenz-smoke --test kanji_zenz_smoke
+//! cargo test -p kotoha-core --features llama-cpp-smoke --test kanji_llama_cpp_smoke
 //! ```
 //!
 //! Spec: `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md` §3.2,
 //! §8.3, §8.6.
 
-#![cfg(feature = "zenz-smoke")]
+#![cfg(feature = "llama-cpp-smoke")]
 
 use std::path::PathBuf;
 
-use kotoha_core::kanji::{load_backend, BackendConfig, ConvertOptions};
+use kotoha_core::kanji::{load_backend, BackendConfig, ConvertOptions, PromptTemplate};
 
 /// Returns the Zenz model path from `KOTOHA_ZENZ_MODEL_PATH`, or `None` with
 /// a SKIP message on stdout if the env var is unset.
@@ -69,7 +72,7 @@ fn load_fixture() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Asserts a single fixture row against the Zenz backend loaded from `model_path`.
+/// Asserts a single fixture row against the LlamaCpp backend loaded from `model_path`.
 ///
 /// `ConvertOptions` is `#[non_exhaustive]` (ADR 0006), so struct-literal
 /// construction from outside the defining crate is forbidden. We therefore
@@ -86,10 +89,11 @@ fn run_fixture(model_path: PathBuf, row_index: usize) {
     );
     let (input, expected_substring) = &fixtures[row_index];
 
-    let backend = load_backend(&BackendConfig::Zenz {
+    let backend = load_backend(&BackendConfig::LlamaCpp {
         model_path: model_path.clone(),
+        prompt_template: PromptTemplate::Gemma2InstructChat,
     })
-    .expect("Zenz backend must load from the pinned fixture path");
+    .expect("LlamaCpp backend must load from the pinned fixture path");
 
     let mut options = ConvertOptions::default();
     options.top_k = 5;

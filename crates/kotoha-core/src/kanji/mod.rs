@@ -21,4 +21,4 @@ pub use mock::MockBackend;
 #[cfg(feature = "llama-cpp")]
 mod llama_cpp;
 #[cfg(feature = "llama-cpp")]
-pub use llama_cpp::ZenzBackend;
+pub use llama_cpp::LlamaCppBackend;
