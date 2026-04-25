@@ -92,3 +92,106 @@ pub const EXIT_INTERNAL: i32 = 1;
 pub const EXIT_INPUT: i32 = 2;
 pub const EXIT_DUPLICATE: i32 = 3;
 pub const EXIT_NOT_FOUND: i32 = 4;
+
+/// `<READING>` 引数の auto-detect normalize(spec §7.7)。
+///
+/// # Preconditions
+/// - `reading` は非空であること。
+///
+/// # Postconditions
+/// - 返却される文字列は hiragana のみ(U+3040..=U+309F)に長音記号 `ー` (U+30FC) /
+///   中黒 `・` (U+30FB) を加えた集合からのみ構成される。
+///
+/// # Errors
+/// - `reading` が空文字列の場合。
+/// - hiragana・ASCII の混在、カタカナ・漢字を含む場合。
+/// - ASCII を `RomajiConverter::convert` に投じた結果、pending residue が残る場合。
+///
+/// # Behavior
+/// - 全 hiragana(U+3040..=U+309F + U+30FC + U+30FB) → そのまま返す。
+/// - 全 ASCII(U+0020..=U+007E) → `RomajiConverter::convert` で変換し、pending が空でかつ
+///   committed が hiragana-only である場合のみ受理する。
+/// - それ以外(混在・カタカナ・漢字) → `Err`。
+pub fn normalize_reading(reading: &str) -> Result<String, String> {
+    if reading.is_empty() {
+        return Err("READING must not be empty".to_string());
+    }
+    let all_hiragana = reading.chars().all(|c| {
+        let cp = c as u32;
+        (0x3040..=0x309F).contains(&cp) || cp == 0x30FC || cp == 0x30FB
+    });
+    if all_hiragana {
+        return Ok(reading.to_string());
+    }
+    let all_ascii = reading.chars().all(|c| {
+        let cp = c as u32;
+        (0x0020..=0x007E).contains(&cp)
+    });
+    if all_ascii {
+        let converter = kotoha_core::romaji::RomajiConverter::new();
+        let (committed, pending) = converter.convert(reading);
+        // 変換後の pending が空でなければ ASCII tail が残っている → conversion 不完全。
+        if !pending.is_empty() {
+            return Err(format!(
+                "READING (ASCII) conversion left residue '{pending}' — must convert to pure hiragana"
+            ));
+        }
+        // committed が hiragana-only であることを念のため確認する。
+        let still_ok = committed.chars().all(|c| {
+            let cp = c as u32;
+            (0x3040..=0x309F).contains(&cp) || cp == 0x30FC || cp == 0x30FB
+        });
+        if !still_ok {
+            return Err("READING (ASCII) failed to convert to pure hiragana".to_string());
+        }
+        return Ok(committed);
+    }
+    Err("READING must be all hiragana or all ASCII romaji".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_reading_passes_through_pure_hiragana() {
+        let result = normalize_reading("ひのおか").expect("ok");
+        assert_eq!(result, "ひのおか");
+    }
+
+    #[test]
+    fn normalize_reading_passes_through_long_sound() {
+        let result = normalize_reading("こーひー").expect("ok");
+        assert_eq!(result, "こーひー");
+    }
+
+    #[test]
+    fn normalize_reading_converts_pure_ascii_to_hiragana() {
+        let result = normalize_reading("hinooka").expect("ok");
+        assert_eq!(result, "ひのおか");
+    }
+
+    #[test]
+    fn normalize_reading_rejects_mixed_hiragana_ascii() {
+        let err = normalize_reading("ひのoka").unwrap_err();
+        assert!(err.contains("hiragana") || err.contains("ASCII"));
+    }
+
+    #[test]
+    fn normalize_reading_rejects_katakana() {
+        let err = normalize_reading("カタカナ").unwrap_err();
+        assert!(err.contains("hiragana") || err.contains("ASCII"));
+    }
+
+    #[test]
+    fn normalize_reading_rejects_kanji() {
+        let err = normalize_reading("漢字").unwrap_err();
+        assert!(err.contains("hiragana") || err.contains("ASCII"));
+    }
+
+    #[test]
+    fn normalize_reading_rejects_empty() {
+        let err = normalize_reading("").unwrap_err();
+        assert!(!err.is_empty());
+    }
+}
