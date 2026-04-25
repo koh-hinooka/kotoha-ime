@@ -220,3 +220,14 @@ fn show_subcommand_on_empty_db_exits_4() {
         .assert()
         .code(4);
 }
+
+#[test]
+#[serial]
+fn list_subcommand_caps_excessive_limit() {
+    let tmp = safe_tempdir();
+    cli()
+        .env("KOTOHA_DATA_DIR", tmp.path())
+        .args(["list", "--limit", "1000000000"])
+        .assert()
+        .success();
+}

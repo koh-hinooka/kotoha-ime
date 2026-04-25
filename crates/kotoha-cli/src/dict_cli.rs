@@ -93,6 +93,9 @@ pub const EXIT_INPUT: i32 = 2;
 pub const EXIT_DUPLICATE: i32 = 3;
 pub const EXIT_NOT_FOUND: i32 = 4;
 
+/// `list` の `--limit` 上限。OOM 防止(sec-M3、spec §F4)。
+pub const LIST_LIMIT_CAP: usize = 10_000;
+
 /// `<READING>` 引数の auto-detect normalize(spec §7.7)。
 ///
 /// # Preconditions
@@ -272,6 +275,7 @@ pub fn run_list(
     } else {
         args.format
     };
+    let effective_limit = args.limit.min(LIST_LIMIT_CAP);
     let records = match &args.reading {
         Some(prefix) => {
             let normalized = match normalize_reading(prefix) {
@@ -281,9 +285,9 @@ pub fn run_list(
                     return Ok(EXIT_INPUT);
                 }
             };
-            store.find_by_prefix(&normalized, args.limit)
+            store.find_by_prefix(&normalized, effective_limit)
         }
-        None => store.list_all(args.limit, args.offset),
+        None => store.list_all(effective_limit, args.offset),
     };
     let records = match records {
         Ok(rs) => rs,
