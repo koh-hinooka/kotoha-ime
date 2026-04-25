@@ -78,6 +78,13 @@ impl SudachiAdapter {
     ///   `with_system_dic()` で system dictionary だけを caller 提供 path で
     ///   override する(P2-A hardening item 1、CWE-426 対策)。
     ///
+    /// 注: `Config::new_embedded()` は top-level config file の disk search を回避するが、
+    /// 同梱 config が参照する `char.def` 等の resource file は `Config::complete_path` 経由で
+    /// resolver anchors と current_dir を試行する(sudachi.rs v0.6.11 dictionary.rs:85)。
+    /// 完全な search 排除には `from_cfg_storage_with_embedded_chardef` への移行が必要だが、
+    /// `SudachiDicData` 構築が伴うため P2-A scope 外。kotoha process の起動 CWD を信頼境界内
+    /// に置くことで現状のリスクを許容する(threat model: single-user IME)。
+    ///
     /// # Errors
     ///
     /// - [`KanjiError::ModelNotFound`] — path に file が存在しない場合 / canonicalize 失敗時
@@ -164,19 +171,37 @@ impl SudachiAdapter {
 
 /// `SudachiError` 連鎖に `io::Error` の NotFound が含まれるかを判定する。
 ///
-/// `SudachiError::Io { cause, .. }` か、`source()` chain を辿って `io::Error::kind()`
-/// が `NotFound` の場合に `true` を返す。`from_cfg` が file 欠損を I/O error として
-/// 投げるケースを ModelNotFound に折り畳むために用いる(P2-A hardening item 6)。
+/// `SudachiError` の variant を直接 match で分解し、`SudachiError::Io.cause` または
+/// `SudachiError::ConfigError(ConfigError::Io(_))` の `io::Error::kind()` が
+/// `NotFound` の場合に `true` を返す。`SudachiError::ErrWithContext` は inner
+/// `cause` に対して再帰的に walk する(`with_context` で wrap される経路をカバー)。
+/// `from_cfg` が file 欠損を I/O error として投げるケースを ModelNotFound に
+/// 折り畳むために用いる(P2-A hardening item 6)。
+///
+/// # Limitations
+///
+/// - sudachi.rs の `SudachiError::Io { cause }` および `ConfigError::Io` は
+///   `#[source]` / `#[from]` 注釈が無いため `Error::source()` chain を
+///   辿っても `io::Error` に到達しない(sudachi.rs v0.6.11 error.rs:40-44 で確認)。
+///   そのため本判定では `Error::source()` chain を辿らず、`SudachiError` の
+///   variant を直接 match で分解する。
+/// - 文字列化された I/O エラー(例: `ConfigError::InvalidFormat(String)` に
+///   embed された I/O メッセージ)は構造化されていないため検出しない。
+///   その場合は呼び出し元で `KanjiError::ModelLoadFailed` として伝播する。
+/// - `SudachiError` は `#[non_exhaustive]` のため、将来 sudachi.rs に新 variant が
+///   追加された場合は default arm `_ => false` で素通しされる。新 variant が
+///   I/O 失敗を表す場合は本関数の更新が必要になる。
 fn io_error_is_not_found(err: &sudachi::error::SudachiError) -> bool {
-    let mut current: &dyn std::error::Error = err;
-    loop {
-        if let Some(io_err) = current.downcast_ref::<io::Error>() {
-            return io_err.kind() == io::ErrorKind::NotFound;
+    use sudachi::config::ConfigError;
+    use sudachi::error::SudachiError;
+    match err {
+        SudachiError::Io { cause, .. } => cause.kind() == io::ErrorKind::NotFound,
+        SudachiError::ConfigError(ConfigError::Io(io_err)) => {
+            io_err.kind() == io::ErrorKind::NotFound
         }
-        match current.source() {
-            Some(next) => current = next,
-            None => return false,
-        }
+        SudachiError::ConfigError(ConfigError::FileNotFound(_)) => true,
+        SudachiError::ErrWithContext { cause, .. } => io_error_is_not_found(cause),
+        _ => false,
     }
 }
 
@@ -253,5 +278,72 @@ mod tests {
     fn sudachi_engine_id_label_constant_is_stable() {
         assert!(SUDACHI_ENGINE_ID_LABEL.contains("sudachi"));
         assert!(SUDACHI_ENGINE_ID_LABEL.contains("0.6"));
+    }
+
+    // ======================================================================
+    // io_error_is_not_found unit tests (P2-A hardening item 6 review fix)
+    // ----------------------------------------------------------------------
+    // `SudachiError::Io { cause, .. }` の `cause` field には `#[source]` /
+    // `#[from]` 注釈が無いため、`Error::source()` chain では `io::Error` に
+    // 到達しない(sudachi.rs v0.6.11 error.rs:40-44)。ここでは variant
+    // 直接 match による判定が NotFound を正しく検出すること、および非
+    // NotFound を素通しすることを synthetic error で verify する。
+    // ======================================================================
+
+    fn make_io_error(kind: io::ErrorKind) -> io::Error {
+        io::Error::from(kind)
+    }
+
+    #[test]
+    fn io_error_is_not_found_returns_true_for_io_variant_with_not_found() {
+        let err = sudachi::error::SudachiError::Io {
+            cause: make_io_error(io::ErrorKind::NotFound),
+            context: "test context".to_string(),
+        };
+        assert!(io_error_is_not_found(&err));
+    }
+
+    #[test]
+    fn io_error_is_not_found_returns_false_for_io_variant_with_permission_denied() {
+        let err = sudachi::error::SudachiError::Io {
+            cause: make_io_error(io::ErrorKind::PermissionDenied),
+            context: "test context".to_string(),
+        };
+        assert!(!io_error_is_not_found(&err));
+    }
+
+    #[test]
+    fn io_error_is_not_found_walks_through_err_with_context() {
+        let inner = sudachi::error::SudachiError::Io {
+            cause: make_io_error(io::ErrorKind::NotFound),
+            context: "inner".to_string(),
+        };
+        let wrapped = sudachi::error::SudachiError::ErrWithContext {
+            context: "outer".to_string(),
+            cause: Box::new(inner),
+        };
+        assert!(io_error_is_not_found(&wrapped));
+    }
+
+    #[test]
+    fn io_error_is_not_found_returns_true_for_config_file_not_found() {
+        let err = sudachi::error::SudachiError::ConfigError(
+            sudachi::config::ConfigError::FileNotFound("missing.json".to_string()),
+        );
+        assert!(io_error_is_not_found(&err));
+    }
+
+    #[test]
+    fn io_error_is_not_found_returns_true_for_config_io_not_found() {
+        let err = sudachi::error::SudachiError::ConfigError(sudachi::config::ConfigError::Io(
+            make_io_error(io::ErrorKind::NotFound),
+        ));
+        assert!(io_error_is_not_found(&err));
+    }
+
+    #[test]
+    fn io_error_is_not_found_returns_false_for_unrelated_variant() {
+        let err = sudachi::error::SudachiError::EosBosDisconnect;
+        assert!(!io_error_is_not_found(&err));
     }
 }
