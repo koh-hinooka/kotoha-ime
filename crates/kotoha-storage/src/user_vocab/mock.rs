@@ -219,3 +219,32 @@ mod tests {
         assert_eq!(result.len(), 2);
     }
 }
+
+#[cfg(test)]
+mod prop_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn insert_then_delete_by_id_yields_empty(
+            surface in "\\PC{1,32}",
+            reading in "[\u{3041}-\u{3096}]{1,16}"
+        ) {
+            let store = MockUserVocabStore::new();
+            let r = UserVocabRecord {
+                id: None,
+                surface: surface.clone(),
+                reading: reading.clone(),
+                pos: "名詞".to_string(),
+                score: 0.0,
+                created_at: 0,
+                updated_at: 0,
+            };
+            if let Ok(id) = store.insert(r) {
+                store.delete_by_id(id).unwrap();
+                prop_assert!(store.find_by_reading(&reading, 100).unwrap().is_empty());
+            }
+        }
+    }
+}
