@@ -257,6 +257,100 @@ pub fn run_remove(
     }
 }
 
+/// `kotoha-dict list` 実装。
+///
+/// # Errors
+///
+/// Exit code を文字列で返す(`Result<exit_code, String>`)。
+pub fn run_list(
+    store: &dyn UserVocabStore,
+    args: &ListArgs,
+    json_global: bool,
+) -> Result<i32, String> {
+    let format = if json_global {
+        ListFormat::Json
+    } else {
+        args.format
+    };
+    let records = match &args.reading {
+        Some(prefix) => {
+            let normalized = match normalize_reading(prefix) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return Ok(EXIT_INPUT);
+                }
+            };
+            store.find_by_prefix(&normalized, args.limit)
+        }
+        None => store.list_all(args.limit, args.offset),
+    };
+    let records = match records {
+        Ok(rs) => rs,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return Ok(EXIT_INTERNAL);
+        }
+    };
+    match format {
+        ListFormat::Text => {
+            println!(
+                "{:<6}{:<14}{:<14}{:<32}SCORE",
+                "ID", "SURFACE", "READING", "POS"
+            );
+            for r in &records {
+                println!(
+                    "{:<6}{:<14}{:<14}{:<32}{}",
+                    r.id.unwrap_or(0),
+                    r.surface,
+                    r.reading,
+                    r.pos,
+                    r.score
+                );
+            }
+        }
+        ListFormat::Json => {
+            print!("[");
+            for (i, r) in records.iter().enumerate() {
+                if i > 0 {
+                    print!(",");
+                }
+                print!(
+                    "{{\"id\":{},\"surface\":{},\"reading\":{},\"pos\":{},\"score\":{},\"created_at\":{},\"updated_at\":{}}}",
+                    r.id.unwrap_or(0),
+                    json_escape(&r.surface),
+                    json_escape(&r.reading),
+                    json_escape(&r.pos),
+                    r.score,
+                    r.created_at,
+                    r.updated_at
+                );
+            }
+            println!("]");
+        }
+    }
+    Ok(EXIT_OK)
+}
+
+/// JSON 文字列を安全にエスケープし、ダブルクォートで囲んだ表現を返す。
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
