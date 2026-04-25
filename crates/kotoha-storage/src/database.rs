@@ -226,6 +226,18 @@ mod tests {
     }
 
     #[test]
+    fn open_with_path_sets_busy_timeout() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("test.db");
+        let db = Database::open(&path).expect("ok");
+        let conn = db.lock_conn();
+        let ms: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .unwrap();
+        assert!(ms >= 5000, "busy_timeout must be >= 5000ms, got {ms}");
+    }
+
+    #[test]
     fn parallel_inserts_via_arc_share_does_not_deadlock() {
         use std::thread;
 
