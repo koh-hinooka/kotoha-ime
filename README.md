@@ -108,14 +108,19 @@ Phase 2 P2-A の Dictionary backend は SudachiDict-core(v20260116、約 70MB、
 ### 取得手順
 
 ```bash
-# 1. SudachiDict-core を取得し展開
+# 1. SudachiDict-core を取得
 mkdir -p ~/.local/share/sudachidict
 curl -L -o /tmp/sudachi-dict-core.zip \
   https://github.com/WorksApplications/SudachiDict/releases/download/v20260116/sudachi-dictionary-20260116-core.zip
+
+# 2. SHA-256 で integrity を検証(digest pinned 2026-04-25, release v20260116)
+echo "e80e68c8e7b17e2082341284cffefbc11fb7838b2c318ae280c1690fc1ee1e2f  /tmp/sudachi-dict-core.zip" | sha256sum -c -
+
+# 3. 検証成功後に展開
 unzip -j /tmp/sudachi-dict-core.zip 'sudachi-dictionary-20260116/system_core.dic' \
   -d ~/.local/share/sudachidict/
 
-# 2. 環境変数を設定(~/.zshrc または ~/.bashrc に追記推奨)
+# 4. 環境変数を設定(~/.zshrc または ~/.bashrc に追記推奨)
 export KOTOHA_SYSTEM_DICT_PATH=$HOME/.local/share/sudachidict/system_core.dic
 ```
 

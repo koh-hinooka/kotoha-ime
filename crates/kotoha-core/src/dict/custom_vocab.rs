@@ -3,11 +3,18 @@
 //! Spec: `docs/superpowers/specs/2026-04-25-p2-a-dictionary-layer-design.md` §5.2.
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use crate::dict::vocab::{VocabEntry, VocabularyLookup};
 use crate::kanji::KanjiError;
+
+/// Custom vocab TSV の最大許容サイズ(bytes)。
+/// 64 MiB を超える file は CWE-400 / 資源枯渇防止のため reject する
+/// (P2-A hardening item 2)。
+const CUSTOM_VOCAB_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Custom vocabulary source backed by a TSV file.
 ///
@@ -28,14 +35,59 @@ pub struct CustomVocab {
 impl CustomVocab {
     /// Loads a custom vocab from a TSV file on disk.
     ///
+    /// # Preconditions
+    ///
+    /// - 拡張子は `.tsv` でなければならない(P2-A hardening item 2)
+    /// - canonicalize 後のサイズは [`CUSTOM_VOCAB_MAX_BYTES`] 以下でなければならない
+    ///
     /// # Errors
     ///
-    /// - [`KanjiError::Backend`] when the file cannot be read or parsed.
+    /// - [`KanjiError::ModelNotFound`] when the canonicalize step fails with NotFound.
+    /// - [`KanjiError::Backend`] when extension is not `.tsv`, the file exceeds
+    ///   the size cap, or any other I/O / parse error occurs.
     pub fn load(path: &Path) -> Result<Self, KanjiError> {
-        let content = fs::read_to_string(path).map_err(|e| KanjiError::Backend {
-            reason: format!("failed to read custom vocab {}: {e}", path.display()),
+        // ========================================
+        // Path traversal hardening (P2-A item 2)
+        // ========================================
+        let canonical = fs::canonicalize(path).map_err(|e| match e.kind() {
+            io::ErrorKind::NotFound => KanjiError::ModelNotFound {
+                path: path.to_path_buf(),
+            },
+            _ => KanjiError::Backend {
+                reason: format!(
+                    "failed to canonicalize custom vocab path {}: {e:?}",
+                    path.display()
+                ),
+            },
         })?;
-        let label = path
+
+        if canonical.extension().and_then(OsStr::to_str) != Some("tsv") {
+            return Err(KanjiError::Backend {
+                reason: format!(
+                    "custom vocab must have `.tsv` extension, got {}",
+                    canonical.display()
+                ),
+            });
+        }
+
+        let size = fs::metadata(&canonical)
+            .map_err(|e| KanjiError::Backend {
+                reason: format!("failed to read metadata for {}: {e:?}", canonical.display()),
+            })?
+            .len();
+        if size > CUSTOM_VOCAB_MAX_BYTES {
+            return Err(KanjiError::Backend {
+                reason: format!(
+                    "custom vocab at {} exceeds size cap: {size} > {CUSTOM_VOCAB_MAX_BYTES} bytes",
+                    canonical.display()
+                ),
+            });
+        }
+
+        let content = fs::read_to_string(&canonical).map_err(|e| KanjiError::Backend {
+            reason: format!("custom vocab load from {}: {e:?}", canonical.display()),
+        })?;
+        let label = canonical
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
@@ -218,5 +270,88 @@ mod tests {
         let inf_tsv = "漢字\tかんじ\t名詞\tinf\n";
         let err = CustomVocab::from_str(inf_tsv).expect_err("inf score must be rejected");
         assert!(matches!(err, crate::kanji::KanjiError::Backend { .. }));
+    }
+
+    // ======================================================================
+    // Path traversal hardening (P2-A item 2)
+    //
+    // tempfile crate を導入せず std のみで unique path を組み立てる。
+    // PID + nanoseconds の組み合わせで test 並列実行時の衝突を避ける。
+    // ======================================================================
+
+    fn unique_tmp_path(suffix: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "kotoha-p2a-test-{}-{}{}",
+            std::process::id(),
+            nanos,
+            suffix,
+        ))
+    }
+
+    #[test]
+    fn custom_vocab_load_rejects_non_tsv_extension() {
+        let path = unique_tmp_path("-nottsv.txt");
+        std::fs::write(&path, SINGLE_ENTRY_TSV).expect("write tmp file");
+        let err = CustomVocab::load(&path).expect_err("non-tsv extension must reject");
+        let _ = std::fs::remove_file(&path);
+        match err {
+            KanjiError::Backend { reason } => {
+                assert!(
+                    reason.contains(".tsv"),
+                    "error must mention required extension: {reason}"
+                );
+            }
+            other => panic!("expected Backend, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_vocab_load_rejects_oversized_file() {
+        // 64 MiB cap を 1 byte 超える sparse file を ftruncate-style で作成する。
+        // Linux の seek + write で疎なファイルになるため実 disk は数 KB で済む。
+        let path = unique_tmp_path("-large.tsv");
+        let f = std::fs::File::create(&path).expect("create tmp tsv");
+        f.set_len(super::CUSTOM_VOCAB_MAX_BYTES + 1)
+            .expect("set len above cap");
+        drop(f);
+        let err = CustomVocab::load(&path).expect_err("oversized file must reject");
+        let _ = std::fs::remove_file(&path);
+        match err {
+            KanjiError::Backend { reason } => {
+                assert!(
+                    reason.contains("size cap"),
+                    "error must mention size cap: {reason}"
+                );
+            }
+            other => panic!("expected Backend, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_vocab_load_round_trips_real_file_and_rejects_missing() {
+        // 1) 実 file を `.tsv` で配置し、canonicalize -> read_to_string -> parse の
+        //    happy path が通ることを確認する(canonicalize 動作の statement
+        //    coverage を兼ねる、P2-A hardening item 2)。
+        let valid_path = unique_tmp_path("-canon.tsv");
+        std::fs::write(&valid_path, SINGLE_ENTRY_TSV).expect("write tmp tsv");
+        let vocab = CustomVocab::load(&valid_path).expect("canonicalize + load must succeed");
+        let _ = std::fs::remove_file(&valid_path);
+        assert_eq!(vocab.lookup("かんじ").len(), 1);
+
+        // 2) 存在しない path に対しては canonicalize が NotFound を返し、
+        //    KanjiError::ModelNotFound に折り畳まれる(item 6 整合)。
+        let missing = unique_tmp_path("-missing.tsv");
+        let err = CustomVocab::load(&missing).expect_err("missing file must error");
+        match err {
+            KanjiError::ModelNotFound { path: p } => {
+                assert!(p.to_string_lossy().contains("missing.tsv"));
+            }
+            other => panic!("expected ModelNotFound, got: {other:?}"),
+        }
     }
 }

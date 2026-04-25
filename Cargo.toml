@@ -30,4 +30,8 @@ llama-cpp-2 = "0.1"
 #   - lindera: MeCab-IPADIC / UniDic 要求(UniDic は商用利用制約)
 #   - vibrato: SudachiDict native 非対応(short/middle/long unit 不可)
 #   - SudachiDict→MeCab 変換: WorksApplications 公式提供なし、精度保証なし
-sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "90fd6068c80c" }
+# rev は v0.6.11 tag の full SHA-1。短縮 SHA は将来衝突リスクがあるため 40-char に固定する。
+# rev を更新したら `SUDACHI_ENGINE_ID_LABEL`
+# (`crates/kotoha-core/src/dict/sudachi_adapter.rs`) を同期せよ。
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "90fd6068c80c2fc3b63e0dbab0e341475bad4d8f" }
+serial_test = "3"
