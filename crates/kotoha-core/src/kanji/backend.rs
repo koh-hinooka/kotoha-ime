@@ -526,6 +526,7 @@ mod tests {
             config: DictionaryConfig {
                 system_dict_path: Some(PathBuf::from("/tmp/system_core.dic")),
                 custom_vocab_path: None,
+                user_vocab_db_path: None,
             },
         };
         let cloned = cfg.clone();

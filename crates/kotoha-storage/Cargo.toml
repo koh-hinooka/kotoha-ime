@@ -1,0 +1,25 @@
+[package]
+name = "kotoha-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Kotoha: SQLite-based persistence layer for user dictionary and learning cache (P2-B)"
+
+[dependencies]
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
+serial_test = { workspace = true }
+
+[features]
+default = ["bundled-sqlite"]
+# `bundled-sqlite` vendors the SQLite C library inside the rusqlite crate.
+# Default ON to avoid distro SQLite version drift (P2-B spec §4.3).
+bundled-sqlite = ["rusqlite/bundled"]

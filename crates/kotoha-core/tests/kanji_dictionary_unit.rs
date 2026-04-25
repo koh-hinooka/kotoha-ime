@@ -48,6 +48,7 @@ fn load_backend_dictionary_with_nonexistent_path_errors_model_not_found() {
                 "/tmp/definitely-does-not-exist-kotoha-p2a-integration.dic",
             )),
             custom_vocab_path: None,
+            user_vocab_db_path: None,
         },
     };
     match load_backend(&cfg) {
@@ -68,6 +69,7 @@ fn dictionary_config_env_var_resolve_fallback_works() {
     let cfg = DictionaryConfig {
         system_dict_path: Some(PathBuf::from("/tmp/explicit-path.dic")),
         custom_vocab_path: None,
+        user_vocab_db_path: None,
     };
     let result = load_backend(&BackendConfig::Dictionary { config: cfg });
     // explicit path でも実ファイルは無いため ModelNotFound になる。これは
@@ -87,6 +89,7 @@ fn dictionary_config_custom_vocab_missing_errors_backend() {
     let cfg = DictionaryConfig {
         system_dict_path: Some(PathBuf::from("/tmp/no-such-system.dic")),
         custom_vocab_path: Some(PathBuf::from("/tmp/no-such-custom.tsv")),
+        user_vocab_db_path: None,
     };
     // system_dict の load で ModelNotFound に到達し、custom_vocab の load
     // には進まない。この test は「system が先にチェックされる」順序契約の

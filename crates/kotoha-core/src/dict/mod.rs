@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 pub use self::backend::DictionaryBackend;
 pub use self::engine::{EngineCandidate, MorphologicalEngine};
+#[cfg(feature = "dict-persist")]
+pub use self::user_vocab::UserVocab;
 pub use self::vocab::{VocabEntry, VocabularyLookup};
 
 /// Engine 非依存の Dictionary backend 設定(spec §3.4 Q4)。
@@ -24,12 +26,16 @@ pub use self::vocab::{VocabEntry, VocabularyLookup};
 /// - `system_dict_path` が `None` の場合、`DictionaryBackend::load` は
 ///   `KOTOHA_SYSTEM_DICT_PATH` 環境変数を読みに行く
 /// - `custom_vocab_path` が `None` の場合、backend は custom vocab を持たない
+/// - `user_vocab_db_path` が `None` の場合、backend は user vocab(SQLite)を持たない
 #[derive(Debug, Clone, Default)]
 pub struct DictionaryConfig {
     /// 形態素解析用 system dictionary file のパス(SudachiDict-core `system_core.dic`)。
     pub system_dict_path: Option<PathBuf>,
     /// Custom vocabulary TSV file のパス(`kotoha-dict.tsv`)。
     pub custom_vocab_path: Option<PathBuf>,
+    /// SQLite User dictionary DB のパス(P2-B、spec §8.1)。
+    /// `None` の場合 UserVocab を構築しない。
+    pub user_vocab_db_path: Option<PathBuf>,
 }
 
 /// 明示 path、次点で env var、どちらも無ければ `None` を返す解決ヘルパ。
@@ -51,6 +57,8 @@ pub(crate) mod backend;
 pub(crate) mod custom_vocab;
 pub(crate) mod engine;
 pub(crate) mod sudachi_adapter;
+#[cfg(feature = "dict-persist")]
+pub(crate) mod user_vocab;
 pub(crate) mod vocab;
 
 #[cfg(test)]
@@ -70,10 +78,12 @@ mod config_tests {
         let cfg = DictionaryConfig {
             system_dict_path: Some(PathBuf::from("/tmp/system_core.dic")),
             custom_vocab_path: Some(PathBuf::from("/tmp/kotoha-dict.tsv")),
+            user_vocab_db_path: None,
         };
         let cloned = cfg.clone();
         assert_eq!(cloned.system_dict_path, cfg.system_dict_path);
         assert_eq!(cloned.custom_vocab_path, cfg.custom_vocab_path);
+        assert_eq!(cloned.user_vocab_db_path, cfg.user_vocab_db_path);
     }
 
     #[test]
@@ -81,11 +91,31 @@ mod config_tests {
         let cfg = DictionaryConfig {
             system_dict_path: Some(PathBuf::from("/tmp/system_core.dic")),
             custom_vocab_path: None,
+            user_vocab_db_path: None,
         };
         let msg = format!("{cfg:?}");
         assert!(
             msg.contains("system_dict_path"),
             "Debug must expose field names: {msg}"
+        );
+    }
+
+    #[test]
+    fn dictionary_config_default_user_vocab_db_path_is_none() {
+        let cfg = DictionaryConfig::default();
+        assert!(cfg.user_vocab_db_path.is_none());
+    }
+
+    #[test]
+    fn dictionary_config_user_vocab_db_path_field_works() {
+        let cfg = DictionaryConfig {
+            system_dict_path: Some(PathBuf::from("/tmp/system.dic")),
+            custom_vocab_path: None,
+            user_vocab_db_path: Some(PathBuf::from("/tmp/kotoha.db")),
+        };
+        assert_eq!(
+            cfg.user_vocab_db_path,
+            Some(PathBuf::from("/tmp/kotoha.db"))
         );
     }
 

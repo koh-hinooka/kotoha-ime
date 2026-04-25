@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/kotoha-core",
     "crates/kotoha-cli",
+    "crates/kotoha-storage",
 ]
 
 [workspace.package]
@@ -34,4 +35,14 @@ llama-cpp-2 = "0.1"
 # rev を更新したら `SUDACHI_ENGINE_ID_LABEL`
 # (`crates/kotoha-core/src/dict/sudachi_adapter.rs`) を同期せよ。
 sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "90fd6068c80c2fc3b63e0dbab0e341475bad4d8f" }
+# rusqlite pinned via P2-B spec §3.5 (brainstorming, 2026-04-25).
+# Adopted reason: Sync API matches kotoha-core sync design, `bundled` feature
+# vendors SQLite C library so distro SQLite version differences are bypassed.
+# Alternatives rejected per ADR 0015 / spec §3.5:
+#   - sqlx / tokio-rusqlite: async runtime forced into kotoha-core
+#   - diesel: ORM is overspec for 4-CRUD operations
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Test-only dev-deps for Layer 3 CLI integration (spec §10.3.1 / §10.6).
+tempfile = "3"
+assert_cmd = "2"
 serial_test = "3"

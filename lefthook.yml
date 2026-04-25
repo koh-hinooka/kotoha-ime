@@ -63,3 +63,15 @@ pre-push:
         else
           echo "lefthook: skip test-dict (no crates/ yet; enforced from M2)"
         fi
+    # P2-B (review A-H1 / T-H2): `dict-persist` feature 配下の Layer 2/3/4
+    # storage / CLI integration test が pre-push で gate されていなかった。
+    # `kotoha-cli/dict-persist` は `kotoha-core/dict-persist` を引き、
+    # `kotoha-storage` の SQLite 経路と CLI smoke test (`tests/dict_cli.rs`) を
+    # まとめて compile + run する。
+    test-dict-persist:
+      run: |
+        if [ -d crates ] && [ -n "$(ls -A crates 2>/dev/null)" ]; then
+          cargo test --workspace --features kotoha-cli/dict-persist
+        else
+          echo "lefthook: skip test-dict-persist (no crates/ yet; enforced from M2)"
+        fi
