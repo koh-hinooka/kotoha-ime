@@ -224,4 +224,39 @@ mod tests {
         let result = store2.find_by_reading("あ", 10).expect("find ok");
         assert_eq!(result.len(), 1);
     }
+
+    #[test]
+    fn parallel_inserts_via_arc_share_does_not_deadlock() {
+        use std::thread;
+
+        let db = Database::open_in_memory().expect("memory open");
+        let store = Arc::new(db.user_vocab_store());
+        let handles: Vec<_> = (0..8u32)
+            .map(|i| {
+                let store = Arc::clone(&store);
+                thread::spawn(move || {
+                    // hiragana を index から計算する(ASCII 数字混入を避ける)。
+                    // U+3042 = 'あ' 起点で、あ/い/う/え/お/か/き/く を割り当てる。
+                    let reading = char::from_u32(0x3042 + i)
+                        .expect("valid hiragana code point")
+                        .to_string();
+                    let r = crate::user_vocab::store::UserVocabRecord {
+                        id: None,
+                        surface: format!("s{i}"),
+                        reading,
+                        pos: "名詞".to_string(),
+                        score: 0.0,
+                        created_at: 0,
+                        updated_at: 0,
+                    };
+                    store.insert(r).expect("insert ok");
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let result = store.list_all(100, 0).unwrap();
+        assert_eq!(result.len(), 8);
+    }
 }
