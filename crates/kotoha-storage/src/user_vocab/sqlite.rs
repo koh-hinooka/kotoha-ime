@@ -136,12 +136,18 @@ impl UserVocabStore for SqliteUserVocabStore {
         Ok(())
     }
 
-    fn delete_by_surface_reading(
-        &self,
-        _surface: &str,
-        _reading: &str,
-    ) -> Result<(), StorageError> {
-        unimplemented!("Task B6")
+    fn delete_by_surface_reading(&self, surface: &str, reading: &str) -> Result<(), StorageError> {
+        validate_surface(surface)?;
+        validate_reading(reading)?;
+        let conn = self.db.lock_conn();
+        let affected = conn.execute(
+            "DELETE FROM user_vocab WHERE surface = ?1 AND reading = ?2",
+            rusqlite::params![surface, reading],
+        )?;
+        if affected == 0 {
+            return Err(StorageError::NotFound);
+        }
+        Ok(())
     }
 
     fn find_by_prefix(
@@ -394,5 +400,39 @@ mod tests {
         let store = fresh_store();
         let err = store.delete_by_id(99999).unwrap_err();
         assert!(matches!(err, StorageError::NotFound));
+    }
+
+    #[test]
+    fn delete_by_surface_reading_removes_row() {
+        let store = fresh_store();
+        let r = UserVocabRecord {
+            id: None,
+            surface: "日野岡".to_string(),
+            reading: "ひのおか".to_string(),
+            pos: "名詞".to_string(),
+            score: 0.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        store.insert(r).expect("insert");
+        store
+            .delete_by_surface_reading("日野岡", "ひのおか")
+            .expect("delete ok");
+        let result = store.find_by_reading("ひのおか", 10).expect("find ok");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn delete_by_surface_reading_returns_not_found_when_absent() {
+        let store = fresh_store();
+        let err = store.delete_by_surface_reading("ない", "ない").unwrap_err();
+        assert!(matches!(err, StorageError::NotFound));
+    }
+
+    #[test]
+    fn delete_by_surface_reading_validates_reading() {
+        let store = fresh_store();
+        let err = store.delete_by_surface_reading("x", "abc").unwrap_err();
+        assert!(matches!(err, StorageError::InvalidField { .. }));
     }
 }
