@@ -165,3 +165,30 @@ fn list_subcommand_with_reading_prefix() {
     assert!(stdout.contains("日野岡"));
     assert!(!stdout.contains("別人"));
 }
+
+#[test]
+#[serial]
+fn show_subcommand_returns_4_when_absent() {
+    let tmp = tempdir().unwrap();
+    cli()
+        .env("KOTOHA_DATA_DIR", tmp.path())
+        .args(["show", "999"])
+        .assert()
+        .code(4);
+}
+
+#[test]
+#[serial]
+fn show_subcommand_displays_entry() {
+    let tmp = tempdir().unwrap();
+    cli()
+        .env("KOTOHA_DATA_DIR", tmp.path())
+        .args(["add", "日野岡", "ひのおか"])
+        .assert()
+        .success();
+    cli()
+        .env("KOTOHA_DATA_DIR", tmp.path())
+        .args(["show", "1"])
+        .assert()
+        .success();
+}

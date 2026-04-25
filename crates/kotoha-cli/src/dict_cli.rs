@@ -332,6 +332,55 @@ pub fn run_list(
     Ok(EXIT_OK)
 }
 
+/// `kotoha-dict show <id>` 実装。
+///
+/// # Errors
+///
+/// Exit code を文字列で返す(`Result<exit_code, String>`)。
+pub fn run_show(
+    store: &dyn UserVocabStore,
+    args: &ShowArgs,
+    json_global: bool,
+) -> Result<i32, String> {
+    // O(N) であるが UserVocab は数千 entry 規模が想定上限のため許容(spec §7.5)。
+    let records = match store.list_all(usize::MAX, 0) {
+        Ok(rs) => rs,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return Ok(EXIT_INTERNAL);
+        }
+    };
+    let target = records.iter().find(|r| r.id == Some(args.id));
+    let r = match target {
+        Some(r) => r,
+        None => {
+            eprintln!("error: entry not found");
+            return Ok(EXIT_NOT_FOUND);
+        }
+    };
+    if json_global {
+        println!(
+            "{{\"id\":{},\"surface\":{},\"reading\":{},\"pos\":{},\"score\":{},\"created_at\":{},\"updated_at\":{}}}",
+            r.id.unwrap_or(0),
+            json_escape(&r.surface),
+            json_escape(&r.reading),
+            json_escape(&r.pos),
+            r.score,
+            r.created_at,
+            r.updated_at
+        );
+    } else {
+        println!("id:         {}", r.id.unwrap_or(0));
+        println!("surface:    {}", r.surface);
+        println!("reading:    {}", r.reading);
+        println!("pos:        {}", r.pos);
+        println!("score:      {}", r.score);
+        println!("created_at: {} (epoch)", r.created_at);
+        println!("updated_at: {} (epoch)", r.updated_at);
+    }
+    Ok(EXIT_OK)
+}
+
 /// JSON 文字列を安全にエスケープし、ダブルクォートで囲んだ表現を返す。
 fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
