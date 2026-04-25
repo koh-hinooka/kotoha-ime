@@ -528,6 +528,7 @@ dependencies = [
 name = "kotoha-core"
 version = "0.1.0"
 dependencies = [
+ "kotoha-storage",
  "llama-cpp-2",
  "proptest",
  "serial_test",
