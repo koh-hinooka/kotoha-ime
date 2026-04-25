@@ -84,7 +84,9 @@ impl UserVocabStore for SqliteUserVocabStore {
     ) -> Result<Vec<UserVocabRecord>, StorageError> {
         validate_reading(reading)?;
         let conn = self.db.lock_conn();
-        let mut stmt = conn.prepare(
+        // perf-H1: prepare_cached により Phase 3 IBus engine の打鍵毎呼び出しでも
+        // SQL コンパイルを 1 度きりにする(同一 SQL ⇒ cache hit)。
+        let mut stmt = conn.prepare_cached(
             "SELECT id, surface, reading, pos, score, created_at, updated_at \
              FROM user_vocab \
              WHERE reading = ?1 \
@@ -111,7 +113,8 @@ impl UserVocabStore for SqliteUserVocabStore {
 
     fn list_all(&self, limit: usize, offset: usize) -> Result<Vec<UserVocabRecord>, StorageError> {
         let conn = self.db.lock_conn();
-        let mut stmt = conn.prepare(
+        // perf-H1: prepare_cached で SQL コンパイルを再利用する。
+        let mut stmt = conn.prepare_cached(
             "SELECT id, surface, reading, pos, score, created_at, updated_at \
              FROM user_vocab \
              ORDER BY id ASC \
@@ -159,26 +162,44 @@ impl UserVocabStore for SqliteUserVocabStore {
         let conn = self.db.lock_conn();
         // 行数上限チェック(sec-M5、spec §F6)。check + INSERT を同一 lock 下で
         // 実行することで atomic な check-and-insert を保証する。
+        //
+        // perf-H2: `SELECT count(*)` は 50K 行の full-scan になるため、
+        // bounded existence check に置き換える。
+        // `EXISTS(SELECT 1 ... LIMIT 1 OFFSET (max - 1))` は
+        // 「max 行目(0-indexed で max-1 番目)が存在するか」を返す。
+        // 存在 ⇔ count >= max ⇔ at-cap、なので reject すべきケース。
+        // SQLite は OFFSET (max-1) で 1 行見つけた時点でスキャンを停止するため、
+        // 50K 行でも O(max) で済む(さらに primary key index 経由で実質 O(log n))。
         let max_rows = effective_max_rows();
-        let count: i64 = conn.query_row("SELECT count(*) FROM user_vocab", [], |r| r.get(0))?;
-        if count as usize >= max_rows {
-            return Err(StorageError::QuotaExceeded {
-                table: "user_vocab".to_string(),
-                max: max_rows,
-            });
-        }
-        let result = conn.execute(
-            "INSERT INTO user_vocab (surface, reading, pos, score, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![
+        {
+            let mut count_stmt =
+                conn.prepare_cached("SELECT EXISTS(SELECT 1 FROM user_vocab LIMIT 1 OFFSET ?1)")?;
+            let at_or_over_cap: i64 =
+                count_stmt.query_row(rusqlite::params![max_rows as i64 - 1], |r| r.get(0))?;
+            if at_or_over_cap != 0 {
+                return Err(StorageError::QuotaExceeded {
+                    table: "user_vocab".to_string(),
+                    max: max_rows,
+                });
+            }
+        } // count_stmt はここで drop し、conn の borrow を解放する。
+          // perf-H1: INSERT も hot-path のため prepare_cached を経由させる。
+          // CachedStatement は conn を借用するので、scope を閉じてから
+          // `conn.last_insert_rowid()` を呼ぶ必要がある。
+        let result = {
+            let mut insert_stmt = conn.prepare_cached(
+                "INSERT INTO user_vocab (surface, reading, pos, score, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+            insert_stmt.execute(rusqlite::params![
                 record.surface,
                 record.reading,
                 record.pos,
                 record.score as f64,
                 created_at,
                 updated_at,
-            ],
-        );
+            ])
+        }; // insert_stmt はここで drop し、conn の borrow を解放する。
         match result {
             Ok(_) => Ok(conn.last_insert_rowid()),
             Err(rusqlite::Error::SqliteFailure(e, _))
@@ -195,10 +216,9 @@ impl UserVocabStore for SqliteUserVocabStore {
 
     fn delete_by_id(&self, id: i64) -> Result<(), StorageError> {
         let conn = self.db.lock_conn();
-        let affected = conn.execute(
-            "DELETE FROM user_vocab WHERE id = ?1",
-            rusqlite::params![id],
-        )?;
+        // perf-H1: prepare_cached で SQL コンパイルを再利用する。
+        let mut stmt = conn.prepare_cached("DELETE FROM user_vocab WHERE id = ?1")?;
+        let affected = stmt.execute(rusqlite::params![id])?;
         if affected == 0 {
             return Err(StorageError::NotFound);
         }
@@ -209,10 +229,10 @@ impl UserVocabStore for SqliteUserVocabStore {
         validate_surface(surface)?;
         validate_reading(reading)?;
         let conn = self.db.lock_conn();
-        let affected = conn.execute(
-            "DELETE FROM user_vocab WHERE surface = ?1 AND reading = ?2",
-            rusqlite::params![surface, reading],
-        )?;
+        // perf-H1: prepare_cached で SQL コンパイルを再利用する。
+        let mut stmt =
+            conn.prepare_cached("DELETE FROM user_vocab WHERE surface = ?1 AND reading = ?2")?;
+        let affected = stmt.execute(rusqlite::params![surface, reading])?;
         if affected == 0 {
             return Err(StorageError::NotFound);
         }
@@ -230,7 +250,8 @@ impl UserVocabStore for SqliteUserVocabStore {
         }
         let conn = self.db.lock_conn();
         let pattern = format!("{}%", reading_prefix);
-        let mut stmt = conn.prepare(
+        // perf-H1: prepare_cached で SQL コンパイルを再利用する。
+        let mut stmt = conn.prepare_cached(
             "SELECT id, surface, reading, pos, score, created_at, updated_at \
              FROM user_vocab \
              WHERE reading LIKE ?1 \
@@ -257,7 +278,8 @@ impl UserVocabStore for SqliteUserVocabStore {
 
     fn find_by_id(&self, id: i64) -> Result<Option<UserVocabRecord>, StorageError> {
         let conn = self.db.lock_conn();
-        let mut stmt = conn.prepare(
+        // perf-H1: prepare_cached で SQL コンパイルを再利用する。
+        let mut stmt = conn.prepare_cached(
             "SELECT id, surface, reading, pos, score, created_at, updated_at \
              FROM user_vocab WHERE id = ?1",
         )?;
