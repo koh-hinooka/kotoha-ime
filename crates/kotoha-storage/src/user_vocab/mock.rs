@@ -269,9 +269,14 @@ mod prop_tests {
     use proptest::prelude::*;
 
     proptest! {
+        // review T-H1: surface 戦略 `"\\PC{1,32}"` は PUA / VS / Tag / bidi /
+        // 256B 超過などを大量生成し、`validate_surface` の reject 経路へ落ちて
+        // `if let Ok(id)` で silent skip となり、coverage 信頼性を毀損していた。
+        // ここでは「常に validate を通る入力」(漢字 + ASCII alnum) のみを
+        // 生成することで、毎 iteration で round-trip property を必ず exercise する。
         #[test]
         fn insert_then_delete_by_id_yields_empty(
-            surface in "\\PC{1,32}",
+            surface in "[\u{4E00}-\u{9FFF}a-zA-Z0-9]{1,32}",
             reading in "[\u{3041}-\u{3096}]{1,16}"
         ) {
             let store = MockUserVocabStore::new();
@@ -284,10 +289,9 @@ mod prop_tests {
                 created_at: 0,
                 updated_at: 0,
             };
-            if let Ok(id) = store.insert(r) {
-                store.delete_by_id(id).unwrap();
-                prop_assert!(store.find_by_reading(&reading, 100).unwrap().is_empty());
-            }
+            let id = store.insert(r).expect("valid input must insert");
+            store.delete_by_id(id).expect("delete by inserted id must succeed");
+            prop_assert!(store.find_by_reading(&reading, 100).unwrap().is_empty());
         }
     }
 }
