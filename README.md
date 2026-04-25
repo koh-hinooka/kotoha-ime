@@ -101,6 +101,33 @@ Phase 0 の canonical smoke test として `scripts/phase0-smoke.sh` を提供�
 ./scripts/phase0-smoke.sh
 ```
 
+## Phase 2 P2-A: SudachiDict-core の取得と配置
+
+Phase 2 P2-A の Dictionary backend は SudachiDict-core(v20260116、約 70MB、Apache-2.0)を runtime load で使用する。Kotoha は辞書を bundle しないため、ユーザー側で手動配置する必要がある(Phase 1 の `KOTOHA_LLAMA_MODEL_PATH` と同一 pattern の運用)。
+
+### 取得手順
+
+```bash
+# 1. SudachiDict-core を取得し展開
+mkdir -p ~/.local/share/sudachidict
+curl -L -o /tmp/sudachi-dict-core.zip \
+  https://github.com/WorksApplications/SudachiDict/releases/download/v20260116/sudachi-dictionary-20260116-core.zip
+unzip -j /tmp/sudachi-dict-core.zip 'sudachi-dictionary-20260116/system_core.dic' \
+  -d ~/.local/share/sudachidict/
+
+# 2. 環境変数を設定(~/.zshrc または ~/.bashrc に追記推奨)
+export KOTOHA_SYSTEM_DICT_PATH=$HOME/.local/share/sudachidict/system_core.dic
+```
+
+### 動作確認
+
+```bash
+# Layer 2 integration test(env var 不要、SudachiDict 不在でも実行可)
+cargo test --features dict -p kotoha-core --test kanji_dictionary_unit
+```
+
+Phase 2 範囲では辞書の auto-download を行わない(Phase 6 UX 段階で実装予定)。Layer 3 statistical evaluation(530-case golden fixture を実 SudachiDict 辞書で消費する経路)と `phase2-dict-smoke.sh` smoke runner は ISSUE #92 で別 PR にて実装予定であり、P2-A 段階では `--features dict-smoke` の test runner は未提供である。`KOTOHA_SYSTEM_DICT_PATH` 環境変数の事前設定は、ISSUE #92 enable 後の即時利用を想定した将来用準備として手順に含めている。
+
 ## 開発環境セットアップ
 
 本プロジェクトはローカルの Git hook(lefthook)で品質ゲートを担保する。CI/CD システムは導入していないため、**clone 後は必ず `lefthook install` を実行する**。

@@ -55,14 +55,20 @@ Dictionary layer は以下 2 層から成る。
 
 Learning cache は Ranker の入力 feature として使用し、User が繰返し選択する候補の rerank 係数を上げる。
 
-### D4. BackendConfig に新 variant を追加する
+### D4. BackendConfig に新 variant を 2 段階で追加する
 
-Phase 2 は ADR 0011 で確定した `BackendConfig` enum の `#[non_exhaustive]` 拡張点を使用し、新 variant を 1 つ追加する。variant 名候補は以下 2 案を P2-A kick-off で empirical 確定する。
+Phase 2 は ADR 0011 で確定した `BackendConfig` enum の `#[non_exhaustive]` 拡張点を使用し、Phase 2 期間中に以下 2 variants を段階的に追加する。
 
-- **候補 1**: `BackendConfig::DictionaryAugmented { model_path, dict_config, learning_config }` — Dictionary 補完付き LLM backend を 1 variant に集約する案
-- **候補 2**: `BackendConfig::Hybrid { llm: Box<BackendConfig>, dict: DictionaryConfig, learning: LearningConfig }` — LLM backend を再帰的に wrap する案。将来の Phase 5 `KotohaNative` backend との組合せにも自動対応する
+- **P2-A**: `BackendConfig::Dictionary { config: DictionaryConfig }`(集約型、LLM を含まない pure Dictionary backend)
+  - 形態素解析と vocabulary lookup の合成のみを担当する。LLM 推論を内包しないため、`llama-cpp` feature 非依存で常に build / 単体実行可能となる
+  - P2-A の Layer 1 / Layer 2 テストはこの variant を介して MorphologicalEngine + VocabularyLookup の合成を end-to-end 検証する
+- **P2-D**: `BackendConfig::Hybrid { llm: Box<BackendConfig>, dict: DictionaryConfig, learning: LearningConfig }`(再帰 wrap 型)
+  - LLM backend を再帰的に wrap し、Dictionary 候補 / LLM 候補 / Learning cache hit を Ranker で統合する
+  - `llm: Box<BackendConfig>` 形式により、Phase 5 で `BackendConfig::KotohaNative` が加入した際にも自動対応できる(再 wrap で同じ Hybrid variant を再利用可能)
 
-Phase 1 の `BackendConfig::LlamaCpp { model_path, prompt_template }` と `BackendConfig::Mock` は変更しない。既存 variant の破壊を伴わない純粋な拡張として追加する。
+本判断の根拠は P2-A spec §3.3 Q3(`docs/superpowers/specs/2026-04-25-kotoha-phase-2-p2-a-dictionary-foundation.md` §3.3 Q3)に記載する。集約型を P2-A、再帰 wrap 型を P2-D と分割する理由は、(a) P2-A 段階では LLM 統合を持ち込まず純粋な Dictionary backend として独立に検証したい、(b) Phase 5 KotohaNative の自動対応(Hybrid 側の責務)を Phase 2 段階で完結させ、Phase 5 で再設計を不要にする、の 2 点である。
+
+Phase 1 の `BackendConfig::LlamaCpp { model_path, prompt_template }` と `BackendConfig::Mock` は変更しない。既存 variant の破壊を伴わない純粋な拡張として 2 variants を追加する。
 
 ### D5. Ranker 戦略を「dict 0.95 / LLM 1.0 初期重み」から開始する
 
@@ -135,4 +141,11 @@ Phase 5 で `KotohaNative` backend が追加される際も、本 ADR の Dictio
 
 ## Note: 本 ADR の status について
 
-本 ADR は方針として Accepted とするが、D4 の variant 名、D5 の rerank 重み、D3 の learning cache 永続化 format、D2 の SudachiDict core/full 選択、の 4 点は P2-A kick-off 時点で empirical 確定する。P2-A 着手後の follow-up commit で本 ADR に「確定パラメータ」節を追記する運用を取り、P2-D 完了時点で本 ADR の内容を最終化する。
+本 ADR は方針として Accepted とするが、確定状況は以下のとおり項目別に異なる。
+
+- **D4 (BackendConfig 新 variant 構成)**: P2-A 設計時点で「P2-A: 集約型 `Dictionary { config }`、P2-D: 再帰 wrap 型 `Hybrid { llm, dict, learning }`」の 2 段階追加方針として確定済 (本 ADR 上記 D4 改訂、および P2-A spec §3.3 Q3 に根拠を記載)
+- **D5 (Ranker 重み)**: 初期値 dict 0.95 / LLM 1.0 を暫定値とし、P2-D の golden fixture (530 cases) で empirical tuning する。Layer 3 の 530-case fixture と golden test runner、`phase2-dict-smoke.sh` は P2-A 範囲外として ISSUE #92 で別 PR にて実装する
+- **D3 (learning cache 永続化 format)**: P2-C 着手時に empirical 確定する
+- **D2 (SudachiDict core/full)**: P2-A 初期 pilot で recall を測定し core/full を確定する。Phase 2 default は core を採用し、recall 不足が P2-D で確認された場合のみ full への切替を検討する
+
+P2-D 完了時点で本 ADR に「確定パラメータ」節を追記し、Phase 2 closure で内容を最終化する。

@@ -184,7 +184,35 @@
 
 ### Phase 2 Dictionary layer (P2-A 以降)
 
-以下 6 entry は ADR 0014 (`docs/adr/0014-phase-2-dictionary-layer-architecture.md`) および Phase 2 spec (`docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md`) で初出した用語を集約する。実装 identifier は P2-A kick-off で確定予定のものを含む。
+以下 10 entry は ADR 0014 (`docs/adr/0014-phase-2-dictionary-layer-architecture.md`) および Phase 2 spec (`docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md`) で初出した用語を集約する。実装 identifier は P2-A kick-off で確定済のものと P2-D 以降で確定予定のものを含む。
+
+### 形態素解析 (Morphological Analysis)
+
+- **定義**: 入力テキストを形態素 (意味を持つ最小単位) に分割し、各形態素の表記 / 読み / 品詞を同定する処理。Phase 2 P2-A は本処理を `MorphologicalEngine` trait の抽象境界経由で `SudachiAdapter` 実装として提供する。
+- **初出**: ADR 0014 C3 / Phase 2 P2-A spec §3.3 / §4.2
+- **対応する identifier**: `MorphologicalEngine` trait + `SudachiAdapter` 実装 (`crates/kotoha-core/src/dict/morph/` 配下)
+- **備考**: SudachiDict 採用の動機 (固有名詞 / 敬称 recall を構造的に補う) は形態素解析処理に依存する。Phase 5 以降で vibrato / lindera 等の形態素解析器への差し替えを検討する余地は MorphologicalEngine trait 抽象によって確保している。
+
+### MorphologicalEngine
+
+- **定義**: Phase 2 P2-A で導入した形態素解析 engine の抽象境界 trait。`tokenize(reading) -> Vec<EngineCandidate>` と `engine_id() -> &str` の 2 method を提供する。
+- **初出**: Phase 2 P2-A spec §4.2
+- **対応する identifier**: `MorphologicalEngine` trait (`crates/kotoha-core/src/dict/morph/`)
+- **備考**: P2-A 段階では `SudachiAdapter` のみが本 trait を実装する。Phase 5 以降で vibrato / lindera 等の形態素解析器への差し替え余地を確保する目的で先出しした抽象 layer であり、`KanjiBackend` trait (ADR 0011) と同様に `Box<dyn MorphologicalEngine>` による dynamic dispatch を採用する。
+
+### VocabularyLookup
+
+- **定義**: Phase 2 P2-A で導入した user / custom vocabulary の lookup 抽象境界 trait。`lookup(reading) -> Vec<VocabEntry>` と `vocab_id() -> &str` の 2 method を提供する。
+- **初出**: Phase 2 P2-A spec §4.2
+- **対応する identifier**: `VocabularyLookup` trait (`crates/kotoha-core/src/dict/vocab/`)
+- **備考**: P2-A 段階では `CustomVocab` (TSV reader) のみが本 trait を実装する。P2-B で追加予定の `UserVocab` (ユーザ個別語彙、追加 / 削除 / 列挙 API を持つ) が同 trait を実装する extension path を確保する目的で先出しした抽象 layer。
+
+### SudachiDict
+
+- **定義**: WorksApplications が提供する日本語形態素解析辞書 (core / small / full の 3 variant)。Apache-2.0 ライセンスで公開され、約 76 万 entries (lemma + 活用形含む、lemma 単位では約 20 万) 規模の core variant を Kotoha Phase 2 P2-A は採用する。
+- **初出**: ADR 0014 C4 / Phase 2 spec §4.1
+- **対応する identifier**: `KOTOHA_SYSTEM_DICT_PATH` 環境変数で `system_core.dic` の絶対パスを指定する (Phase 1 の `KOTOHA_LLAMA_MODEL_PATH` と同 pattern の manual placement 運用)
+- **備考**: Kotoha Phase 2 P2-A が採用する正確な version は v20260116 (約 70MB、76 万 entries 規模)。core / full / small の 3 variant のうち、IME 常駐 footprint と recall の trade-off で core を default とする (Phase 2 spec §4.1)。`sudachipy / SudachiDict` (§8) 項は P5-A PoC 文脈での Python binding 採用を扱うが、本項は Phase 2 P2-A の Rust 実装 runtime での採用文脈に焦点を当てる。
 
 ### DictionaryBackend / DictionaryAugmented variant
 

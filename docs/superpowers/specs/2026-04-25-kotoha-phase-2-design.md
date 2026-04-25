@@ -121,17 +121,19 @@ Ranker は Dictionary 候補 (`Vec<Candidate>`) と LLM 候補 (`Vec<Candidate>`
 
 ### 3.4 BackendConfig 拡張 (新 variant)
 
-Phase 2 は ADR 0011 で確定した `BackendConfig` enum の `#[non_exhaustive]` 拡張点を使用し、新 variant を 1 つ追加する。P2-A kick-off で確定する 2 案は以下のとおり。
+Phase 2 は ADR 0011 で確定した `BackendConfig` enum の `#[non_exhaustive]` 拡張点を使用し、Phase 2 期間中に 2 variants を段階的に追加する (ADR 0014 D4 改訂、2026-04-25)。
 
-- **候補 1** (集約型): `BackendConfig::DictionaryAugmented { model_path, dict_config, learning_config }`
-  - Dictionary 補完付き LLM backend を 1 variant に集約する
-  - 実装コスト低、variant 数が最小
-- **候補 2** (再帰 wrap 型): `BackendConfig::Hybrid { llm: Box<BackendConfig>, dict: DictionaryConfig, learning: LearningConfig }`
-  - LLM backend を再帰的に wrap する
-  - Phase 5 `KotohaNative` backend との組合せにも自動対応する
-  - 実装コスト中、Phase 5 integration が構造化される
+- **P2-A で追加** (集約型): `BackendConfig::Dictionary { config: DictionaryConfig }`
+  - 形態素解析と vocabulary lookup の合成のみを担当する pure Dictionary backend
+  - LLM 推論を内包しないため、`llama-cpp` feature 非依存で常に build / 単体実行可能
+  - P2-A の Layer 1 / Layer 2 テスト経路として使用する
+- **P2-D で追加** (再帰 wrap 型): `BackendConfig::Hybrid { llm: Box<BackendConfig>, dict: DictionaryConfig, learning: LearningConfig }`
+  - LLM backend を再帰的に wrap し、Dictionary 候補 / LLM 候補 / Learning cache hit を Ranker で統合する
+  - Phase 5 `KotohaNative` backend が加入した際にも、`llm: Box<BackendConfig>` の再 wrap でそのまま同 variant を再利用できる (Phase 5 integration を構造的に保証)
 
-Phase 1 の `BackendConfig::LlamaCpp { model_path, prompt_template }` と `BackendConfig::Mock` は変更しない。詳細は P2-A kick-off で確定する。
+Phase 1 の `BackendConfig::LlamaCpp { model_path, prompt_template }` と `BackendConfig::Mock` は変更しない。
+
+P2-A 範囲の詳細(`DictionaryConfig` の正式 schema、`MorphologicalEngine` / `VocabularyLookup` trait 構成、feature flag 命名)は子 spec `docs/superpowers/specs/2026-04-25-kotoha-phase-2-p2-a-dictionary-foundation.md` §3.3 / §4.2 に委譲する。P2-D 範囲の `Hybrid { llm, dict, learning }` 詳細(Ranker 重み確定、Learning cache integration)は P2-D 着手時に追補 spec で確定する。
 
 ## 4. Dictionary 設計
 
@@ -151,7 +153,7 @@ Phase 2 default は core を採用する方針とし、recall が P2-D の golde
 
 詳細は P2-A kick-off で確定する。
 
-### 4.2 Kotoha 独自語彙の merge
+### 4.2 Kotoha 独自語彙の merge と Trait 構成
 
 SudachiDict には含まれない Kotoha 固有の語彙 (例: 敬称「さん」「様」の専用 entry、IME 業務ドメイン語彙、Phase 1 smoke fixture 語彙) を薄い補完レイヤーとして SudachiDict 上に merge する。
 
@@ -159,7 +161,14 @@ SudachiDict には含まれない Kotoha 固有の語彙 (例: 敬称「さん�
 - schema: SudachiDict と同一の `(surface, reading, pos, score)` を採用
 - merge timing: プロセス起動時、SudachiDict load 後に同一 in-memory 構造へ読込
 
-詳細 schema と load timing は P2-A kick-off で確定する。
+#### Trait 構成の委譲
+
+Phase 2 P2-A は形態素解析と vocabulary lookup の責務分離のため、以下 2 trait を新設する。
+
+- **`MorphologicalEngine`**: 形態素解析 engine の抽象境界 trait。`tokenize(reading) -> Vec<EngineCandidate>` と `engine_id() -> &str` を提供する。P2-A は `SudachiAdapter` 実装のみを伴うが、Phase 5 以降で vibrato / lindera 等の差し替え余地を確保する目的で先出しする
+- **`VocabularyLookup`**: user / custom vocabulary lookup の抽象境界 trait。`lookup(reading) -> Vec<VocabEntry>` と `vocab_id() -> &str` を提供する。P2-A は `CustomVocab`(TSV reader)実装のみを伴い、P2-B で `UserVocab` が同 trait を実装する extension path を確保する
+
+両 trait の正式 signature、実装 struct (`SudachiAdapter` / `CustomVocab`)、resources 配置、feature flag 命名は子 spec `docs/superpowers/specs/2026-04-25-kotoha-phase-2-p2-a-dictionary-foundation.md` §4.2 に委譲する。本 spec は親 spec として方針整合のみを保つ。
 
 ### 4.3 bundling vs runtime download
 
@@ -259,7 +268,12 @@ Dictionary layer の配置方針は 2 案ある。
 
 default 案は「案 1 の kotoha-core 内配置 + feature flag `dict` で隔離」とする。Phase 2 の実装量が案 1 の想定を超えた場合、P2-D で案 2 への migration を検討する。
 
-詳細は P2-A kick-off で確定する。
+P2-A 子 spec で確定済の feature flag 構成は以下のとおり (子 spec `docs/superpowers/specs/2026-04-25-kotoha-phase-2-p2-a-dictionary-foundation.md` §7.3 から同期)。
+
+- **`dict`** feature: 形態素解析 + vocabulary lookup を有効化する。SudachiDict-core を runtime load する `SudachiAdapter` と `CustomVocab` (TSV reader) を expose する。`default = []` 方針 (ADR 0012 D5) に従い opt-in
+- **`dict-smoke`** feature: 530-case golden fixture を実 SudachiDict 辞書で end-to-end 評価する Layer 3 経路を有効化する。Phase 2 P2-A 範囲では runner 本体を実装せず、ISSUE #92 で別 PR にて活用する (`docs/wiki/glossary.md` で参照する Opt-in smoke パターンに従う)。`KOTOHA_SYSTEM_DICT_PATH` 環境変数を必須前提とする
+
+Phase 2 P2-A 段階では `dict` feature のみが活性であり、`dict-smoke` feature gate 自体は将来用に予約する位置付けとする。詳細は ISSUE #92 で扱う。
 
 ## 7. テスト戦略
 
@@ -284,16 +298,22 @@ Layer 2 (GGUF なし) で完結し、`llama-cpp` feature 非依存で動作す�
 
 ### 7.3 golden fixture
 
-Phase 2 固有の golden fixture を以下 4 カテゴリ、30+ cases を最小として P2-A で整備する。
+Phase 2 P2-A の golden fixture は **2 段構成 (targeted 30 + bulk 500)、合計 530 cases** を整備する (子 spec `docs/superpowers/specs/2026-04-25-kotoha-phase-2-p2-a-dictionary-foundation.md` §6.3 から同期)。
 
-- **敬称**: 「たなか さん → 田中 さん」「すずき さま → 鈴木 様」等、10+ cases
-- **固有名詞 (人名)**: 「ひのおか → 日野岡」「やまだ たろう → 山田 太郎」等、10+ cases
-- **固有名詞 (地名 / 組織名)**: 「しんじゅく → 新宿」「ぐーぐる → Google」等、5+ cases
-- **外来語**: 「こんぴゅーた → コンピュータ」「いんたーねっと → インターネット」等、5+ cases
+- **targeted 30**: Layer 1 / Layer 2 unit / integration テスト用の手作りケース。以下 4 カテゴリで構成する
+  - 敬称: 「たなか さん → 田中 さん」「すずき さま → 鈴木 様」等、10+ cases
+  - 固有名詞 (人名): 「ひのおか → 日野岡」「やまだ たろう → 山田 太郎」等、10+ cases
+  - 固有名詞 (地名 / 組織名): 「しんじゅく → 新宿」「ぐーぐる → Google」等、5+ cases
+  - 外来語: 「こんぴゅーた → コンピュータ」「いんたーねっと → インターネット」等、5+ cases
+- **bulk 500**: Layer 3 statistical evaluation (golden fixture 拡張) 用の自動生成ケース。SudachiDict-core から sampling した surface / reading ペアに、編集距離 0〜2 の noisy reading を注入して生成する
 
-fixture 形式は Phase 1 の `crates/kotoha-core/tests/fixtures/kanji_llama_cpp_smoke.tsv` と同一 TSV schema を採用する。
+#### Layer 3 deferral
 
-詳細 case 数と category 比率は P2-A kick-off で確定する。
+530-case fixture の **Layer 3 golden test runner と `phase2-dict-smoke.sh` smoke スクリプトは P2-A スコープから外し、ISSUE #92 で別 PR にて実装する** (本 task の判断、2026-04-25)。Layer 3 deferral 理由は P5-A sample data の schema mismatch / 規模不足が判明したためで、530-case fixture を消費する runner 設計を仕切り直す必要がある。
+
+P2-A 範囲では Layer 1 (unit) / Layer 2 (integration、`MockBackend` を LLM 固定) の 2 層で targeted 30 cases を消費するに留め、bulk 500 cases の活用は ISSUE #92 で行う。fixture 自体 (TSV ファイル) は P2-A で整備する (`tools/p2a-fixture-gen/` にて生成済、子 spec §6.3 参照)。
+
+fixture 形式は Phase 1 の `crates/kotoha-core/tests/fixtures/kanji_llama_cpp_smoke.tsv` と同一 TSV schema を踏襲する。詳細 column 定義は子 spec §6.3 に記載する。
 
 ### 7.4 regression (Phase 1 14/15 退行防止)
 
