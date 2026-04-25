@@ -29,6 +29,9 @@
 
 pub mod kanji_cli;
 
+#[cfg(feature = "dict-persist")]
+pub mod dict_cli;
+
 use kotoha_core::{InputContext, InputMode, InputStep};
 
 /// Feeds every char of `line` through the mode state machine, then
