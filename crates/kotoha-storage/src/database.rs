@@ -69,10 +69,14 @@ impl Database {
 
     /// 内部 `Mutex<Connection>` を lock する。Store 実装側で使用。
     ///
+    /// `pub(crate)` に絞って、外部 crate からは Connection 直アクセスではなく
+    /// `UserVocabStore` / `LearningCacheStore` 抽象境界を通すことを強制する
+    /// (review A-H2)。
+    ///
     /// # Panics
     ///
     /// poison された場合 panic する(other thread が panic 中に lock を保持していた場合)。
-    pub fn lock_conn(&self) -> MutexGuard<'_, Connection> {
+    pub(crate) fn lock_conn(&self) -> MutexGuard<'_, Connection> {
         self.conn.lock().expect("Database mutex poisoned")
     }
 
