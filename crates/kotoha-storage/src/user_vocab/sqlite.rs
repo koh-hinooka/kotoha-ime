@@ -5,11 +5,6 @@ use std::sync::Arc;
 use crate::database::Database;
 use crate::error::StorageError;
 use crate::user_vocab::store::{UserVocabRecord, UserVocabStore};
-// validate_surface / validate_pos / validate_score は Task B3 insert で使用するため
-// 本 step では参照しないが、import を残しておく(`_suppress_unused` helper は
-// `#[cfg(test)]` 限定で non-test build では効かないため、ここでは
-// `#[allow(unused_imports)]` を選択)。
-#[allow(unused_imports)]
 use crate::validation::{validate_pos, validate_reading, validate_score, validate_surface};
 
 pub struct SqliteUserVocabStore {
@@ -64,9 +59,52 @@ impl UserVocabStore for SqliteUserVocabStore {
         unimplemented!("Task B4")
     }
 
-    fn insert(&self, _record: UserVocabRecord) -> Result<i64, StorageError> {
-        // Task B3 で実装
-        unimplemented!("Task B3")
+    fn insert(&self, record: UserVocabRecord) -> Result<i64, StorageError> {
+        validate_surface(&record.surface)?;
+        validate_reading(&record.reading)?;
+        validate_pos(&record.pos)?;
+        validate_score(record.score)?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let created_at = if record.created_at == 0 {
+            now
+        } else {
+            record.created_at
+        };
+        let updated_at = if record.updated_at == 0 {
+            now
+        } else {
+            record.updated_at
+        };
+
+        let conn = self.db.lock_conn();
+        let result = conn.execute(
+            "INSERT INTO user_vocab (surface, reading, pos, score, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                record.surface,
+                record.reading,
+                record.pos,
+                record.score as f64,
+                created_at,
+                updated_at,
+            ],
+        );
+        match result {
+            Ok(_) => Ok(conn.last_insert_rowid()),
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                Err(StorageError::DuplicateEntry {
+                    surface: record.surface,
+                    reading: record.reading,
+                })
+            }
+            Err(e) => Err(StorageError::Sqlite(e)),
+        }
     }
 
     fn delete_by_id(&self, _id: i64) -> Result<(), StorageError> {
@@ -142,6 +180,95 @@ mod tests {
     fn find_by_reading_rejects_non_hiragana() {
         let store = fresh_store();
         let err = store.find_by_reading("カタカナ", 10).unwrap_err();
+        assert!(matches!(err, StorageError::InvalidField { .. }));
+    }
+
+    #[test]
+    fn insert_assigns_auto_increment_id() {
+        let store = fresh_store();
+        let r = UserVocabRecord {
+            id: None,
+            surface: "日野岡".to_string(),
+            reading: "ひのおか".to_string(),
+            pos: "名詞-固有名詞-人名".to_string(),
+            score: 1.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let id = store.insert(r).expect("insert ok");
+        assert!(id >= 1);
+    }
+
+    #[test]
+    fn insert_persists_then_can_find() {
+        let store = fresh_store();
+        let r = UserVocabRecord {
+            id: None,
+            surface: "琴葉".to_string(),
+            reading: "ことば".to_string(),
+            pos: "名詞-固有名詞-人名".to_string(),
+            score: 1.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        store.insert(r).expect("insert ok");
+        let result = store.find_by_reading("ことば", 10).expect("find ok");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].surface, "琴葉");
+    }
+
+    #[test]
+    fn insert_duplicate_returns_duplicate_entry_error() {
+        let store = fresh_store();
+        let r1 = UserVocabRecord {
+            id: None,
+            surface: "日野岡".to_string(),
+            reading: "ひのおか".to_string(),
+            pos: "名詞".to_string(),
+            score: 1.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        store.insert(r1.clone()).expect("first insert ok");
+        let err = store.insert(r1).unwrap_err();
+        match err {
+            StorageError::DuplicateEntry { surface, reading } => {
+                assert_eq!(surface, "日野岡");
+                assert_eq!(reading, "ひのおか");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn insert_rejects_invalid_reading() {
+        let store = fresh_store();
+        let r = UserVocabRecord {
+            id: None,
+            surface: "X".to_string(),
+            reading: "abc".to_string(), // ASCII reject
+            pos: "名詞".to_string(),
+            score: 1.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let err = store.insert(r).unwrap_err();
+        assert!(matches!(err, StorageError::InvalidField { .. }));
+    }
+
+    #[test]
+    fn insert_rejects_negative_score() {
+        let store = fresh_store();
+        let r = UserVocabRecord {
+            id: None,
+            surface: "X".to_string(),
+            reading: "あ".to_string(),
+            pos: "名詞".to_string(),
+            score: -1.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let err = store.insert(r).unwrap_err();
         assert!(matches!(err, StorageError::InvalidField { .. }));
     }
 }
