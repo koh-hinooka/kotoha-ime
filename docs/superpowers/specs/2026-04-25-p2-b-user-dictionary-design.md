@@ -113,7 +113,7 @@ P2-B は SQLite library として `rusqlite`(`bundled` feature 有効)を採用�
 
 P2-B は SQLite migration を `PRAGMA user_version` + `include_str!` で同梱した SQL ファイルで管理する。down migration は実装しない(YAGNI)。
 
-- **採用理由**: 定数配列 `MIGRATIONS: &[(&str, &str)]` に `(version, sql_text)` を並べ、起動時に `user_version` を読み取り未適用 migration を順次 apply、SQL は `include_str!("migrations/v001_initial.sql")` でバイナリ同梱
+- **採用理由**: 定数配列 `MIGRATIONS: &[(i32, &str)]` に `(version, sql_text)` を並べ、起動時に `user_version` を読み取り未適用 migration を順次 apply、SQL は `include_str!("migrations/v001_initial.sql")` でバイナリ同梱
 - **forward-only 採用理由**: down migration は IME runtime の rollback 経路として使用しない(crash recovery は DB 削除 + 再作成で十分)、forward-only にすることで実装行数が約半分に縮小
 - **migration tool 棄却理由**: `refinery` / `sqlx::migrate!` 等の外部 migration tool は依存追加コストが正当化できず、`PRAGMA user_version` の simplicity を優先
 
@@ -198,12 +198,12 @@ crates/kotoha-cli/src/
 
 ### 4.2 依存方向の図(text)、Clean Architecture DIP
 
-P2-B の依存方向は以下のとおり Clean Architecture DIP に整合する。
+P2-B の依存方向は以下のとおり Clean Architecture DIP に整合する。`kotoha-cli` は `kotoha-core` 経由(IME runtime path)と `kotoha-storage` 直接(CLI subcommand 限定 CRUD)の 2 経路を併用する。図中の `(2) 直接 CRUD` 矢印が後者であり、`kotoha-dict {add, remove, list, show}` subcommand のみが該当する。
 
 ```text
 kotoha-cli (binary: kotoha-dict)
    │
-   │ (depends on)
+   │ (1) IME runtime path: depends on
    ▼
 kotoha-core (crate)
    ├── dict::user_vocab::UserVocab (impl VocabularyLookup)
@@ -217,14 +217,27 @@ kotoha-core (crate)
 kotoha-storage (crate)
    ├── user_vocab::SqliteUserVocabStore (impl UserVocabStore)
    ├── learning_cache::LearningCacheStore (trait skeleton, P2-C 実装)
-   └── Database (Mutex<Connection> + Migration runner)
+   └── Database (Arc<Mutex<Connection>> + Migration runner)
+
+kotoha-cli ────────────────────────────────► kotoha-storage
+   (2) CLI subcommand 限定 CRUD 経路: kotoha-dict {add, remove, list, show} のみ
+       Database::open + SqliteUserVocabStore を直接握り、kotoha-core を経由しない
 ```
+
+依存経路は 2 本である。
+
+- **(1) IME runtime path**: `kotoha-cli → kotoha-core → kotoha-storage`。Phase 3 IBus engine を含む runtime convert 経路はこちらを通り、`UserVocab::lookup` は `kotoha-core::dict::user_vocab` 経由で `Box<dyn UserVocabStore>` を呼ぶ
+- **(2) CLI subcommand 限定の直接 CRUD 経路**: `kotoha-cli → kotoha-storage`。`kotoha-dict` subcommand(`add` / `remove` / `list` / `show`)は domain logic を介さない CRUD のみを行うため、`kotoha-core` を経由せず `kotoha-storage::Database::open` + `SqliteUserVocabStore` を直接握る。`kotoha-core` の `VocabularyLookup` trait に `insert` / `delete` を持ち込むのは責務逆転(domain 層が永続化操作を露出)となるため拒否する
 
 依存方向の根拠は以下のとおりである。
 
 - **`kotoha-storage` は `kotoha-core` に逆依存しない**: `kotoha-storage` は永続化詳細層であり、`kotoha-core` の domain layer に依存しない。`UserVocabStore` trait は `kotoha-storage` 側に置き、`kotoha-core::dict::user_vocab::UserVocab` が `Box<dyn UserVocabStore>` を field に保持することで DIP を成立させる
-- **`kotoha-cli` は両 crate に依存可**: CLI 層は `kotoha-core::dict::user_vocab::UserVocab` を経由した lookup と、`kotoha-storage::user_vocab::SqliteUserVocabStore` への直接 CRUD の両方を必要とする(`add` / `remove` は CRUD、`list --reading` は lookup)
+- **`kotoha-cli` は両 crate に依存可**: CLI 層は経路 (1) の lookup と経路 (2) の CRUD の両方を必要とする(`add` / `remove` は CRUD、convert で UserVocab を引く経路は lookup)
 - **`rusqlite` C 依存は `kotoha-storage` 1 crate に閉じ込める**: `kotoha-core` 単体 build は `rusqlite` を引かず、Layer 1 unit test / `MockBackend` 経路は C library コンパイル不要
+
+#### 4.2.1 Phase 6+ GUI editor 追加時の経路選択
+
+Phase 6+ で GUI dict editor を追加する際、CLI と同じ pattern で経路 (2) を再利用するか、新たに `kotoha-core` 側に facade(例: `DictEditorFacade`)を設け経路 (1) に統合するかは Phase 6+ design で再検討する(P2-B 範囲外)。原則は CLI と同じく直接 CRUD を選ぶが、GUI が domain 検証(reading 正規化 / 重複検知)を duplicate せざるを得ない場合は facade 採用を検討する。
 
 ### 4.3 feature flag 戦略
 
@@ -322,17 +335,33 @@ WAL モード採用により `kotoha-dict` CLI 実行中の Phase 3 IBus engine 
 
 ### 5.4 DB 配置パス
 
-DB 配置パスは以下の優先順で resolve する(`kotoha-storage::path::resolve_data_dir`)。
+DB 配置パスは以下 8 ステップで resolve / 検証する(`kotoha-storage::path::resolve_data_dir`)。`canonicalize` 単独では symlink を経由した system path 配下への traversal を防げないため(CWE-59 / CWE-367)、prefix containment と system path blacklist の二段検証 + 作成 ↔ canonicalize の順序を明示する。
 
-1. 環境変数 `KOTOHA_DATA_DIR` が設定されていればその値
-2. 未設定時は環境変数 `XDG_DATA_HOME` が設定されていれば `$XDG_DATA_HOME/kotoha`
-3. それも未設定時は `$HOME/.local/share/kotoha`(XDG Base Directory 仕様 default)
+#### 5.4.1 path resolution + 検証アルゴリズム
 
-resolve 結果は以下の sanity check を経る。
+1. **target_dir 解決**: 環境変数を以下の優先順で resolve する
+   - `KOTOHA_DATA_DIR` が設定されていれば、その値を target_dir(明示指定 path)とする
+   - 未設定時は `XDG_DATA_HOME` が設定されていれば `$XDG_DATA_HOME/kotoha`
+   - 上記いずれも未設定時は `$HOME/.local/share/kotoha`(XDG Base Directory 仕様 default)
+2. **prefix containment 検証(canonicalize 前)**: target_dir の prefix が以下のいずれかの allowlist 配下であることを `Path::starts_with` で検証する
+   - `KOTOHA_DATA_DIR` で明示指定された場合は、その明示 path 配下のみ許容
+   - `XDG_DATA_HOME` 経由の場合は、`$XDG_DATA_HOME` 配下のみ許容
+   - default `$HOME/.local/share/kotoha` 経由の場合は、`$HOME` 配下のみ許容
+3. **system path blacklist(canonicalize 前)**: target_dir の prefix が以下 system path のいずれかに該当する場合は `StorageError::InvalidPath` で reject する
+   - `/etc`, `/var`, `/tmp`, `/proc`, `/sys`, `/dev`, `/root`, `/boot`
+4. **dir 作成**: target_dir が存在しない場合は `std::fs::create_dir_all(&target_dir)` で再帰的に作成する(canonicalize **前**に作成、存在しない path は canonicalize できないため)
+5. **canonicalize 適用**: 作成後の target_dir に対し `canonicalize()` を適用し、symlink を解決した絶対 path を取得する
+6. **prefix containment + blacklist 再検証(canonicalize 後)**: canonicalize 後 path に対しステップ 2 / 3 と同じ検証を再実行する。symlink 解決後に system path 配下に飛ぶケース(symlink trick による traversal)を defense-in-depth で reject する
+7. **絶対 path assert**: `path.is_absolute()` を assert する(canonicalize 後は常に絶対 path となるが invariant として保持)
+8. **DB ファイル size sanity warn**: 既存 `kotoha.db` の size が 100 MiB を超えた場合は stderr に warn を出力する(LearningCache LRU 上限 10,000 + UserVocab 数千件 = 期待値 1〜10 MiB を大幅超過する状況の早期検知)、exit code は 0 を維持
 
-- **`canonicalize()` 適用**: symlink 解決と絶対 path 化、`PathBuf` のまま使用しない
-- **絶対 path assert**: `path.is_absolute()` を assert、相対 path の混入を防止
-- **100 MiB sanity warn**: DB ファイル size が 100 MiB を超えた場合は stderr に warn を出力(LearningCache LRU 上限 10,000 + UserVocab 数千件 = 期待値 1〜10 MiB を大幅超過する状況の早期検知)、exit code は 0 を維持
+#### 5.4.2 検証順序の根拠
+
+ステップ 2 / 3 の事前検証(canonicalize 前)とステップ 6 の事後検証(canonicalize 後)を二段で実施する根拠は、CWE-59(symlink following)+ CWE-367(TOCTOU)に対する defense-in-depth である。事前検証のみでは、`$HOME/.local/share/kotoha` 配下に作成された symlink が `/etc/kotoha` を指す場合に bypass される。事後検証のみでは、canonicalize で root を超える traversal(`../../../etc`)が ext4 / btrfs file system で先に解決されるパターンに対し、target_dir 解決段階で reject できない。
+
+#### 5.4.3 `StorageError::InvalidPath` variant の追加
+
+§9.4 の `StorageError` enum に `InvalidPath { path: PathBuf, reason: String }` variant を追加し、ステップ 2 / 3 / 6 の reject 経路から共通で返す(§9.4 の error mapping 表に同 variant を追記する)。
 
 ## 6. Trait API と型
 
@@ -408,6 +437,8 @@ P2-B は `SqliteLearningCacheStore` を unimplemented stub として配置し、
 
 ### 6.4 `Database` 構造体
 
+`Database` は `Arc` で wrap された共有 ownership 構造体であり、`UserVocabStore` 系 / `LearningCacheStore` 系の複数 Store が同一 `Database` instance を `Arc::clone` で共有する。`open` の戻り値型は `Arc<Database>` とし、CLI の factory(§8.2)が `Box<dyn UserVocabStore>` / `Box<dyn LearningCacheStore>` に詰める際の lifetime 衝突を回避する。
+
 ```rust
 pub struct Database {
     conn: std::sync::Mutex<rusqlite::Connection>,
@@ -417,15 +448,40 @@ impl Database {
     /// `path` の SQLite DB を open し、未適用 migration を apply する。
     ///
     /// # Postconditions
+    /// - 戻り値は `Arc<Database>` で返り、複数 Store(`UserVocab` / `LearningCache`)が
+    ///   `Arc::clone` で同一 `Database` instance を共有 ownership で保持する
     /// - `path` の親ディレクトリが存在しない場合は再帰的に作成
     /// - PRAGMA journal_mode / synchronous / foreign_keys / temp_store を設定
     /// - `PRAGMA user_version` を読み取り、`MIGRATIONS` の未適用分を順次 apply
-    pub fn open(path: &std::path::Path) -> Result<Self, StorageError> { /* ... */ }
+    pub fn open(path: &std::path::Path) -> Result<std::sync::Arc<Self>, StorageError> { /* ... */ }
 
-    pub fn user_vocab_store(&self) -> impl UserVocabStore + '_ { /* SqliteUserVocabStore */ }
-    pub fn learning_cache_store(&self) -> impl LearningCacheStore + '_ { /* SqliteLearningCacheStore (P2-C) */ }
+    /// `Arc<Database>` を `SqliteUserVocabStore` で wrap し owned `Box<dyn UserVocabStore>`
+    /// として返す。戻り値は lifetime parameter を持たないため、factory(§8.2)の local
+    /// 変数で Database を保持しながら `Box<dyn UserVocabStore>` を `Vec` に詰める経路で
+    /// borrow checker と衝突しない。
+    pub fn user_vocab_store(self: &std::sync::Arc<Self>) -> Box<dyn UserVocabStore> {
+        Box::new(SqliteUserVocabStore { db: std::sync::Arc::clone(self) })
+    }
+
+    /// `Arc<Database>` を `SqliteLearningCacheStore` で wrap した owned `Box<dyn
+    /// LearningCacheStore>` を返す(P2-B では unimplemented stub、P2-C で本実装)。
+    pub fn learning_cache_store(self: &std::sync::Arc<Self>) -> Box<dyn LearningCacheStore> {
+        Box::new(SqliteLearningCacheStore { db: std::sync::Arc::clone(self) })
+    }
 }
+
+pub struct SqliteUserVocabStore {
+    db: std::sync::Arc<Database>,
+}
+
+impl UserVocabStore for SqliteUserVocabStore { /* Arc<Database> 経由で Mutex<Connection> を借りる */ }
 ```
+
+#### 6.4.1 共有 ownership の Postcondition
+
+- **`Database` の内部状態**: `Database` は内部で `Mutex<rusqlite::Connection>` を 1 個保持し、SQLite Connection の `!Sync` 制約を thread 跨ぎで補完する
+- **複数 Store の共有 ownership**: `Arc<Database>` を `SqliteUserVocabStore` / `SqliteLearningCacheStore` の双方が field として保持し、同一 Connection に対する逐次 lock を `Arc::clone` 経由で共有する(2 store 跨ぎの ATOMIC transaction が同一 Connection 上で成立、ADR 0015 R3 と整合)
+- **lifetime parameter 不在**: `user_vocab_store` / `learning_cache_store` の戻り値は `'a` lifetime を持たない `Box<dyn ... >`(owned)であり、factory の local 変数 scope で Database を生かしたまま `Box<dyn UserVocabStore>` を `Vec` に push する経路で borrow checker と衝突しない
 
 `Mutex<Connection>` は `rusqlite::Connection` が `!Sync` であるための単純対応である。Phase 3 IBus engine は別プロセスで動作するため、この Mutex は同一プロセス内 thread 競合のみを保護する(プロセス間競合は SQLite の WAL モードが扱う)。
 
@@ -639,7 +695,7 @@ pub struct DictionaryConfig {
 
 ### 8.2 `load_backend` factory 拡張
 
-`#[cfg(feature = "dict-persist")]` gate 下で、`load_backend` factory の `BackendConfig::Dictionary` arm が `user_vocab_db_path` の `Some(path)` を検出した場合に `UserVocab` を構築して `Vec<Box<dyn VocabularyLookup>>` に追加する。
+`#[cfg(feature = "dict-persist")]` gate 下で、`load_backend` factory の `BackendConfig::Dictionary` arm が `user_vocab_db_path` の `Some(path)` を検出した場合に `UserVocab` を構築して `Vec<Box<dyn VocabularyLookup>>` に追加する。`Database::open` は `Arc<Database>` を返し、`db.user_vocab_store()` は owned `Box<dyn UserVocabStore>` を返すため(§6.4)、factory の local 変数 `db` を `Arc::clone` 経由で生かしたまま `Box` を `Vec` に push する経路で borrow checker と衝突しない。
 
 ```rust
 #[cfg(feature = "dict-persist")]
@@ -649,9 +705,12 @@ BackendConfig::Dictionary { config } => {
         vocabs.push(Box::new(CustomVocab::load(path)?));
     }
     if let Some(db_path) = &config.user_vocab_db_path {
-        let db = kotoha_storage::Database::open(db_path)?;
-        let store = Box::new(db.user_vocab_store_owned()) as Box<dyn UserVocabStore>;
+        let db: std::sync::Arc<kotoha_storage::Database> =
+            kotoha_storage::Database::open(db_path)?;
+        let store: Box<dyn UserVocabStore> = db.user_vocab_store();
         vocabs.push(Box::new(UserVocab::new(store)));
+        // db (Arc<Database>) は scope 終了で drop されるが、
+        // store 内部の Arc<Database> が Arc::clone で生存し続けるため Connection は閉じない
     }
     let engine = Box::new(SudachiAdapter::load(&config.system_dict_path)?);
     Ok(Box::new(DictionaryBackend::new(engine, vocabs)))
@@ -682,8 +741,36 @@ P2-B 投入後も以下の baseline を退行させない。
 - **byte size**: `value.len() > 256` を reject(UTF-8 byte 換算)
 - **no control char**: `c.is_control()` で `\t`(U+0009)/`\n`(U+000A)/`\r`(U+000D)も reject(SQL injection / TSV 互換性 / log integrity の 3 観点)
 - **no bidi character**: U+200E / U+200F / U+202A..=U+202E / U+2066..=U+2069 を reject(`Trojan Source` 攻撃緩和、CVE-2021-42574 整合)
+- **no PUA char(Phase 5 allowlist 例外あり)**: U+E000..=U+F8FF(BMP PUA)および U+F0000..=U+10FFFD(supplementary PUA)を reject、ただし **Phase 5 Mixed JP/EN allowlist (U+EE00..=U+EE03) のみ例外として許容** する(Karukan reference 互換、memory `project_mixed_jp_en_phase5_goal` 参照)
+- **no Variation Selector**: U+FE00..=U+FE0F(VS-1〜VS-16)を reject
+- **no Tag character**: U+E0000..=U+E007F を reject
 
-`surface` / `pos` field は本共通制約のみを適用する。
+`surface` / `reading` / `pos` の 3 field 全てに本共通制約を適用する(`reading` は §9.2 で hiragana-only 制約をさらに重畳)。
+
+#### 9.1.1 判定 helper
+
+```rust
+/// PUA(Private Use Area)を reject する判定。Phase 5 Mixed JP/EN
+/// allowlist (U+EE00..=U+EE03) は許容する。
+fn is_disallowed_pua(c: char) -> bool {
+    let cp = c as u32;
+    let is_pua = (0xE000..=0xF8FF).contains(&cp) || (0xF0000..=0x10FFFD).contains(&cp);
+    let is_phase5_allowlist = (0xEE00..=0xEE03).contains(&cp);
+    is_pua && !is_phase5_allowlist
+}
+
+fn is_variation_selector(c: char) -> bool {
+    (0xFE00..=0xFE0F).contains(&(c as u32))
+}
+
+fn is_tag_char(c: char) -> bool {
+    (0xE0000..=0xE007F).contains(&(c as u32))
+}
+```
+
+#### 9.1.2 PUA / VS / Tag reject の根拠(Phase 5 trust boundary)
+
+Phase 5 KotohaNative model(ADR 0010 / Phase 5 spec)では、UserVocab の `surface` / `reading` / `pos` 内容が prompt 構築経路に流れ、custom model の context として model 入力に到達する。PUA / Variation Selector / Tag character は visual に invisible / 無害に見える一方、Karukan-style PUA tokens(memory `project_karukan_reference_architecture`)を悪用する prompt-injection 経路となり得る(LLM が PUA tokens を special token として解釈する可能性)。本 ADR 0015 / 本 spec の design では、3 char class を `validate_field` で reject し、Phase 5 Mixed JP/EN 用 allowlist (U+EE00..=U+EE03) のみを Karukan 互換の特例として許容する(allowlist の 4 codepoint は Phase 5 spec で意味を再確認する)。
 
 ### 9.2 reading 追加制約
 
@@ -701,13 +788,15 @@ P2-B 投入後も以下の baseline を退行させない。
 
 ### 9.4 error mapping
 
-violation 発生時は `StorageError::InvalidField { name: String, reason: String }` を返す。
+violation 発生時は `StorageError::InvalidField { name: String, reason: String }` を返す。path resolution(§5.4)の reject 経路は `StorageError::InvalidPath { path: PathBuf, reason: String }` を返す。
 
 ```rust
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
     #[error("invalid field {name}: {reason}")]
     InvalidField { name: String, reason: String },
+    #[error("invalid path {path:?}: {reason}")]
+    InvalidPath { path: std::path::PathBuf, reason: String },
     #[error("duplicate entry: surface={surface} reading={reading}")]
     DuplicateEntry { surface: String, reading: String },
     #[error("entry not found")]
@@ -721,22 +810,76 @@ pub enum StorageError {
 }
 ```
 
-CLI 層は `StorageError` variant に応じて exit code(§7.6)を mapping する。
+`StorageError::InvalidField` の `reason` 列挙は §9.1 / §9.2 / §9.3 の violation 種別を文字列化する。具体的には「empty」「>256 bytes」「control char (NUL/TAB/NL/CR)」「bidi character」「PUA char (excluding U+EE00..=U+EE03)」「Variation Selector」「Tag char」「non-hiragana」「NaN」「Infinity」「negative score」を `reason` 値として採用する(§9.5 参照)。
+
+CLI 層は `StorageError` variant に応じて exit code(§7.6)を mapping する。`StorageError::InvalidPath` は exit code 1(内部エラー扱い、§7.6)に mapping する。
+
+### 9.5 validation reason 列挙(`InvalidField::reason`)
+
+`StorageError::InvalidField` の `reason` field は以下の固定文字列のいずれかを採用する。test 層と CLI 層が string match で violation 種別を判別できる安定 vocabulary として確定する。
+
+| reason 値 | 検出元 |
+|---|---|
+| `empty` | §9.1 non-empty |
+| `byte size > 256` | §9.1 byte size |
+| `control char` | §9.1 no control char |
+| `bidi character` | §9.1 no bidi |
+| `PUA char` | §9.1 no PUA(allowlist 例外を除く) |
+| `Variation Selector` | §9.1 no VS |
+| `Tag char` | §9.1 no Tag char |
+| `non-hiragana reading` | §9.2 hiragana only |
+| `score not finite` | §9.3 finite |
+| `score negative` | §9.3 non-negative |
 
 ## 10. Test 戦略
 
+### 10.0 Validation test の責任分界(Layer 1 / Layer 3)
+
+§9 で validation を `kotoha-storage::validation` module に一元化する設計に対し、Layer 1(storage unit)と Layer 3(CLI integration)のどちらが各 invariant を負担するかを以下 table で明示する。Layer 1 が全 invariant を網羅的に test し、Layer 3 は CLI 経路の reject 分岐(exit code mapping)を代表 1 件のみ確認することで、二重 validation を defense-in-depth として担保する。
+
+| Validation 観点 | Layer 1(storage unit) | Layer 3(CLI integration) |
+|---|---|---|
+| field empty / >256 byte | ✓(全 3 field を網羅) | ✓(代表 1 件、全件は Layer 1 で担保) |
+| control char(NUL / TAB / NL / CR) | ✓ | ✓(代表 1 件) |
+| bidi controls(U+200B-U+200F、U+202A-U+202E、U+2066-U+2069) | ✓ | ✓(代表 1 件) |
+| non-hiragana reading | ✓ | ✓(romaji auto-detect 通過後の失敗 path を含む) |
+| score NaN / Infinity / 負値 | ✓ | ✓(`--score nan` 等の代表 case) |
+| PUA / VS / Tag char(§9.1) | ✓(Phase 5 allowlist U+EE00-EE03 例外を含む) | ✓(代表 1 件) |
+| path traversal(symlink / blacklist、§5.4) | ✓(`path::resolve_data_dir` の unit test) | — |
+
+責任分界の方針: Layer 1 は全 invariant を網羅し reject contract を確定する。Layer 3 は CLI 経路から storage 層への validation bypass が起きないことを代表 1 件で確認するに留め、invariant 列挙は Layer 1 に委ねる(test 件数の爆発を防止しつつ、CLI 経路独自の reject branch / exit code mapping を確実に検証する)。
+
 ### 10.1 Layer 1: `kotoha-storage` unit test
 
-`kotoha-storage` crate 内の `#[cfg(test)]` で 18〜24 件程度実装する。
+`kotoha-storage` crate 内の `#[cfg(test)]` で 26〜28 件程度実装する。
 
 | 対象 | 件数目安 | 内容 |
 |---|---|---|
 | `MockUserVocabStore` の CRUD | 6〜8 | insert / find_by_reading / list_all / delete_by_id / delete_by_surface_reading |
 | `SqliteUserVocabStore` を `:memory:` で実行 | 6〜8 | `Connection::open_in_memory` で migration apply 後 CRUD |
 | `Database::open` migration | 3〜4 | 空 DB → v001 適用、既に v001 適用済 → no-op、PRAGMA 設定検証 |
-| `validation` module | 3〜4 | hiragana-only reject、bidi char reject、score finite / non-negative |
+| **`MIGRATIONS` 配列 invariant**(必須) | 3 | (a) version 昇順 invariant、(b) 中間 version skip-and-resume、(c) idempotency。詳細は §10.1.1 |
+| `validation` module | 3〜4 | hiragana-only reject、bidi char reject、PUA / VS / Tag char reject(Phase 5 allowlist 例外含む)、score finite / non-negative |
+| `path::resolve_data_dir` | 2〜3 | system path blacklist reject、$HOME prefix containment、symlink 解決後の事後検証(§5.4) |
 
 `:memory:` SQLite 採用により外部ファイル不要で並行実行可能。
+
+#### 10.1.1 `MIGRATIONS` 配列 invariant test(必須 3 項目)
+
+将来の v002 / v003 追加時の order regression を構造的に予防するため、以下 3 件を Layer 1 unit test の必須項目とする。P2-B 着地時点の `MIGRATIONS` 長は 1(v001 のみ)だが、3 件全てを future-proof として実装する。
+
+1. **version 昇順 invariant**: `MIGRATIONS` const 配列の version 列が strict 昇順で並ぶことを以下で確認する
+   ```rust
+   #[test]
+   fn migrations_are_strictly_ascending() {
+       assert!(
+           MIGRATIONS.windows(2).all(|w| w[0].0 < w[1].0),
+           "MIGRATIONS must be in strictly ascending version order"
+       );
+   }
+   ```
+2. **中間 version skip-and-resume**: `PRAGMA user_version = N`(N は中間値、例えば v003 schema が存在する状況で N=2)から最新まで未適用 migration が順次 apply されることを `:memory:` Connection で検証する。P2-B では `MIGRATIONS` 長が 1 のため、N=0 → v001 apply → N=1 で完了する 1 ケースを実装し、v002 追加時に skip-and-resume を本格 test する基盤を先出しする
+3. **idempotency**: 既に最新 version の DB を `Database::open` で再 open しても no-op であることを、`apply_migrations` の戻り値 / `PRAGMA user_version` の値が `LATEST_VERSION` で一致することで検証する。具体的には同一 `:memory:` Connection で 2 回 `apply_migrations` を呼び、2 回目が SQL を execute せず `user_version == LATEST_VERSION` を維持することを assert する
 
 ### 10.2 Layer 2: `kotoha-core::dict::user_vocab` integration test
 
@@ -754,6 +897,16 @@ CLI 層は `StorageError` variant に応じて exit code(§7.6)を mapping す�
 ### 10.3 Layer 3: `kotoha-cli::dict_cli` integration test
 
 `crates/kotoha-cli/tests/dict_cli.rs` に `assert_cmd` ベース integration test を 10〜14 件実装する。
+
+#### 10.3.1 test 戦略(env var race condition 回避)
+
+`KOTOHA_DATA_DIR` 環境変数経由の path 注入は process-global であり、`std::env::set_var` を `#[test]` 並列実行下で複数 thread が同時呼出した場合に race condition を起こす。`tempfile::tempdir` で per-test 物理 path を分離しても、env var 自体の race は防げない。本 test 戦略は以下 3 点を必須要件とする。
+
+- **`serial_test::serial` annotation 必須**: `KOTOHA_DATA_DIR` env var を test 内で操作する全 case は `#[serial]` を必須付与する。`cargo test` の thread-pool 並列実行下でも、`#[serial]` annotation 付き test 群は順次実行されるため env var 操作が race しない
+- **`tempfile::tempdir` で物理 path 分離**: per-test で `TempDir` を作成し、`KOTOHA_DATA_DIR` を `tempdir.path()` に向けることで test 間の DB ファイル干渉を防ぐ
+- **`Database::open` を実 file で**: `:memory:` ではなく実 file で `Database::open` を呼び、CLI subcommand の end-to-end 経路(WAL ファイル生成、PRAGMA 設定、symlink 解決)を実機相当で検証する
+
+dev-dependency 前提として `serial_test` + `tempfile` の 2 crate が `kotoha-cli/Cargo.toml` の `[dev-dependencies]` に追加されていることを要する(§3.10 / §10.6 参照)。
 
 | 対象 | 内容 |
 |---|---|
@@ -788,6 +941,16 @@ CLI 層は `StorageError` variant に応じて exit code(§7.6)を mapping す�
 - **dict feature**: 223 PASS を維持(P2-A 確定値、UserVocab 無効)
 - **dict-persist feature(P2-B 追加)**: §10.1〜10.4 の追加 test 件数(34〜52 件)を上乗せ
 - **P2-A hardening 完了前提**: §3.10 のとおり pre-PR で hardening 10 items を投入済を前提とし、P2-B code PR は hardening の上に積む
+
+### 10.6 test 前提条件(dev-dep)
+
+Layer 3 / Layer 4 の test は以下 dev-dependency を P2-A hardening pre-PR(ISSUE #94 P2-B section H8、§3.10)で導入済であることを前提とする。
+
+| dev-dep | 用途 |
+|---|---|
+| `serial_test` | §10.3.1 の `KOTOHA_DATA_DIR` env var 操作 race 防止(`#[serial]` annotation) |
+| `tempfile` | per-test 物理 path 分離(`tempdir().path()`)|
+| `assert_cmd` | CLI binary の subprocess 実行 + exit code / stdout / stderr assertion |
 
 ## 11. Effort estimate と PR 分割
 

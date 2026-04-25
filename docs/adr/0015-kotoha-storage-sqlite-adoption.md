@@ -142,6 +142,10 @@ P2-B brainstorming Q2 で「Docker 同梱の PostgreSQL を採用する案」も
 - **Phase 5 personalization への migration path が確保される**: schema 進化 / field 追加 / cross-table reference が `ALTER TABLE` + migration 番号上書きで完結し、Phase 5 design 着手時の persistence layer 再設計コストが発生しない
 - **WAL モードによる concurrent open の構造的安全性**: Phase 3 IBus engine と `kotoha-dict` CLI の同時 open シナリオが SQLite の WAL モード機能で覆われ、独自 file lock 実装が不要
 
+### 正の帰結(続き、Phase 5 trust boundary)
+
+- **Phase 5 trust boundary に対する prompt-injection 耐性**: Phase 5 KotohaNative model(ADR 0010)では、UserVocab の `surface` / `reading` / `pos` 内容が prompt 構築経路に流れ、custom model の context として model 入力に到達する。本 ADR の design では P2-B spec §9.1 で `surface` / `reading` / `pos` 全 field に対し PUA(U+E000..=U+F8FF + U+F0000..=U+10FFFD)/ Variation Selector(U+FE00..=U+FE0F)/ Tag character(U+E0000..=U+E007F)の 3 char class を reject し、Phase 5 Mixed JP/EN allowlist (U+EE00..=U+EE03) のみを Karukan 互換の特例として許容する。これにより visual に invisible / 無害に見える PUA tokens を悪用する prompt-injection 経路を Phase 2 段階で先回り遮断する
+
 ### 負の帰結
 
 - **human-readable file ではなくなる**: TSV / JSONL のように `cat` / `less` で内容を直視できず、`sqlite3` CLI(distro `sqlite3` package 経由)で inspect する運用が必要になる。debugging / backup の手順を README に追記する必要がある
