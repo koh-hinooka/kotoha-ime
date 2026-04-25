@@ -40,6 +40,12 @@ pub trait UserVocabStore: Send + Sync {
         reading_prefix: &str,
         limit: usize,
     ) -> Result<Vec<UserVocabRecord>, StorageError>;
+    /// 主キー `id` で entry 1 件を引く(review A-H3)。
+    ///
+    /// CLI `kotoha-dict show <id>` 経路を `list_all(usize::MAX, 0)` の
+    /// linear scan から PK 直引きに置き換えるための専用 API。
+    /// 不在時は `Ok(None)` を返し、エラーではない。
+    fn find_by_id(&self, id: i64) -> Result<Option<UserVocabRecord>, StorageError>;
 }
 
 /// User vocabulary の row(spec §6.2)。

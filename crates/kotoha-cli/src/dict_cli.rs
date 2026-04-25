@@ -346,22 +346,20 @@ pub fn run_show(
     args: &ShowArgs,
     json_global: bool,
 ) -> Result<i32, String> {
-    // O(N) であるが UserVocab は数千 entry 規模が想定上限のため許容(spec §7.5)。
-    let records = match store.list_all(usize::MAX, 0) {
-        Ok(rs) => rs,
+    // review A-H3: PK 直引き API `find_by_id` を使い、`list_all(usize::MAX, 0)`
+    // による最大 50,000 行 materialize を回避する。
+    let target = match store.find_by_id(args.id) {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            eprintln!("error: entry not found");
+            return Ok(EXIT_NOT_FOUND);
+        }
         Err(e) => {
             eprintln!("error: {e}");
             return Ok(EXIT_INTERNAL);
         }
     };
-    let target = records.iter().find(|r| r.id == Some(args.id));
-    let r = match target {
-        Some(r) => r,
-        None => {
-            eprintln!("error: entry not found");
-            return Ok(EXIT_NOT_FOUND);
-        }
-    };
+    let r = &target;
     if json_global {
         println!(
             "{{\"id\":{},\"surface\":{},\"reading\":{},\"pos\":{},\"score\":{},\"created_at\":{},\"updated_at\":{}}}",

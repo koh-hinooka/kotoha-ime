@@ -130,6 +130,11 @@ impl UserVocabStore for MockUserVocabStore {
         }
         Ok(())
     }
+
+    fn find_by_id(&self, id: i64) -> Result<Option<UserVocabRecord>, StorageError> {
+        let records = self.records.lock().unwrap();
+        Ok(records.iter().find(|r| r.id == Some(id)).cloned())
+    }
 }
 
 #[cfg(test)]
@@ -218,6 +223,23 @@ mod tests {
         store.insert(rec("別人", "べつじん", 0.5)).unwrap();
         let result = store.find_by_prefix("ひの", 100).unwrap();
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn mock_find_by_id_returns_some_for_existing() {
+        let store = MockUserVocabStore::new();
+        let id = store.insert(rec("日野岡", "ひのおか", 1.0)).expect("ok");
+        let got = store.find_by_id(id).expect("find ok");
+        let row = got.expect("must be present");
+        assert_eq!(row.id, Some(id));
+        assert_eq!(row.surface, "日野岡");
+    }
+
+    #[test]
+    fn mock_find_by_id_returns_none_for_absent() {
+        let store = MockUserVocabStore::new();
+        let got = store.find_by_id(42).expect("find ok");
+        assert!(got.is_none());
     }
 
     /// sec-M5 review T-C1: Mock 側でも行数上限到達時に `QuotaExceeded` を

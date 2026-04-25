@@ -254,6 +254,28 @@ impl UserVocabStore for SqliteUserVocabStore {
         }
         Ok(out)
     }
+
+    fn find_by_id(&self, id: i64) -> Result<Option<UserVocabRecord>, StorageError> {
+        let conn = self.db.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, surface, reading, pos, score, created_at, updated_at \
+             FROM user_vocab WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(UserVocabRecord {
+                id: Some(row.get(0)?),
+                surface: row.get(1)?,
+                reading: row.get(2)?,
+                pos: row.get(3)?,
+                score: row.get::<_, f64>(4)? as f32,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -503,6 +525,33 @@ mod tests {
         let store = fresh_store();
         let err = store.delete_by_surface_reading("x", "abc").unwrap_err();
         assert!(matches!(err, StorageError::InvalidField { .. }));
+    }
+
+    #[test]
+    fn find_by_id_returns_some_for_existing() {
+        let store = fresh_store();
+        let r = UserVocabRecord {
+            id: None,
+            surface: "日野岡".to_string(),
+            reading: "ひのおか".to_string(),
+            pos: "名詞".to_string(),
+            score: 1.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let id = store.insert(r).expect("insert ok");
+        let got = store.find_by_id(id).expect("find ok");
+        let row = got.expect("must be present");
+        assert_eq!(row.id, Some(id));
+        assert_eq!(row.surface, "日野岡");
+        assert_eq!(row.reading, "ひのおか");
+    }
+
+    #[test]
+    fn find_by_id_returns_none_for_absent() {
+        let store = fresh_store();
+        let got = store.find_by_id(99_999).expect("find ok");
+        assert!(got.is_none());
     }
 
     /// sec-M5 review T-C1: 行数上限到達時に `QuotaExceeded` を返すことを検証する。
