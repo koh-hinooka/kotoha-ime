@@ -322,3 +322,31 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod prop_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn finite_non_negative_scores_pass(s in 0.0f32..1e9) {
+            prop_assert!(validate_score(s).is_ok());
+        }
+
+        #[test]
+        fn negative_scores_fail(s in -1e9f32..-1e-6) {
+            prop_assert!(validate_score(s).is_err());
+        }
+
+        #[test]
+        fn pure_hiragana_passes_validate_reading(s in "[\u{3041}-\u{3096}]{1,32}") {
+            prop_assert!(validate_reading(&s).is_ok());
+        }
+
+        #[test]
+        fn ascii_fails_validate_reading(s in "[a-z]{1,32}") {
+            prop_assert!(validate_reading(&s).is_err());
+        }
+    }
+}
