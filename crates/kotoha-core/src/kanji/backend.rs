@@ -534,21 +534,12 @@ mod tests {
         assert!(msg.contains("system_dict_path"));
     }
 
-    #[cfg(not(feature = "dict"))]
-    #[test]
-    fn dictionary_config_without_feature_errors_feature_disabled() {
-        // feature=dict OFF 時は BackendConfig::Dictionary variant 自体が
-        // `#[cfg(feature = "dict")]` で gate される設計のため本 test は該当時
-        // のみ compile する。本 test は「feature OFF を明示する placeholder」
-        // として空アサーションを置く。
-        let _ = std::any::type_name::<BackendConfig>();
-    }
-
     #[cfg(feature = "dict")]
     #[test]
-    fn dictionary_config_load_backend_missing_env_errors_model_not_found() {
+    fn dictionary_config_load_backend_missing_env_errors_backend() {
         use crate::dict::DictionaryConfig;
-        // env var も config も無い状態で load_backend を呼ぶと ModelNotFound。
+        // env var も config も無い状態で load_backend を呼ぶと、actionable な
+        // hint を含む KanjiError::Backend を返す契約。
         // 注意: `std::env::remove_var` は process-global state の変更であり、
         // 並列実行する他 test が同 env var を set した場合 race する。
         // P2-A 範囲では本 risk を受容する(tasks.md Notes §2)。
@@ -559,9 +550,18 @@ mod tests {
         // `Box<dyn KanjiBackend>` は `Debug` を実装しないため Result 全体は
         // `{:?}` で format できない。Err / Ok を別 arm で個別 match する。
         match load_backend(&cfg) {
-            Err(KanjiError::ModelNotFound { .. }) => {}
-            Err(other) => panic!("expected ModelNotFound, got Err: {other:?}"),
-            Ok(_) => panic!("expected ModelNotFound, got Ok(backend)"),
+            Err(KanjiError::Backend { reason }) => {
+                assert!(
+                    reason.contains("KOTOHA_SYSTEM_DICT_PATH"),
+                    "error reason should name the env var: {reason}"
+                );
+                assert!(
+                    reason.contains("system_dict_path"),
+                    "error reason should name the config field: {reason}"
+                );
+            }
+            Err(other) => panic!("expected Backend, got Err: {other:?}"),
+            Ok(_) => panic!("expected Backend, got Ok(backend)"),
         }
     }
 }

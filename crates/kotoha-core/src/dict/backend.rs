@@ -2,8 +2,6 @@
 //!
 //! Spec: `docs/superpowers/specs/2026-04-25-p2-a-dictionary-layer-design.md` §4.3.
 
-use std::path::Path;
-
 use crate::dict::custom_vocab::CustomVocab;
 use crate::dict::engine::MorphologicalEngine;
 use crate::dict::sudachi_adapter::SudachiAdapter;
@@ -46,20 +44,25 @@ impl DictionaryBackend {
     ///
     /// 1. `config.system_dict_path` if `Some`
     /// 2. `KOTOHA_SYSTEM_DICT_PATH` env var if set
-    /// 3. otherwise return [`KanjiError::ModelNotFound`] with empty path
+    /// 3. otherwise return [`KanjiError::Backend`] with an actionable hint
     ///
     /// # Errors
     ///
-    /// - [`KanjiError::ModelNotFound`] — neither explicit nor env path resolves,
-    ///   or the resolved system dict file does not exist
+    /// - [`KanjiError::Backend`] — neither explicit path nor env var supplies
+    ///   a SudachiDict path; the error reason names both knobs the caller can
+    ///   set
+    /// - [`KanjiError::ModelNotFound`] — the resolved system dict file does
+    ///   not exist on disk
     /// - [`KanjiError::ModelLoadFailed`] — sudachi.rs fails to load the dict
     /// - [`KanjiError::Backend`] — custom vocab TSV cannot be read or parsed
     pub fn load(config: &DictionaryConfig) -> Result<Self, KanjiError> {
         let env_value = std::env::var("KOTOHA_SYSTEM_DICT_PATH").ok();
         let Some(dict_path) = resolve_dict_path(config.system_dict_path.as_deref(), env_value)
         else {
-            return Err(KanjiError::ModelNotFound {
-                path: Path::new("").to_path_buf(),
+            return Err(KanjiError::Backend {
+                reason: "no SudachiDict path: set KOTOHA_SYSTEM_DICT_PATH environment variable, \
+                    or pass DictionaryConfig::system_dict_path"
+                    .to_string(),
             });
         };
         let engine = Box::new(SudachiAdapter::load(&dict_path)?);

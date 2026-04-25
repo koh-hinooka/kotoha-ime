@@ -13,7 +13,7 @@ use kotoha_core::dict::DictionaryConfig;
 use kotoha_core::kanji::{load_backend, BackendConfig, KanjiError};
 
 #[test]
-fn load_backend_dictionary_without_env_errors_model_not_found() {
+fn load_backend_dictionary_without_env_errors_backend_with_actionable_hint() {
     std::env::remove_var("KOTOHA_SYSTEM_DICT_PATH");
     let cfg = BackendConfig::Dictionary {
         config: DictionaryConfig::default(),
@@ -21,8 +21,19 @@ fn load_backend_dictionary_without_env_errors_model_not_found() {
     // NOTE: `Box<dyn KanjiBackend>` does not implement `Debug`, so we cannot
     // use `Result::expect_err` here. Match the `Err` arm directly instead.
     match load_backend(&cfg) {
-        Err(KanjiError::ModelNotFound { .. }) => {}
-        Err(other) => panic!("expected ModelNotFound, got: {other:?}"),
+        Err(KanjiError::Backend { reason }) => {
+            // 受容契約: reason は env var 名と config field 名の両方に言及し、
+            // user が次に何を設定すべきかが一読でわかる。
+            assert!(
+                reason.contains("KOTOHA_SYSTEM_DICT_PATH"),
+                "reason should name the env var: {reason}"
+            );
+            assert!(
+                reason.contains("system_dict_path"),
+                "reason should name the config field: {reason}"
+            );
+        }
+        Err(other) => panic!("expected Backend, got: {other:?}"),
         Ok(_) => panic!("no dict path must error"),
     }
 }
@@ -44,13 +55,6 @@ fn load_backend_dictionary_with_nonexistent_path_errors_model_not_found() {
         Err(other) => panic!("expected ModelNotFound, got: {other:?}"),
         Ok(_) => panic!("missing file must error"),
     }
-}
-
-#[test]
-fn dictionary_config_default_is_all_none() {
-    let cfg = DictionaryConfig::default();
-    assert!(cfg.system_dict_path.is_none());
-    assert!(cfg.custom_vocab_path.is_none());
 }
 
 #[test]

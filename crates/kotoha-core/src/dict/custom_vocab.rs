@@ -68,7 +68,7 @@ impl CustomVocab {
             if parts.len() != 4 {
                 return Err(KanjiError::Backend {
                     reason: format!(
-                        "malformed TSV line {} in '{}': expected 4 fields, got {}",
+                        "malformed TSV line {} in {:?}: expected 4 fields, got {}",
                         lineno + 1,
                         source_label,
                         parts.len()
@@ -77,11 +77,24 @@ impl CustomVocab {
             }
             let score: f32 = parts[3].parse().map_err(|e| KanjiError::Backend {
                 reason: format!(
-                    "malformed score on line {} in '{}': {e}",
+                    "malformed score on line {} in {:?}: {e}",
                     lineno + 1,
                     source_label
                 ),
             })?;
+            // NaN / +inf / -inf を弾く。`score_sort_dedupe` の sort 比較は
+            // `partial_cmp` で NaN を `Ordering::Equal` に丸めるため、
+            // NaN を含むと dedupe / 順序が非決定的になる。決定性確保のため
+            // load 時点で reject する(spec §5.7 と整合)。
+            if !score.is_finite() {
+                return Err(KanjiError::Backend {
+                    reason: format!(
+                        "non-finite score on line {} in {:?}: {score}",
+                        lineno + 1,
+                        source_label
+                    ),
+                });
+            }
             let entry = VocabEntry {
                 surface: parts[0].to_string(),
                 reading: parts[1].to_string(),
@@ -183,5 +196,27 @@ mod tests {
             "vocab_id should mention 'custom': {}",
             vocab.vocab_id()
         );
+    }
+
+    #[test]
+    fn custom_vocab_rejects_nan_score() {
+        let nan_tsv = "漢字\tかんじ\t名詞\tnan\n";
+        let err = CustomVocab::from_str(nan_tsv).expect_err("nan score must be rejected");
+        match err {
+            crate::kanji::KanjiError::Backend { reason } => {
+                assert!(
+                    reason.contains("non-finite") || reason.contains("malformed"),
+                    "error reason should mention non-finite or malformed: {reason}"
+                );
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_vocab_rejects_inf_score() {
+        let inf_tsv = "漢字\tかんじ\t名詞\tinf\n";
+        let err = CustomVocab::from_str(inf_tsv).expect_err("inf score must be rejected");
+        assert!(matches!(err, crate::kanji::KanjiError::Backend { .. }));
     }
 }
