@@ -86,6 +86,19 @@ dict < LLM とする理由は、Phase 1 の 14/15 baseline を前提に、LLM �
 
 Phase 5 で `KotohaNative` backend が追加される際も、本 ADR の Dictionary + Learning 構成をそのまま継承できるよう、Ranker と Learning cache は backend-agnostic な形で kotoha-core crate 内に配置する (具体配置は P2-A kick-off で確定)。
 
+### D7. P2-B で `kotoha-storage` crate を導入し SQLite 共用 DB を採用する
+
+P2-B kick-off brainstorming (2026-04-25) は、Phase 2 spec §5.2 の旧 TSV / JSONL / TOML 第一候補を再評価し、UserVocab (P2-B) と LearningCache (P2-C) の永続化層に SQLite を採用する判断を確定した。具体は ADR 0015 (`docs/adr/0015-kotoha-storage-sqlite-adoption.md`) に分離して記載する。本 D7 節は本 ADR 0014 と ADR 0015 の整合関係のみを明示する。
+
+- **Decision**: ADR 0015 を参照、UserVocab + LearningCache は単一 DB ファイル `kotoha.db` の `user_vocab` table + `learning_cache` table に格納する。SQLite library は `rusqlite + bundled` を採用し、新 crate `crates/kotoha-storage/` を導入して `rusqlite` の C 依存を 1 crate に閉じ込める
+- **Rationale**: ACID + WAL によるアプリレベル lock 不要、`PRAGMA user_version` + `include_str!` 同梱 SQL による正式 versioned migration、Phase 5 personalization で field 追加 (例: `context_embedding`) が `ALTER TABLE` 1 文で完結する。desktop standalone IME 方針 (ADR 0010 / Phase 5 spec) と整合し、PostgreSQL / Docker 採用 (Docker daemon 起動を IME runtime の前提条件にする案) は ADR 0015 で却下した
+- **Consequences**:
+  - **`BackendConfig` には新 variant を追加せず**、`DictionaryConfig.user_vocab_db_path: Option<PathBuf>` field 追加で対応する。D4 改訂版の「P2-A 集約型 + P2-D 再帰 wrap 型」の 2 variants 計画は本 D7 で変更しない (UserVocab は P2-A `BackendConfig::Dictionary { config }` の `DictionaryConfig` 拡張として組込まれ、Hybrid variant は P2-D で追加される)
+  - **`kotoha-storage` 新 crate は `kotoha-core` に逆依存しない**: Clean Architecture「Interface 依存」/ SOLID DIP に整合させ、`UserVocabStore` trait は `kotoha-storage` 側に置く
+  - **Phase 2 spec §5.2 の旧 TSV / JSONL / TOML 比較は archived**: 本 P2-B docs PR で parent-spec §5.2 を SQLite 採用根拠に後付け改訂し、§9 Open questions Q3 を「P2-B kickoff brainstorming (2026-04-25、ADR 0015)」で解消フラグ付きに更新する
+
+詳細な比較表 (TSV / CSV / JSONL / TOML / JSON / SQLite の 6 軸比較)、PostgreSQL / Docker 案の不採用根拠、desktop runtime 採用実績 (Firefox places.sqlite / Chrome cookies / iOS Photos.sqlite 等) は ADR 0015 に記載する。
+
 ## Consequences
 
 ### 正の帰結

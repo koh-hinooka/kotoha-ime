@@ -46,11 +46,12 @@ Phase 2「Dictionary and learning」は 4 milestone に分割する。詳細は 
 - Dictionary lookup の unit test / golden fixture (敬称 / 固有名詞 30+ cases)
 - BackendConfig 新 variant 追加 (ADR 0011 の non_exhaustive 拡張方針)
 
-### P2-B: User dictionary (工数目安 3〜5 日)
+### P2-B: User dictionary (工数目安 3〜5 日、実装範囲確定後の再見積は約 6.5 day)
 
-- User dict entry 追加 / 削除 / 列挙の API
-- TOML or JSONL persistence
-- CLI サブコマンド (kotoha-dict add / remove / list) の draft
+- User dict entry 追加 / 削除 / 列挙 / 詳細取得の API
+- SQLite 永続化 (`kotoha-storage` 新 crate、共用 DB `kotoha.db`、ADR 0015 / P2-B spec `docs/superpowers/specs/2026-04-25-p2-b-user-dictionary-design.md` 参照)
+- CLI サブコマンド `kotoha-dict {add, remove, list, show}` の実装 (`update` / `import` / `export` / `init` は Phase 6+ で扱う、P2-B spec §3.8 参照)
+- 工数目安 (3〜5 日) は維持しつつ、SQLite layer 厚み + validation 同時投入 + spec 同期更新により実装範囲確定後の再見積は約 6.5 day となる。3 PR (P2-A hardening pre-PR + P2-B docs PR + P2-B code PR) に分割して 1 PR あたりの規模を Branch Scope Policy 範囲内に収める (P2-B spec §11 参照)
 
 ### P2-C: Learning cache (工数目安 3〜5 日)
 

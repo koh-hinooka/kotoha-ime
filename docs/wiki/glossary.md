@@ -184,7 +184,7 @@
 
 ### Phase 2 Dictionary layer (P2-A 以降)
 
-以下 10 entry は ADR 0014 (`docs/adr/0014-phase-2-dictionary-layer-architecture.md`) および Phase 2 spec (`docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md`) で初出した用語を集約する。実装 identifier は P2-A kick-off で確定済のものと P2-D 以降で確定予定のものを含む。
+以下 15 entry は ADR 0014 (`docs/adr/0014-phase-2-dictionary-layer-architecture.md`) / ADR 0015 (`docs/adr/0015-kotoha-storage-sqlite-adoption.md`) および Phase 2 spec / P2-A spec / P2-B spec で初出した用語を集約する。実装 identifier は P2-A で確定済のもの、P2-B で確定したもの (kotoha-dict / kotoha-storage / kotoha.db / UserVocab / UserVocabStore の 5 entry)、P2-D 以降で確定予定のものを含む。
 
 ### 形態素解析 (Morphological Analysis)
 
@@ -230,17 +230,17 @@
 
 ### User dictionary (ユーザ辞書)
 
-- **定義**: ユーザが明示登録する個別語彙 (人名 / 所属組織名 / 業界固有語 / macro 展開) を保持する辞書。System dictionary と分離し、永続化形式 (TOML / JSONL / plain-text tsv) は P2-A kick-off で確定する。
-- **初出**: ADR 0014 D2 / Phase 2 spec §4.3
-- **対応する identifier**: User dictionary store module (`crates/kotoha-core/src/dict/` 配下、P2-A kick-off で配置確定)
-- **備考**: System dictionary の再配布サイクルに束縛されず、ユーザ側で独立に更新可能である。Phase 6 UX (MEMORY.md 参照) で設定 UI からの追加 / 編集 / import / export を実装予定。
+- **定義**: ユーザが明示登録する個別語彙 (人名 / 所属組織名 / 業界固有語 / macro 展開) を保持する辞書。System dictionary と分離し、永続化形式は SQLite 共用 DB `kotoha.db` の `user_vocab` table である (ADR 0015 / P2-B spec §5.1、2026-04-25 P2-B kick-off で確定)。
+- **初出**: ADR 0014 D2 / Phase 2 spec §4.3 / P2-B spec §5.1
+- **対応する identifier**: `kotoha_storage::user_vocab::SqliteUserVocabStore` (永続化層) + `kotoha_core::dict::user_vocab::UserVocab` (`VocabularyLookup` 実装層) の 2 component
+- **備考**: System dictionary の再配布サイクルに束縛されず、ユーザ側で独立に更新可能である。Phase 6 UX (MEMORY.md 参照) で設定 UI からの追加 / 編集 / import / export を実装予定。Phase 2 P2-B では `kotoha-dict` CLI subcommand (`add` / `remove` / `list` / `show` の 4 本) で編集する。
 
 ### Learning cache (学習キャッシュ)
 
-- **定義**: ユーザの変換候補選択履歴を永続化し、後続の rerank に利用する cache。in-memory LRU 構造で runtime に保持し、起動時 load + shutdown save で永続化する。同一 kana 入力に対するユーザ選択の偏りを時系列で反映する目的で導入する。
-- **初出**: ADR 0014 D3 / Phase 2 spec §5
-- **対応する identifier**: Learning cache module (`crates/kotoha-core/src/learning/` 配下、P2-A kick-off で配置確定)
-- **備考**: in-memory LRU の容量 / LRU eviction 方針 / 永続化 format (JSONL or sqlite) は P2-A kick-off で確定する。Phase 5 `KotohaNative` backend でも再利用可能な layer として設計する (ADR 0014 D6)。
+- **定義**: ユーザの変換候補選択履歴を永続化し、後続の rerank に利用する cache。永続化形式は SQLite 共用 DB `kotoha.db` の `learning_cache` table である (ADR 0015 / P2-B spec §5.2、2026-04-25 P2-B kick-off で確定)。runtime での in-memory LRU 形態を採るか SQLite 直読みのみとするかは P2-C kick-off で empirical 確定する。同一 kana 入力に対するユーザ選択の偏りを時系列で反映する目的で導入する。
+- **初出**: ADR 0014 D3 / Phase 2 spec §5 / ADR 0015
+- **対応する identifier**: `kotoha_storage::learning_cache::LearningCacheStore` trait (P2-B で skeleton 先出し、P2-C で `SqliteLearningCacheStore` 本実装)
+- **備考**: LRU 容量上限 (暫定 10,000 entry) / eviction 方針 / pruning 閾値は P2-C で empirical 確定する。Phase 5 `KotohaNative` backend でも再利用可能な layer として設計する (ADR 0014 D6)。
 
 ### Ranker / Reranker
 
@@ -255,6 +255,41 @@
 - **初出**: Phase 2 spec §3.3
 - **対応する identifier**: Ranker module 内の merge / dedupe 関数 (P2-A kick-off で実装確定)
 - **備考**: 同一 surface が Dictionary 側と LLM 側の両方から返る場合、source フィールド (Candidate 構造体に Phase 2 で追加予定) を保持して、後段の UX / debug に活用できる設計とする。
+
+### kotoha-dict
+
+- **定義**: Phase 2 P2-B で新規導入する CLI binary。`add` / `remove` / `list` / `show` の 4 subcommand で UserVocab を編集する。`update` / `import` / `export` / `init` は Phase 6+ で扱う。
+- **初出**: Phase 2 P2-B spec §7
+- **対応する identifier**: `crates/kotoha-cli/src/bin/dict.rs` + `crates/kotoha-cli/src/dict_cli.rs`(`--features dict-persist` で有効化)
+- **備考**: ADR 0014 D7 / ADR 0015 で決定した SQLite 共用 DB `kotoha.db` に対する CRUD 経路として動作する。global flag `--data-dir` / `--quiet` / `--json` を共有する。`<READING>` 引数は P2-B spec §7.7 の auto-detect 仕様 (全 hiragana → そのまま、全 ASCII → RomajiConverter、混在 → reject) に従う。
+
+### kotoha-storage
+
+- **定義**: Phase 2 P2-B で新規導入する Rust crate。SQLite ベースの永続化層を提供し、`Database` 構造体 / Migration runner / `UserVocabStore` / `LearningCacheStore` の 2 trait + 各実装(Sqlite + Mock)を含む。`rusqlite + bundled` を採用し、SQLite C library の依存を本 crate 内に閉じ込める。
+- **初出**: ADR 0015 / Phase 2 P2-B spec §4
+- **対応する identifier**: `crates/kotoha-storage/`(crate root)、`kotoha_storage::Database` / `kotoha_storage::user_vocab::UserVocabStore` 等
+- **備考**: Clean Architecture「Interface 依存」/ SOLID DIP に整合させるため、`kotoha-core` に逆依存しない。`kotoha-core::dict::user_vocab::UserVocab` が `Box<dyn UserVocabStore>` を field 保持することで `kotoha-core` 単体 build は SQLite C library コンパイル不要となる。
+
+### kotoha.db
+
+- **定義**: Kotoha Phase 2 が共用する単一 SQLite DB ファイル。`$KOTOHA_DATA_DIR` (未設定時は `$XDG_DATA_HOME/kotoha` または `~/.local/share/kotoha`) に配置し、`user_vocab` table (P2-B) と `learning_cache` table (P2-B で schema only、P2-C で本実装) を同梱する。WAL モード (`PRAGMA journal_mode = WAL`) で動作するため、隣接位置に `kotoha.db-wal` / `kotoha.db-shm` の 2 ファイルが補助生成される。
+- **初出**: ADR 0015 / Phase 2 spec §5.2 / Phase 2 P2-B spec §5
+- **対応する identifier**: `kotoha_storage::Database::open(path)` の path 引数、`kotoha_storage::path::resolve_data_dir` の戻り値 + `kotoha.db` 連結
+- **備考**: WAL モード採用により Phase 3 IBus engine と `kotoha-dict` CLI の同時 open が独自 file lock 実装なしで安全動作する。debugging / inspection は distro の `sqlite3` CLI (例: `sqlite3 kotoha.db 'SELECT * FROM user_vocab'`) で行う。
+
+### UserVocab
+
+- **定義**: Phase 2 P2-B で導入する user-managed 語彙 lookup 実装。P2-A で先出しした `VocabularyLookup` trait の 2 つ目の実装 (`CustomVocab` に続く)で、`kotoha-storage` crate の SQLite `user_vocab` table を backing storage とする。CustomVocab とは Vec 順序 `[CustomVocab, UserVocab]` で score tie 時の優先順位が決まる(curated CustomVocab 由来 entry を default で勝ち残らせる)。
+- **初出**: Phase 2 P2-B spec §3.7 / §6.7
+- **対応する identifier**: `crates/kotoha-core/src/dict/user_vocab.rs` の `UserVocab` 構造体 (`impl VocabularyLookup`)
+- **備考**: `UserVocab::lookup` は SQLite backend エラー時に空 Vec を返す (`unwrap_or_default()`) ことで、`VocabularyLookup::lookup` の sync signature を維持しつつ MorphologicalEngine 経路と CustomVocab 経路の recall を保護する。
+
+### UserVocabStore
+
+- **定義**: `kotoha-storage` crate 内で定義する trait。UserVocab の永続化抽象境界として `find_by_reading` / `list_all` / `insert` / `delete_by_id` / `delete_by_surface_reading` の 5 method を提供する。SQLite 実装 (`SqliteUserVocabStore`) と Mock 実装 (`MockUserVocabStore`) を持ち、Clean Architecture「Interface 依存」/ SOLID DIP に整合させる。
+- **初出**: Phase 2 P2-B spec §6.1
+- **対応する identifier**: `kotoha_storage::user_vocab::UserVocabStore` trait
+- **備考**: `Send + Sync` 制約を持ち、`Box<dyn UserVocabStore>` で `kotoha-core::dict::user_vocab::UserVocab` に注入される。`MockUserVocabStore` は SQLite 不在環境での Layer 2 integration test を可能にする目的で同 crate 内に配置する (P2-A `MockEngine` / `MockVocab` と同 pattern)。
 
 ## 5. LLM 推論とプロンプト
 

@@ -102,9 +102,9 @@ Learning cache は ユーザが選択した変換履歴を保持する。
   - `chosen_kanji`: ユーザが確定した surface (漢字交じり)
   - `frequency`: 選択回数の累積 (u32)
   - `last_used_at`: 最終選択時刻 (UNIX epoch seconds)
-- **persistence**: TOML or JSONL or TSV のいずれかを `~/.local/share/kotoha/learning.{toml|jsonl|tsv}` に配置する。P2-A で format を empirical 確定する。path は XDG Base Directory 仕様に従う
-- **load/save timing**: プロセス起動時に全件 in-memory LRU に load、shutdown (SIGTERM / 正常終了) 時に全件 save する。Phase 3 IBus 統合では plugin life cycle hook に合わせて再設計する
-- **eviction / pruning policy**: LRU 上限 (例: 10,000 entry) を超過した場合、`last_used_at` が最古の entry を evict する。上限値は P2-C で empirical 確定する
+- **persistence**: P2-B で SQLite を採用する (ADR 0015、2026-04-25 確定)。Phase 2 全体で単一 DB ファイル `kotoha.db` を共用し、Learning cache は `learning_cache` table に格納する。table schema は P2-B 着地時に v001 migration として同梱し、insert / update / lookup / eviction の実装は P2-C で行う。詳細は ADR 0015 / P2-B spec (`docs/superpowers/specs/2026-04-25-p2-b-user-dictionary-design.md`) §5 を参照
+- **load/save timing**: SQLite WAL モード採用により、起動時 / shutdown 時の bulk load / save は不要となる。各 user 操作 ごとに `INSERT OR REPLACE` で永続化する設計を P2-C で確定する。Phase 3 IBus 統合では plugin life cycle hook で `Database::open` / `Drop` の境界を扱う
+- **eviction / pruning policy**: LRU 上限 (例: 10,000 entry) を超過した場合、`last_used_at` が最古の entry を `DELETE` する。上限値は P2-C で empirical 確定する。`idx_learning_cache_last_used` index は v002 schema (P2-C) で追加予定
 
 詳細は P2-A kick-off で確定する。
 
@@ -206,15 +206,17 @@ Phase 2 では上記 4 フィールドに限定する。Phase 5 custom model の
 
 ### 5.2 persistence
 
-永続化 format の候補は 3 案とする。P2-A で empirical 確定する。
+P2-B kick-off brainstorming (2026-04-25) で SQLite (`rusqlite + bundled`) 採用を確定した (ADR 0015)。Phase 2 全体は単一 DB ファイル `kotoha.db` を `$KOTOHA_DATA_DIR` (未設定時は `$XDG_DATA_HOME/kotoha` または `~/.local/share/kotoha`) に配置し、UserVocab (P2-B) と Learning cache (P2-C) を `user_vocab` / `learning_cache` の 2 table に同梱する。
 
-| 候補 | 利点 | 欠点 |
-|---|---|---|
-| TOML | 人手で読み書き可能、parse library 成熟 | レコード数増で file size 膨張 |
-| JSONL | 1 行 1 record で append 書込みが簡単 | parse cost がレコード数 N に比例 |
-| TSV | 最小 format、parse 最速 | escape 規則の手作業 define が必要 |
+採用根拠の要約は以下のとおりである。詳細は ADR 0015 を参照。
 
-default 案は「起動時 load + shutdown save の full rewrite」で運用できる TSV を第一候補とし、Phase 5 personalization で append 書込みが必要となった時点で JSONL への migration を検討する。
+- **ACID + WAL によるアプリレベル lock 不要**: Phase 3 IBus engine と `kotoha-dict` CLI が同 DB を別プロセスから open するシナリオでも、SQLite の WAL モードが writer / readers の並行性を扱う
+- **`PRAGMA user_version` で正式 versioned migration**: schema 進化 (Phase 5 personalization で `context_embedding` 追加等) が `ALTER TABLE` 1 文で完結する
+- **UserVocab + Learning cache の同 DB 集約**: 2 table 跨ぎの ATOMIC transaction が取得可能、運用 / backup / 削除の対象 file 数が 1 個に収束する
+- **escape edge case のバイナリセーフ性**: SQLite TEXT 型は TAB / 改行 / NULL 文字 / bidi character を escape なしで保持する
+- **desktop runtime 採用実績**: Firefox places.sqlite / Chrome cookies / iOS Photos.sqlite 等が SQLite を採用しており、Kotoha (UserVocab 数千件 + Learning cache 上限 10,000) は SQLite の適用域の極めて下端である
+
+旧 TSV / JSONL / TOML / CSV / JSON 候補と PostgreSQL (Docker 同梱) 案の比較表 / 不採用根拠は ADR 0015 で archived とする。Phase 2 spec の本節は SQLite 採用方針のみを保持する。
 
 ### 5.3 load/save timing
 
@@ -237,16 +239,15 @@ Learning cache の in-memory LRU 上限を 10,000 entry とする (暫定値)。
 
 ### 6.1 既存 Backend trait を壊さず新 variant で対応する
 
-ADR 0011 で確定した `KanjiBackend` trait (method 2 本: `convert` / `model_id`) は変更しない。Phase 2 は以下を新規追加する。
+ADR 0011 で確定した `KanjiBackend` trait (method 2 本: `convert` / `model_id`) は変更しない。Phase 2 は以下を段階的に新規追加する。
 
-- 新 struct: Dictionary 補完付き backend を実装する 1 つ以上の struct (命名は P2-A で確定、候補: `HybridBackend` / `DictionaryAugmentedBackend`)
-- 新 `BackendConfig` variant: §3.4 の候補 1 / 候補 2 から P2-A で選択した 1 つ
-- `load_backend` factory の新 arm: 新 variant を dispatch する arm を追加 (ADR 0011 D3 と同一パターン)
-- 新 feature flag: ADR 0012 の方針に従い `dict` / `learning` 等の optional dependency を隔離する feature flag を追加 (命名は P2-A で確定)
+- **P2-A 確定済**: `BackendConfig::Dictionary { config: DictionaryConfig }` variant、`DictionaryBackend` struct、`MorphologicalEngine` / `VocabularyLookup` trait、`dict` / `dict-smoke` feature flag (P2-A spec §4 参照)
+- **P2-B 追加**: `DictionaryConfig` 構造体に `user_vocab_db_path: Option<PathBuf>` field を追加する。`#[non_exhaustive]` 属性は P2-A で付与済のため、本追加は ADR 0011 D2 整合の非破壊変更となる。`load_backend` factory の `BackendConfig::Dictionary` arm は `Some(path)` 検出時に `kotoha-storage::Database::open(path)` 経由で `UserVocab` を構築し `Vec<Box<dyn VocabularyLookup>>` に追加する。順序は `[CustomVocab, UserVocab]` で固定し、score tie 時に curated CustomVocab 由来 entry が勝ち残る (詳細は P2-B spec §3.7 / §8)。新 feature flag `dict-persist` を `kotoha-core` / `kotoha-cli` に追加する (default = []、ADR 0012 D5 整合)
+- **P2-D 追加予定**: `BackendConfig::Hybrid { llm: Box<BackendConfig>, dict: DictionaryConfig, learning: LearningConfig }` variant (再帰 wrap 型)、Ranker rerank 実装 (§3.3)
 
 既存 `LlamaCppBackend` / `MockBackend` / `BackendConfig::LlamaCpp` / `BackendConfig::Mock` は変更しない。Phase 1 14/15 baseline の退行を避けるため、Phase 2 regression test (§7.4) を追加する。
 
-詳細は P2-A kick-off で確定する。
+詳細は子 spec (P2-A spec / P2-B spec) で確定する。
 
 ### 6.2 ConvertOptions 拡張の検討
 
@@ -343,7 +344,7 @@ User dict / learning cache の複数機同期は Phase 6+ (UX polish) に送る�
 
 ### 8.4 GUI dict editor
 
-User dict を編集する GUI は Phase 6+ / Phase 7 に送る。Phase 2 は CLI サブコマンド (`kotoha-dict add / remove / list`) の draft のみを対象とする (P2-B 範囲)。
+User dict を編集する GUI は Phase 6+ / Phase 7 に送る。Phase 2 は CLI binary `kotoha-dict` の `add` / `remove` / `list` / `show` の 4 subcommand を P2-B で実装する (draft → 実装範囲確定、2026-04-25 P2-B kick-off brainstorming)。`update` / `import` / `export` / `init` の 4 subcommand は Phase 6+ で扱う (P2-B spec §2 / §3.8 参照)。
 
 ## 9. Open questions
 
@@ -353,7 +354,7 @@ P2-A kick-off 時点で解消する 6 点を以下に列挙する。
 |---|---|---|
 | Q1 | SudachiDict-core (70MB) と full (500MB) のどちらを Phase 2 default とするか | P2-A kick-off 初週 (pilot recall 比較) |
 | Q2 | `BackendConfig` 新 variant 名を `DictionaryAugmented` / `Hybrid` のどちらにするか | P2-A kick-off で確定 |
-| Q3 | Learning cache 永続化 format を TOML / JSONL / TSV のどれにするか | P2-A kick-off で確定 |
+| Q3 ✓ | Learning cache 永続化 format を TOML / JSONL / TSV のどれにするか | **P2-B kick-off brainstorming (2026-04-25、ADR 0015) で SQLite 採用を確定** |
 | Q4 | Ranker 重みの defaults (dict 0.95 / LLM 1.0) を P2-D 完了時点でどう empirical tuning するか | P2-D で golden fixture の pass rate で確定 |
 | Q5 | Dictionary load を compile-time 埋込 / runtime load のどちらにするか | P2-A kick-off で確定 (default は runtime load) |
 | Q6 | Phase 5 integration plan — Phase 5 `KotohaNative` custom model が Phase 2 の Dictionary / Learning 層を継承するか、別 backend として独立構築するか | Phase 5 kick-off で確定 (Phase 2 の時点では「継承可能な設計を保つ」方針を D6 で定める) |
