@@ -81,6 +81,14 @@ pub enum BackendConfig {
         /// prompt. Dispatched by `LlamaCppBackend::convert`.
         prompt_template: PromptTemplate,
     },
+
+    /// SudachiDict-based dictionary backend (P2-A、spec §3.3 / §4.4).
+    /// Constructible only when the `dict` feature flag is enabled at build time.
+    #[cfg(feature = "dict")]
+    Dictionary {
+        /// Engine-neutral config (spec §3.4 Q4).
+        config: crate::dict::DictionaryConfig,
+    },
 }
 
 /// Abstraction for a kana-to-kanji conversion backend.
@@ -247,6 +255,11 @@ pub fn load_backend(config: &BackendConfig) -> Result<Box<dyn KanjiBackend>, Kan
         BackendConfig::LlamaCpp { .. } => Err(KanjiError::FeatureDisabled {
             feature: "llama-cpp",
         }),
+
+        #[cfg(feature = "dict")]
+        BackendConfig::Dictionary { config } => {
+            Ok(Box::new(crate::dict::DictionaryBackend::load(config)?))
+        }
     }
 }
 
@@ -499,5 +512,56 @@ mod tests {
             msg.contains("<u>"),
             "Debug must include user_wrapper: {msg}"
         );
+    }
+
+    // ======================================================================
+    // BackendConfig::Dictionary (P2-A)
+    // ======================================================================
+
+    #[cfg(feature = "dict")]
+    #[test]
+    fn backend_config_dictionary_is_clone_and_debug() {
+        use crate::dict::DictionaryConfig;
+        let cfg = BackendConfig::Dictionary {
+            config: DictionaryConfig {
+                system_dict_path: Some(PathBuf::from("/tmp/system_core.dic")),
+                custom_vocab_path: None,
+            },
+        };
+        let cloned = cfg.clone();
+        let msg = format!("{cloned:?}");
+        assert!(msg.contains("Dictionary"));
+        assert!(msg.contains("system_dict_path"));
+    }
+
+    #[cfg(feature = "dict")]
+    #[test]
+    fn dictionary_config_load_backend_missing_env_errors_backend() {
+        use crate::dict::DictionaryConfig;
+        // env var も config も無い状態で load_backend を呼ぶと、actionable な
+        // hint を含む KanjiError::Backend を返す契約。
+        // 注意: `std::env::remove_var` は process-global state の変更であり、
+        // 並列実行する他 test が同 env var を set した場合 race する。
+        // P2-A 範囲では本 risk を受容する(tasks.md Notes §2)。
+        std::env::remove_var("KOTOHA_SYSTEM_DICT_PATH");
+        let cfg = BackendConfig::Dictionary {
+            config: DictionaryConfig::default(),
+        };
+        // `Box<dyn KanjiBackend>` は `Debug` を実装しないため Result 全体は
+        // `{:?}` で format できない。Err / Ok を別 arm で個別 match する。
+        match load_backend(&cfg) {
+            Err(KanjiError::Backend { reason }) => {
+                assert!(
+                    reason.contains("KOTOHA_SYSTEM_DICT_PATH"),
+                    "error reason should name the env var: {reason}"
+                );
+                assert!(
+                    reason.contains("system_dict_path"),
+                    "error reason should name the config field: {reason}"
+                );
+            }
+            Err(other) => panic!("expected Backend, got Err: {other:?}"),
+            Ok(_) => panic!("expected Backend, got Ok(backend)"),
+        }
     }
 }

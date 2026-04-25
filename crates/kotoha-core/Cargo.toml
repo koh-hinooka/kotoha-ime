@@ -14,6 +14,9 @@ tracing = { workspace = true }
 # `llama-cpp-2` is optional so default features do not pull in the C++ library and
 # its bindgen build step. Activated only when the `llama-cpp` feature is enabled.
 llama-cpp-2 = { workspace = true, optional = true }
+# `sudachi` is optional so default features do not pull in the git-sourced dep tree.
+# Activated only when the `dict` feature is enabled (P2-A spec §7.1).
+sudachi = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
@@ -32,3 +35,9 @@ llama-cpp = ["dep:llama-cpp-2"]
 # Kept separate from `llama-cpp` so that lefthook pre-push, which only runs
 # default features, does not attempt to load a real GGUF model.
 llama-cpp-smoke = ["llama-cpp"]
+# `dict` gates DictionaryBackend (SudachiDict baseline, P2-A spec §3.1 Q1).
+# default = [] を維持し ADR 0012 D5 整合。
+dict = ["dep:sudachi"]
+# `dict-smoke` is the opt-in gate for Layer 3 golden fixture (530 cases).
+# Kept separate from `dict` so lefthook pre-push does not attempt to load SudachiDict-core.
+dict-smoke = ["dict"]
