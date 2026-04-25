@@ -13,6 +13,7 @@ use std::path::PathBuf;
 /// - [`StorageError::Sqlite`]: rusqlite backend 失敗
 /// - [`StorageError::Io`]: filesystem IO 失敗
 /// - [`StorageError::Migration`]: migration apply 失敗
+/// - [`StorageError::QuotaExceeded`]: 行数上限到達(spec §F6 / sec-M5)
 /// - [`StorageError::HomeDirNotFound`]: $HOME / $XDG_DATA_HOME 解決不能
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -30,6 +31,8 @@ pub enum StorageError {
     Io(#[from] std::io::Error),
     #[error("migration error: {0}")]
     Migration(String),
+    #[error("quota exceeded: {table} exceeded max {max} rows")]
+    QuotaExceeded { table: String, max: usize },
     #[error("home directory not found: $HOME / $XDG_DATA_HOME / KOTOHA_DATA_DIR all unset")]
     HomeDirNotFound,
 }
@@ -96,5 +99,16 @@ mod tests {
         let err = StorageError::HomeDirNotFound;
         let msg = format!("{err}");
         assert!(msg.contains("home directory not found"));
+    }
+
+    #[test]
+    fn quota_exceeded_display_includes_table_and_max() {
+        let err = StorageError::QuotaExceeded {
+            table: "user_vocab".to_string(),
+            max: 50_000,
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("user_vocab"));
+        assert!(msg.contains("50000") || msg.contains("50_000"));
     }
 }

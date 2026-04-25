@@ -83,6 +83,14 @@ impl UserVocabStore for MockUserVocabStore {
         validate_score(record.score)?;
 
         let mut records = self.records.lock().unwrap();
+        // SqliteUserVocabStore と挙動を合わせるため、Mock 側でも行数上限を強制する
+        // (sec-M5 / spec §F6)。
+        if records.len() >= crate::user_vocab::sqlite::USER_VOCAB_MAX_ROWS {
+            return Err(StorageError::QuotaExceeded {
+                table: "user_vocab".to_string(),
+                max: crate::user_vocab::sqlite::USER_VOCAB_MAX_ROWS,
+            });
+        }
         if records
             .iter()
             .any(|r| r.surface == record.surface && r.reading == record.reading)

@@ -7,6 +7,9 @@ use crate::error::StorageError;
 use crate::user_vocab::store::{UserVocabRecord, UserVocabStore};
 use crate::validation::{validate_pos, validate_reading, validate_score, validate_surface};
 
+/// User vocab 行数上限(sec-M5、spec §F6)。
+pub const USER_VOCAB_MAX_ROWS: usize = 50_000;
+
 pub struct SqliteUserVocabStore {
     pub(crate) db: Arc<Database>,
 }
@@ -98,6 +101,15 @@ impl UserVocabStore for SqliteUserVocabStore {
         };
 
         let conn = self.db.lock_conn();
+        // 行数上限チェック(sec-M5、spec §F6)。check + INSERT を同一 lock 下で
+        // 実行することで atomic な check-and-insert を保証する。
+        let count: i64 = conn.query_row("SELECT count(*) FROM user_vocab", [], |r| r.get(0))?;
+        if count as usize >= USER_VOCAB_MAX_ROWS {
+            return Err(StorageError::QuotaExceeded {
+                table: "user_vocab".to_string(),
+                max: USER_VOCAB_MAX_ROWS,
+            });
+        }
         let result = conn.execute(
             "INSERT INTO user_vocab (surface, reading, pos, score, created_at, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
