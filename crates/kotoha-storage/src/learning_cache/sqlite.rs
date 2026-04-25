@@ -17,6 +17,13 @@ impl SqliteLearningCacheStore {
     }
 }
 
+/// `SqliteLearningCacheStore` の P2-B 動作:
+///
+/// - `lookup`: 常に空 `Vec` を返す(LearningCache の lookup 実装は P2-C)
+/// - `record_choice`: 常に Ok(())(record 実装は P2-C)
+/// - `evict_lru`: 常に Ok(0)(eviction 実装は P2-C)
+///
+/// table `learning_cache` schema は v001 migration で同梱済(spec §5.2)。
 impl LearningCacheStore for SqliteLearningCacheStore {
     fn lookup(
         &self,
