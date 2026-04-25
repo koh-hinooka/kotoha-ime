@@ -17,6 +17,9 @@ llama-cpp-2 = { workspace = true, optional = true }
 # `sudachi` is optional so default features do not pull in the git-sourced dep tree.
 # Activated only when the `dict` feature is enabled (P2-A spec §7.1).
 sudachi = { workspace = true, optional = true }
+# `kotoha-storage` is optional so default features do not pull in rusqlite C dep.
+# Activated only when the `dict-persist` feature is enabled (P2-B spec §4.3).
+kotoha-storage = { path = "../kotoha-storage", optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
@@ -42,3 +45,6 @@ dict = ["dep:sudachi"]
 # `dict-smoke` is the opt-in gate for Layer 3 golden fixture (530 cases).
 # Kept separate from `dict` so lefthook pre-push does not attempt to load SudachiDict-core.
 dict-smoke = ["dict"]
+# `dict-persist` gates UserVocab + SQLite-backed user dict (P2-B spec §4.3).
+# transitively enables `dict` because UserVocab impl VocabularyLookup (P2-A trait).
+dict-persist = ["dep:kotoha-storage", "dict"]
