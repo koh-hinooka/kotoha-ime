@@ -124,14 +124,15 @@ mod tests {
     }
 
     #[test]
-    fn open_in_memory_sets_pragma_journal_mode_wal() {
+    fn open_in_memory_journal_mode_is_memory() {
         let db = Database::open_in_memory().expect("memory open");
         let conn = db.lock_conn();
         let mode: String = conn
             .query_row("PRAGMA journal_mode", [], |r| r.get(0))
             .unwrap();
-        // memory or wal のどちらかが返る(:memory: の場合 memory)
-        assert!(mode == "memory" || mode == "wal");
+        // `:memory:` connection の journal_mode は常に "memory" になる(SQLite spec)。
+        // WAL の挙動は file-backed の `open_with_path_sets_wal_journal_mode` 側でカバーする。
+        assert_eq!(mode, "memory");
     }
 
     #[test]
