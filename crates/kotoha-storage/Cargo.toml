@@ -11,7 +11,6 @@ description = "Kotoha: SQLite-based persistence layer for user dictionary and le
 [dependencies]
 rusqlite = { workspace = true }
 thiserror = { workspace = true }
-tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

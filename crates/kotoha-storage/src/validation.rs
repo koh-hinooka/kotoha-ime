@@ -321,6 +321,71 @@ mod tests {
             other => panic!("unexpected: {other:?}"),
         }
     }
+
+    // ====================
+    // validate_field byte-size boundary(§9.1, `len() > 256` exclusive reject)
+    // ====================
+
+    #[test]
+    fn validate_field_accepts_exactly_256_bytes() {
+        // 256 ASCII chars = 256 bytes (boundary inclusive — `.len() > 256` reject is exclusive)
+        let s = "a".repeat(256);
+        assert!(validate_field("surface", &s).is_ok());
+    }
+
+    #[test]
+    fn validate_field_rejects_257_bytes() {
+        let s = "a".repeat(257);
+        let err = validate_field("surface", &s).unwrap_err();
+        match err {
+            StorageError::InvalidField { reason, .. } => {
+                assert_eq!(reason, "byte size > 256");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    // ====================
+    // PUA allowlist boundary(§9.1.1, U+EE00..=U+EE03 + supplementary PUA)
+    // ====================
+
+    #[test]
+    fn validate_field_rejects_pua_just_below_allowlist() {
+        // U+EDFF = one codepoint before the Phase 5 allowlist start (U+EE00)
+        let err = validate_field("surface", "ab\u{EDFF}cd").unwrap_err();
+        match err {
+            StorageError::InvalidField { reason, .. } => {
+                assert_eq!(reason, "PUA char");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_field_rejects_pua_just_above_allowlist() {
+        // U+EE04 = one codepoint after the Phase 5 allowlist end (U+EE03)
+        let err = validate_field("surface", "ab\u{EE04}cd").unwrap_err();
+        assert!(matches!(err, StorageError::InvalidField { .. }));
+    }
+
+    #[test]
+    fn validate_field_rejects_supplementary_pua_lower_bound() {
+        // U+F0000 = supplementary PUA range start (Plane 15)
+        let err = validate_field("surface", "ab\u{F0000}cd").unwrap_err();
+        match err {
+            StorageError::InvalidField { reason, .. } => {
+                assert_eq!(reason, "PUA char");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_field_rejects_supplementary_pua_upper_bound() {
+        // U+10FFFD = last PUA codepoint (Plane 16)
+        let err = validate_field("surface", "ab\u{10FFFD}cd").unwrap_err();
+        assert!(matches!(err, StorageError::InvalidField { .. }));
+    }
 }
 
 #[cfg(test)]

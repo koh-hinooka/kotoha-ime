@@ -63,4 +63,12 @@ mod tests {
         let store = SqliteLearningCacheStore::new(db);
         store.record_choice("あい", "愛").expect("noop ok");
     }
+
+    #[test]
+    fn p2b_stub_evict_lru_returns_zero() {
+        let db = Database::open_in_memory().expect("memory open");
+        let store = SqliteLearningCacheStore::new(db);
+        let evicted = store.evict_lru(100).expect("noop ok");
+        assert_eq!(evicted, 0);
+    }
 }
