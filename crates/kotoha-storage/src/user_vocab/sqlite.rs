@@ -1,10 +1,147 @@
-//! SqliteUserVocabStore(Task B2〜B7 で実装)。
+//! SqliteUserVocabStore: UserVocabStore の SQLite 実装(spec §6.1 / §6.4)。
 
 use std::sync::Arc;
 
 use crate::database::Database;
+use crate::error::StorageError;
+use crate::user_vocab::store::{UserVocabRecord, UserVocabStore};
+// validate_surface / validate_pos / validate_score は Task B3 insert で使用するため
+// 本 step では参照しないが、import を残しておく(`_suppress_unused` helper は
+// `#[cfg(test)]` 限定で non-test build では効かないため、ここでは
+// `#[allow(unused_imports)]` を選択)。
+#[allow(unused_imports)]
+use crate::validation::{validate_pos, validate_reading, validate_score, validate_surface};
 
 pub struct SqliteUserVocabStore {
-    #[allow(dead_code)] // B2〜B7 で使用開始
     pub(crate) db: Arc<Database>,
+}
+
+impl SqliteUserVocabStore {
+    pub fn new(db: Arc<Database>) -> Self {
+        Self { db }
+    }
+}
+
+impl UserVocabStore for SqliteUserVocabStore {
+    fn find_by_reading(
+        &self,
+        reading: &str,
+        limit: usize,
+    ) -> Result<Vec<UserVocabRecord>, StorageError> {
+        validate_reading(reading)?;
+        let conn = self.db.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, surface, reading, pos, score, created_at, updated_at \
+             FROM user_vocab \
+             WHERE reading = ?1 \
+             ORDER BY score DESC \
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![reading, limit as i64], |row| {
+            Ok(UserVocabRecord {
+                id: Some(row.get(0)?),
+                surface: row.get(1)?,
+                reading: row.get(2)?,
+                pos: row.get(3)?,
+                score: row.get::<_, f64>(4)? as f32,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    fn list_all(
+        &self,
+        _limit: usize,
+        _offset: usize,
+    ) -> Result<Vec<UserVocabRecord>, StorageError> {
+        // Task B4 で実装
+        unimplemented!("Task B4")
+    }
+
+    fn insert(&self, _record: UserVocabRecord) -> Result<i64, StorageError> {
+        // Task B3 で実装
+        unimplemented!("Task B3")
+    }
+
+    fn delete_by_id(&self, _id: i64) -> Result<(), StorageError> {
+        unimplemented!("Task B5")
+    }
+
+    fn delete_by_surface_reading(
+        &self,
+        _surface: &str,
+        _reading: &str,
+    ) -> Result<(), StorageError> {
+        unimplemented!("Task B6")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh_store() -> SqliteUserVocabStore {
+        let db = Database::open_in_memory().expect("memory open");
+        SqliteUserVocabStore::new(db)
+    }
+
+    fn seed_row(store: &SqliteUserVocabStore, surface: &str, reading: &str, score: f32) {
+        let conn = store.db.lock_conn();
+        conn.execute(
+            "INSERT INTO user_vocab (surface, reading, pos, score, created_at, updated_at) \
+             VALUES (?1, ?2, '名詞', ?3, 0, 0)",
+            rusqlite::params![surface, reading, score as f64],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn find_by_reading_returns_empty_for_unknown() {
+        let store = fresh_store();
+        let result = store.find_by_reading("みず", 10).expect("ok");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn find_by_reading_returns_single_match() {
+        let store = fresh_store();
+        seed_row(&store, "日野岡", "ひのおか", 1.0);
+        let result = store.find_by_reading("ひのおか", 10).expect("ok");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].surface, "日野岡");
+    }
+
+    #[test]
+    fn find_by_reading_orders_by_score_desc() {
+        let store = fresh_store();
+        seed_row(&store, "日野岡", "ひのおか", 0.5);
+        seed_row(&store, "ひの岡", "ひのおか", 1.5);
+        let result = store.find_by_reading("ひのおか", 10).expect("ok");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].surface, "ひの岡"); // higher score
+        assert_eq!(result[1].surface, "日野岡");
+    }
+
+    #[test]
+    fn find_by_reading_respects_limit() {
+        let store = fresh_store();
+        for i in 0..5 {
+            seed_row(&store, &format!("s{}", i), "ひのおか", i as f32);
+        }
+        let result = store.find_by_reading("ひのおか", 3).expect("ok");
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn find_by_reading_rejects_non_hiragana() {
+        let store = fresh_store();
+        let err = store.find_by_reading("カタカナ", 10).unwrap_err();
+        assert!(matches!(err, StorageError::InvalidField { .. }));
+    }
 }
