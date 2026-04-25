@@ -60,3 +60,46 @@ fn add_subcommand_returns_2_on_nan_score() {
         .assert()
         .code(2);
 }
+
+#[test]
+#[serial]
+fn remove_subcommand_by_id_succeeds() {
+    let tmp = tempdir().unwrap();
+    cli()
+        .env("KOTOHA_DATA_DIR", tmp.path())
+        .args(["add", "X", "あ"])
+        .assert()
+        .success();
+    cli()
+        .env("KOTOHA_DATA_DIR", tmp.path())
+        .args(["remove", "1"])
+        .assert()
+        .success();
+}
+
+#[test]
+#[serial]
+fn remove_subcommand_by_id_returns_4_when_absent() {
+    let tmp = tempdir().unwrap();
+    cli()
+        .env("KOTOHA_DATA_DIR", tmp.path())
+        .args(["remove", "999"])
+        .assert()
+        .code(4);
+}
+
+#[test]
+#[serial]
+fn remove_subcommand_by_surface_reading_succeeds() {
+    let tmp = tempdir().unwrap();
+    cli()
+        .env("KOTOHA_DATA_DIR", tmp.path())
+        .args(["add", "日野岡", "ひのおか"])
+        .assert()
+        .success();
+    cli()
+        .env("KOTOHA_DATA_DIR", tmp.path())
+        .args(["remove", "--surface", "日野岡", "--reading", "ひのおか"])
+        .assert()
+        .success();
+}

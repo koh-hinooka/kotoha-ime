@@ -203,6 +203,60 @@ pub fn run_add(store: &dyn UserVocabStore, args: &AddArgs, quiet: bool) -> Resul
     }
 }
 
+/// `kotoha-dict remove` 実装。
+///
+/// # Errors
+///
+/// Exit code を文字列で返す(`Result<exit_code, String>`)。
+pub fn run_remove(
+    store: &dyn UserVocabStore,
+    args: &RemoveArgs,
+    quiet: bool,
+) -> Result<i32, String> {
+    let result = match (args.id, &args.surface, &args.reading) {
+        (Some(id), None, None) => store.delete_by_id(id).map(|()| (id, None)),
+        (None, Some(s), Some(r)) => {
+            let normalized = match normalize_reading(r) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return Ok(EXIT_INPUT);
+                }
+            };
+            store
+                .delete_by_surface_reading(s, &normalized)
+                .map(|()| (0, Some(format!("{s}/{normalized}"))))
+        }
+        _ => {
+            eprintln!("error: specify either <ID> or both --surface and --reading");
+            return Ok(EXIT_INPUT);
+        }
+    };
+    match result {
+        Ok((id, label)) => {
+            if !quiet {
+                match label {
+                    Some(l) => println!("removed: {l}"),
+                    None => println!("removed: id={id}"),
+                }
+            }
+            Ok(EXIT_OK)
+        }
+        Err(StorageError::NotFound) => {
+            eprintln!("error: entry not found");
+            Ok(EXIT_NOT_FOUND)
+        }
+        Err(StorageError::InvalidField { name, reason }) => {
+            eprintln!("error: invalid {name}: {reason}");
+            Ok(EXIT_INPUT)
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(EXIT_INTERNAL)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
