@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 pub use self::backend::DictionaryBackend;
 pub use self::engine::{EngineCandidate, MorphologicalEngine};
+#[cfg(feature = "dict-persist")]
+pub use self::user_vocab::UserVocab;
 pub use self::vocab::{VocabEntry, VocabularyLookup};
 
 /// Engine 非依存の Dictionary backend 設定(spec §3.4 Q4)。
@@ -51,6 +53,8 @@ pub(crate) mod backend;
 pub(crate) mod custom_vocab;
 pub(crate) mod engine;
 pub(crate) mod sudachi_adapter;
+#[cfg(feature = "dict-persist")]
+pub(crate) mod user_vocab;
 pub(crate) mod vocab;
 
 #[cfg(test)]
