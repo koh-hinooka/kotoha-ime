@@ -321,6 +321,29 @@ mod tests {
             other => panic!("unexpected: {other:?}"),
         }
     }
+
+    // ====================
+    // validate_field byte-size boundary(§9.1, `len() > 256` exclusive reject)
+    // ====================
+
+    #[test]
+    fn validate_field_accepts_exactly_256_bytes() {
+        // 256 ASCII chars = 256 bytes (boundary inclusive — `.len() > 256` reject is exclusive)
+        let s = "a".repeat(256);
+        assert!(validate_field("surface", &s).is_ok());
+    }
+
+    #[test]
+    fn validate_field_rejects_257_bytes() {
+        let s = "a".repeat(257);
+        let err = validate_field("surface", &s).unwrap_err();
+        match err {
+            StorageError::InvalidField { reason, .. } => {
+                assert_eq!(reason, "byte size > 256");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
 }
 
 #[cfg(test)]
