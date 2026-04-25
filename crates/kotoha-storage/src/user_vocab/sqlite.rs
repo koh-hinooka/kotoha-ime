@@ -10,6 +10,62 @@ use crate::validation::{validate_pos, validate_reading, validate_score, validate
 /// User vocab 行数上限(sec-M5、spec §F6)。
 pub const USER_VOCAB_MAX_ROWS: usize = 50_000;
 
+/// テスト時の上限上書き(0 = unset → `USER_VOCAB_MAX_ROWS` を使用)。
+///
+/// `cargo test` ビルドでのみ意味を持ち、production binary には含まれない。
+/// 50,000 行 を実際に挿入するテストは時間 / メモリの観点で非現実的なため、
+/// 単体テストはこの override を介して小さな上限値で QuotaExceeded を検証する。
+#[cfg(test)]
+pub(crate) static USER_VOCAB_MAX_ROWS_TEST_OVERRIDE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// override の serialization 用 mutex(複数 test が同時 override しないよう直列化)。
+#[cfg(test)]
+pub(crate) static QUOTA_OVERRIDE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 行数上限の effective value を返す(`#[cfg(test)]` 時のみ override を考慮)。
+#[inline]
+pub(crate) fn effective_max_rows() -> usize {
+    #[cfg(test)]
+    {
+        let v = USER_VOCAB_MAX_ROWS_TEST_OVERRIDE.load(std::sync::atomic::Ordering::SeqCst);
+        if v != 0 {
+            return v;
+        }
+    }
+    USER_VOCAB_MAX_ROWS
+}
+
+/// テスト中だけ `USER_VOCAB_MAX_ROWS` を `cap` に上書きする RAII guard。
+///
+/// drop 時に自動で 0(無効)に戻すので、test 同士の干渉を防げる。
+/// override は process 全体の static なため、複数 test が同時に
+/// override を活性化すると競合する。よって `QUOTA_OVERRIDE_LOCK` を
+/// 取得し直列化する。
+#[cfg(test)]
+pub(crate) struct QuotaOverrideGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl QuotaOverrideGuard {
+    pub(crate) fn new(cap: usize) -> Self {
+        // poison していても続行(直前 test の panic でも次 test を回したい)。
+        let lock = QUOTA_OVERRIDE_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        USER_VOCAB_MAX_ROWS_TEST_OVERRIDE.store(cap, std::sync::atomic::Ordering::SeqCst);
+        Self { _lock: lock }
+    }
+}
+
+#[cfg(test)]
+impl Drop for QuotaOverrideGuard {
+    fn drop(&mut self) {
+        USER_VOCAB_MAX_ROWS_TEST_OVERRIDE.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 pub struct SqliteUserVocabStore {
     pub(crate) db: Arc<Database>,
 }
@@ -103,11 +159,12 @@ impl UserVocabStore for SqliteUserVocabStore {
         let conn = self.db.lock_conn();
         // 行数上限チェック(sec-M5、spec §F6)。check + INSERT を同一 lock 下で
         // 実行することで atomic な check-and-insert を保証する。
+        let max_rows = effective_max_rows();
         let count: i64 = conn.query_row("SELECT count(*) FROM user_vocab", [], |r| r.get(0))?;
-        if count as usize >= USER_VOCAB_MAX_ROWS {
+        if count as usize >= max_rows {
             return Err(StorageError::QuotaExceeded {
                 table: "user_vocab".to_string(),
-                max: USER_VOCAB_MAX_ROWS,
+                max: max_rows,
             });
         }
         let result = conn.execute(
@@ -446,5 +503,45 @@ mod tests {
         let store = fresh_store();
         let err = store.delete_by_surface_reading("x", "abc").unwrap_err();
         assert!(matches!(err, StorageError::InvalidField { .. }));
+    }
+
+    /// sec-M5 review T-C1: 行数上限到達時に `QuotaExceeded` を返すことを検証する。
+    /// production 値 50,000 は test では非現実的なので `QuotaOverrideGuard` で
+    /// 上限を 5 に縮める。
+    #[test]
+    fn sqlite_insert_rejects_at_quota_cap() {
+        let _guard = QuotaOverrideGuard::new(5);
+        let store = fresh_store();
+        // 上限ぴったり 5 件まで insert は成功する。
+        for i in 0..5 {
+            let reading = char::from_u32(0x3042 + i)
+                .expect("valid hiragana code point")
+                .to_string();
+            let r = UserVocabRecord {
+                id: None,
+                surface: format!("filler-{i}"),
+                reading,
+                pos: "名詞".to_string(),
+                score: 0.0,
+                created_at: 0,
+                updated_at: 0,
+            };
+            store.insert(r).expect("under-cap insert ok");
+        }
+        // 6 件目は QuotaExceeded で reject される。
+        let over = UserVocabRecord {
+            id: None,
+            surface: "over-cap".to_string(),
+            reading: "き".to_string(),
+            pos: "名詞".to_string(),
+            score: 0.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let err = store.insert(over).unwrap_err();
+        assert!(matches!(
+            err,
+            StorageError::QuotaExceeded { ref table, max } if table == "user_vocab" && max == 5
+        ));
     }
 }

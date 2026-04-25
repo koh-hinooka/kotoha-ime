@@ -85,10 +85,11 @@ impl UserVocabStore for MockUserVocabStore {
         let mut records = self.records.lock().unwrap();
         // SqliteUserVocabStore と挙動を合わせるため、Mock 側でも行数上限を強制する
         // (sec-M5 / spec §F6)。
-        if records.len() >= crate::user_vocab::sqlite::USER_VOCAB_MAX_ROWS {
+        let max_rows = crate::user_vocab::sqlite::effective_max_rows();
+        if records.len() >= max_rows {
             return Err(StorageError::QuotaExceeded {
                 table: "user_vocab".to_string(),
-                max: crate::user_vocab::sqlite::USER_VOCAB_MAX_ROWS,
+                max: max_rows,
             });
         }
         if records
@@ -217,6 +218,26 @@ mod tests {
         store.insert(rec("別人", "べつじん", 0.5)).unwrap();
         let result = store.find_by_prefix("ひの", 100).unwrap();
         assert_eq!(result.len(), 2);
+    }
+
+    /// sec-M5 review T-C1: Mock 側でも行数上限到達時に `QuotaExceeded` を
+    /// 返すことを検証する(SqliteStore と挙動を対称に保つため)。
+    /// production 値 50,000 は test では非現実的なので
+    /// `QuotaOverrideGuard` で上限を 3 に縮める。
+    #[test]
+    fn mock_insert_rejects_at_quota_cap() {
+        let _guard = crate::user_vocab::sqlite::QuotaOverrideGuard::new(3);
+        let store = MockUserVocabStore::new();
+        // 上限ぴったり 3 件まで insert は成功する。
+        store.insert(rec("a", "あ", 0.0)).expect("1 ok");
+        store.insert(rec("b", "い", 0.0)).expect("2 ok");
+        store.insert(rec("c", "う", 0.0)).expect("3 ok");
+        // 4 件目は QuotaExceeded で reject される。
+        let err = store.insert(rec("d", "え", 0.0)).unwrap_err();
+        assert!(matches!(
+            err,
+            StorageError::QuotaExceeded { ref table, max } if table == "user_vocab" && max == 3
+        ));
     }
 }
 
