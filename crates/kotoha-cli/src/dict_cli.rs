@@ -149,6 +149,60 @@ pub fn normalize_reading(reading: &str) -> Result<String, String> {
     Err("READING must be all hiragana or all ASCII romaji".to_string())
 }
 
+use kotoha_storage::error::StorageError;
+use kotoha_storage::user_vocab::store::{UserVocabRecord, UserVocabStore};
+
+/// `kotoha-dict add` 実装。
+///
+/// # Errors
+///
+/// Exit code を文字列で返す(`Result<exit_code, String>`)。
+pub fn run_add(store: &dyn UserVocabStore, args: &AddArgs, quiet: bool) -> Result<i32, String> {
+    let reading = match normalize_reading(&args.reading) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: {}", e);
+            return Ok(EXIT_INPUT);
+        }
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let record = UserVocabRecord {
+        id: None,
+        surface: args.surface.clone(),
+        reading,
+        pos: args.pos.clone(),
+        score: args.score,
+        created_at: now,
+        updated_at: now,
+    };
+    match store.insert(record) {
+        Ok(id) => {
+            if !quiet {
+                println!(
+                    "added: id={id} surface=\"{}\" reading=\"{}\" pos=\"{}\" score={}",
+                    args.surface, args.reading, args.pos, args.score
+                );
+            }
+            Ok(EXIT_OK)
+        }
+        Err(StorageError::DuplicateEntry { surface, reading }) => {
+            eprintln!("error: duplicate entry: surface={surface} reading={reading}");
+            Ok(EXIT_DUPLICATE)
+        }
+        Err(StorageError::InvalidField { name, reason }) => {
+            eprintln!("error: invalid {name}: {reason}");
+            Ok(EXIT_INPUT)
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(EXIT_INTERNAL)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
