@@ -50,13 +50,30 @@ impl UserVocabStore for SqliteUserVocabStore {
         Ok(out)
     }
 
-    fn list_all(
-        &self,
-        _limit: usize,
-        _offset: usize,
-    ) -> Result<Vec<UserVocabRecord>, StorageError> {
-        // Task B4 で実装
-        unimplemented!("Task B4")
+    fn list_all(&self, limit: usize, offset: usize) -> Result<Vec<UserVocabRecord>, StorageError> {
+        let conn = self.db.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, surface, reading, pos, score, created_at, updated_at \
+             FROM user_vocab \
+             ORDER BY id ASC \
+             LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+            Ok(UserVocabRecord {
+                id: Some(row.get(0)?),
+                surface: row.get(1)?,
+                reading: row.get(2)?,
+                pos: row.get(3)?,
+                score: row.get::<_, f64>(4)? as f32,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 
     fn insert(&self, record: UserVocabRecord) -> Result<i64, StorageError> {
@@ -117,6 +134,42 @@ impl UserVocabStore for SqliteUserVocabStore {
         _reading: &str,
     ) -> Result<(), StorageError> {
         unimplemented!("Task B6")
+    }
+
+    fn find_by_prefix(
+        &self,
+        reading_prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<UserVocabRecord>, StorageError> {
+        // prefix は hiragana / 空文字どちらも許容(空 prefix = 全件)
+        if !reading_prefix.is_empty() {
+            validate_reading(reading_prefix)?;
+        }
+        let conn = self.db.lock_conn();
+        let pattern = format!("{}%", reading_prefix);
+        let mut stmt = conn.prepare(
+            "SELECT id, surface, reading, pos, score, created_at, updated_at \
+             FROM user_vocab \
+             WHERE reading LIKE ?1 \
+             ORDER BY score DESC, id ASC \
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![pattern, limit as i64], |row| {
+            Ok(UserVocabRecord {
+                id: Some(row.get(0)?),
+                surface: row.get(1)?,
+                reading: row.get(2)?,
+                pos: row.get(3)?,
+                score: row.get::<_, f64>(4)? as f32,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 }
 
@@ -270,5 +323,43 @@ mod tests {
         };
         let err = store.insert(r).unwrap_err();
         assert!(matches!(err, StorageError::InvalidField { .. }));
+    }
+
+    #[test]
+    fn list_all_returns_all_rows_when_no_filter() {
+        let store = fresh_store();
+        for i in 0..5 {
+            seed_row(&store, &format!("s{}", i), &format!("あ{}", i), i as f32);
+        }
+        let result = store.list_all(100, 0).expect("ok");
+        assert_eq!(result.len(), 5);
+    }
+
+    #[test]
+    fn list_all_respects_limit_and_offset() {
+        let store = fresh_store();
+        for i in 0..10 {
+            seed_row(&store, &format!("s{}", i), &format!("あ{}", i), i as f32);
+        }
+        let result = store.list_all(3, 2).expect("ok");
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn list_all_returns_empty_when_offset_past_end() {
+        let store = fresh_store();
+        seed_row(&store, "x", "あ", 0.0);
+        let result = store.list_all(10, 100).expect("ok");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn find_by_prefix_matches_partial() {
+        let store = fresh_store();
+        seed_row(&store, "日野岡", "ひのおか", 1.0);
+        seed_row(&store, "日野", "ひの", 0.5);
+        seed_row(&store, "別人", "べつじん", 0.5);
+        let result = store.find_by_prefix("ひの", 100).expect("ok");
+        assert_eq!(result.len(), 2);
     }
 }

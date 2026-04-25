@@ -32,6 +32,14 @@ pub trait UserVocabStore: Send + Sync {
     fn insert(&self, record: UserVocabRecord) -> Result<i64, StorageError>;
     fn delete_by_id(&self, id: i64) -> Result<(), StorageError>;
     fn delete_by_surface_reading(&self, surface: &str, reading: &str) -> Result<(), StorageError>;
+    /// `reading` の prefix match で entries を返す(spec §7.4 `--reading <PREFIX>`)。
+    ///
+    /// SQL `reading LIKE 'PREFIX%'` を使用し、score 降順で `limit` 件返す。
+    fn find_by_prefix(
+        &self,
+        reading_prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<UserVocabRecord>, StorageError>;
 }
 
 /// User vocabulary の row(spec §6.2)。
