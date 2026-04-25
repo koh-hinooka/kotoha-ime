@@ -124,8 +124,16 @@ impl UserVocabStore for SqliteUserVocabStore {
         }
     }
 
-    fn delete_by_id(&self, _id: i64) -> Result<(), StorageError> {
-        unimplemented!("Task B5")
+    fn delete_by_id(&self, id: i64) -> Result<(), StorageError> {
+        let conn = self.db.lock_conn();
+        let affected = conn.execute(
+            "DELETE FROM user_vocab WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        if affected == 0 {
+            return Err(StorageError::NotFound);
+        }
+        Ok(())
     }
 
     fn delete_by_surface_reading(
@@ -361,5 +369,30 @@ mod tests {
         seed_row(&store, "別人", "べつじん", 0.5);
         let result = store.find_by_prefix("ひの", 100).expect("ok");
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn delete_by_id_removes_existing_row() {
+        let store = fresh_store();
+        let r = UserVocabRecord {
+            id: None,
+            surface: "x".to_string(),
+            reading: "あ".to_string(),
+            pos: "名詞".to_string(),
+            score: 0.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let id = store.insert(r).expect("insert");
+        store.delete_by_id(id).expect("delete ok");
+        let result = store.find_by_reading("あ", 10).expect("find ok");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn delete_by_id_returns_not_found_when_absent() {
+        let store = fresh_store();
+        let err = store.delete_by_id(99999).unwrap_err();
+        assert!(matches!(err, StorageError::NotFound));
     }
 }
