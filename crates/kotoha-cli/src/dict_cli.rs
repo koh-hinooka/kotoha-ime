@@ -447,4 +447,44 @@ mod tests {
         let err = normalize_reading("").unwrap_err();
         assert!(!err.is_empty());
     }
+
+    // review T-H4: json_escape は従来 integration test 経由でしか触れておらず、
+    // 特殊文字経路 (`"`, `\`, `\n`, `\t`, `< 0x20`, 多バイト UTF-8) の直接検証が
+    // 欠落していた。本 mod は private 関数の super:: 経由 unit test で穴埋めする。
+
+    #[test]
+    fn json_escape_passes_through_plain_ascii() {
+        assert_eq!(json_escape("hello"), "\"hello\"");
+    }
+
+    #[test]
+    fn json_escape_escapes_double_quote() {
+        assert_eq!(json_escape("a\"b"), "\"a\\\"b\"");
+    }
+
+    #[test]
+    fn json_escape_escapes_backslash() {
+        assert_eq!(json_escape("a\\b"), "\"a\\\\b\"");
+    }
+
+    #[test]
+    fn json_escape_escapes_newline_and_tab() {
+        assert_eq!(json_escape("a\nb\tc"), "\"a\\nb\\tc\"");
+    }
+
+    #[test]
+    fn json_escape_escapes_carriage_return() {
+        assert_eq!(json_escape("a\rb"), "\"a\\rb\"");
+    }
+
+    #[test]
+    fn json_escape_escapes_control_chars_below_0x20() {
+        let s = json_escape("\u{0001}");
+        assert_eq!(s, "\"\\u0001\"");
+    }
+
+    #[test]
+    fn json_escape_passes_through_japanese() {
+        assert_eq!(json_escape("日野岡"), "\"日野岡\"");
+    }
 }
