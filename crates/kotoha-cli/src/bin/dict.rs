@@ -1,15 +1,41 @@
-//! `kotoha-dict` — P2-B user dictionary CLI binary entry point.
-//!
-//! 本 binary は spec §7 に従い、user dictionary の add / remove / list /
-//! show 操作を SQLite-backed `kotoha-storage` 経由で提供する。
-//!
-//! D2 時点では scaffold のみで、command dispatch および backend 結線は
-//! D8 で実装する(P2-B plan §D8)。
-//!
-//! Spec: `docs/superpowers/specs/2026-04-25-p2-b-user-dictionary-design.md` §7。
+//! `kotoha-dict` binary entry point (P2-B、spec §7.1)。
+
+#![cfg(feature = "dict-persist")]
+
+use clap::Parser;
+
+use kotoha_cli::dict_cli::{run_add, run_list, run_remove, run_show, Cli, Command, EXIT_INTERNAL};
 
 fn main() {
-    // D8 で `kotoha_cli::dict_cli::Cli::parse()` 経由の dispatch に置換する。
-    eprintln!("kotoha-dict: not yet implemented (D2 scaffold; D8 wires up dispatch)");
-    std::process::exit(1);
+    let cli = Cli::parse();
+
+    // DB path 解決: --data-dir > KOTOHA_DATA_DIR > XDG > HOME(spec §5.4)
+    if let Some(dir) = &cli.data_dir {
+        std::env::set_var("KOTOHA_DATA_DIR", dir);
+    }
+    let db_path = match kotoha_storage::path::resolve_data_dir() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: failed to resolve data dir: {e}");
+            std::process::exit(EXIT_INTERNAL);
+        }
+    };
+    let db = match kotoha_storage::database::Database::open(&db_path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: failed to open DB at {}: {e}", db_path.display());
+            std::process::exit(EXIT_INTERNAL);
+        }
+    };
+    let store = db.user_vocab_store();
+
+    let exit_code = match &cli.command {
+        Command::Add(args) => run_add(store.as_ref(), args, cli.quiet).unwrap_or(EXIT_INTERNAL),
+        Command::Remove(args) => {
+            run_remove(store.as_ref(), args, cli.quiet).unwrap_or(EXIT_INTERNAL)
+        }
+        Command::List(args) => run_list(store.as_ref(), args, cli.json).unwrap_or(EXIT_INTERNAL),
+        Command::Show(args) => run_show(store.as_ref(), args, cli.json).unwrap_or(EXIT_INTERNAL),
+    };
+    std::process::exit(exit_code);
 }
