@@ -209,3 +209,14 @@ fn show_subcommand_displays_entry() {
         .assert()
         .success();
 }
+
+#[test]
+#[serial]
+fn show_subcommand_on_empty_db_exits_4() {
+    let tmp = safe_tempdir();
+    cli()
+        .env("KOTOHA_DATA_DIR", tmp.path())
+        .args(["show", "1"])
+        .assert()
+        .code(4);
+}
