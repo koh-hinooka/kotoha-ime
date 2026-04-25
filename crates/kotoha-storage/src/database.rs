@@ -75,6 +75,23 @@ impl Database {
     pub fn lock_conn(&self) -> MutexGuard<'_, Connection> {
         self.conn.lock().expect("Database mutex poisoned")
     }
+
+    /// `Arc<Database>` を `SqliteUserVocabStore` で wrap し owned `Box<dyn UserVocabStore>` を返す
+    /// (spec §6.4 共有 ownership)。
+    pub fn user_vocab_store(self: &Arc<Self>) -> Box<dyn crate::user_vocab::store::UserVocabStore> {
+        Box::new(crate::user_vocab::sqlite::SqliteUserVocabStore::new(
+            Arc::clone(self),
+        ))
+    }
+
+    /// (P2-B では unimplemented stub、P2-C で本実装、spec §6.3)
+    pub fn learning_cache_store(
+        self: &Arc<Self>,
+    ) -> Box<dyn crate::learning_cache::LearningCacheStore> {
+        Box::new(crate::learning_cache::SqliteLearningCacheStore::new(
+            Arc::clone(self),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -181,5 +198,30 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, crate::migrations::LATEST_VERSION);
+    }
+
+    #[test]
+    fn user_vocab_store_factory_returns_owned_box() {
+        let db = Database::open_in_memory().expect("memory open");
+        let _store: Box<dyn crate::user_vocab::store::UserVocabStore> = db.user_vocab_store();
+    }
+
+    #[test]
+    fn user_vocab_store_factory_shares_arc() {
+        let db = Database::open_in_memory().expect("memory open");
+        let store1 = db.user_vocab_store();
+        let store2 = db.user_vocab_store();
+        let r = crate::user_vocab::store::UserVocabRecord {
+            id: None,
+            surface: "x".to_string(),
+            reading: "あ".to_string(),
+            pos: "名詞".to_string(),
+            score: 0.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        store1.insert(r).expect("insert ok");
+        let result = store2.find_by_reading("あ", 10).expect("find ok");
+        assert_eq!(result.len(), 1);
     }
 }
