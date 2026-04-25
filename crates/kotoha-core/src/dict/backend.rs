@@ -55,6 +55,8 @@ impl DictionaryBackend {
     ///   not exist on disk
     /// - [`KanjiError::ModelLoadFailed`] — sudachi.rs fails to load the dict
     /// - [`KanjiError::Backend`] — custom vocab TSV cannot be read or parsed
+    /// - [`KanjiError::Backend`] — `dict-persist` feature 有効時、user vocab DB
+    ///   が open できない(spec §8.2)
     pub fn load(config: &DictionaryConfig) -> Result<Self, KanjiError> {
         let env_value = std::env::var("KOTOHA_SYSTEM_DICT_PATH").ok();
         let Some(dict_path) = resolve_dict_path(config.system_dict_path.as_deref(), env_value)
@@ -69,6 +71,21 @@ impl DictionaryBackend {
         let mut vocab_sources: Vec<Box<dyn VocabularyLookup>> = Vec::new();
         if let Some(vp) = &config.custom_vocab_path {
             vocab_sources.push(Box::new(CustomVocab::load(vp)?));
+        }
+        #[cfg(feature = "dict-persist")]
+        {
+            if let Some(db_path) = &config.user_vocab_db_path {
+                let db = kotoha_storage::database::Database::open(db_path).map_err(|e| {
+                    KanjiError::Backend {
+                        reason: format!(
+                            "failed to open user_vocab DB at {}: {e}",
+                            db_path.display()
+                        ),
+                    }
+                })?;
+                let store = db.user_vocab_store();
+                vocab_sources.push(Box::new(crate::dict::user_vocab::UserVocab::new(store)));
+            }
         }
         let model_id = format!("dictionary({})", engine.engine_id());
         Ok(Self {
