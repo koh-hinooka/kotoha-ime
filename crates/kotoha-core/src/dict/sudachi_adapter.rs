@@ -28,7 +28,6 @@ pub(crate) const SUDACHI_ENGINE_ID_LABEL: &str = "sudachi-0.6.11+sudachidict-cor
 /// - `dict` は `load` 成功後に valid な SudachiDict instance を保持する
 /// - `system_dict_path` は load 時の path を保持し、Backend variant で error
 ///   message に埋め込む用途で使用する
-#[allow(dead_code)] // Consumed by `DictionaryBackend` in Task 8 (P2-A).
 pub(crate) struct SudachiAdapter {
     dict: JapaneseDictionary,
     system_dict_path: PathBuf,
@@ -56,7 +55,6 @@ impl SudachiAdapter {
     /// - [`KanjiError::ModelNotFound`] — path に file が存在しない場合
     /// - [`KanjiError::ModelLoadFailed`] — sudachi.rs 側で config / dict の
     ///   読み込みに失敗した場合
-    #[allow(dead_code)] // Consumed by `DictionaryBackend` in Task 8 (P2-A).
     pub(crate) fn load(system_dict_path: &Path) -> Result<Self, KanjiError> {
         if !system_dict_path.exists() {
             return Err(KanjiError::ModelNotFound {

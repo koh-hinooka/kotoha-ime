@@ -16,7 +16,6 @@
 ///
 /// - 同一 reading に対し 0 件以上の `VocabEntry` を返す
 /// - 返値順序は score 降順(score 同値時の順序は実装依存)
-#[allow(dead_code)] // Consumed by `CustomVocab` in Task 5 and `DictionaryBackend` in Task 8 (P2-A).
 pub trait VocabularyLookup {
     /// Returns all vocab entries whose reading matches `reading`.
     fn lookup(&self, reading: &str) -> Vec<VocabEntry>;
@@ -26,7 +25,6 @@ pub trait VocabularyLookup {
 }
 
 /// A single vocabulary entry returned by [`VocabularyLookup::lookup`].
-#[allow(dead_code)] // Consumed by `CustomVocab` in Task 5 and `DictionaryBackend` in Task 8 (P2-A).
 #[derive(Debug, Clone)]
 pub struct VocabEntry {
     /// Surface form.

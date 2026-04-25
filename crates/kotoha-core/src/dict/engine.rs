@@ -26,7 +26,6 @@ use crate::kanji::KanjiError;
 /// # Errors
 ///
 /// - [`KanjiError::Backend`] when tokenization fails inside the engine
-#[allow(dead_code)] // Consumed by `DictionaryBackend` in Task 8 (P2-A).
 pub trait MorphologicalEngine {
     /// Tokenizes `reading` and returns candidate morphemes.
     fn tokenize(&self, reading: &str) -> Result<Vec<EngineCandidate>, KanjiError>;
@@ -39,7 +38,6 @@ pub trait MorphologicalEngine {
 }
 
 /// A single morpheme candidate returned by [`MorphologicalEngine::tokenize`].
-#[allow(dead_code)] // Consumed by `DictionaryBackend` in Task 8 (P2-A).
 #[derive(Debug, Clone)]
 pub struct EngineCandidate {
     /// Surface form (kanji / hiragana / katakana mix).

@@ -37,7 +37,6 @@ pub struct DictionaryConfig {
 /// `DictionaryBackend::load` は本関数で `system_dict_path` を解決する。
 /// `env_value` 引数は test 容易性のため `std::env::var` の結果を呼び出し側が
 /// 注入する契約にする(spec §3.4 / §5.1)。
-#[allow(dead_code)] // Task 7 (SudachiAdapter) / Task 8 (DictionaryBackend) で使用
 pub(crate) fn resolve_dict_path(
     explicit: Option<&Path>,
     env_value: Option<String>,

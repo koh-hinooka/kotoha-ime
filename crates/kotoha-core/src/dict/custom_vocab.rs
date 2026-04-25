@@ -20,13 +20,11 @@ use crate::kanji::KanjiError;
 /// - `entries` key は hiragana reading、value は同 reading を持つ entry 配列
 /// - `vocab_id` は `"custom(<source_label>)"` 形式
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Consumed by `DictionaryBackend` in Task 8 (P2-A).
 pub struct CustomVocab {
     entries: HashMap<String, Vec<VocabEntry>>,
     vocab_id: String,
 }
 
-#[allow(dead_code)] // Consumed by `DictionaryBackend` in Task 8 (P2-A).
 impl CustomVocab {
     /// Loads a custom vocab from a TSV file on disk.
     ///
@@ -45,13 +43,15 @@ impl CustomVocab {
         Self::parse(&content, &label)
     }
 
-    /// Parses a TSV string in-memory. Used directly by unit tests and by
-    /// `load` after reading from disk.
+    /// Parses a TSV string in-memory. Used directly by unit tests; production
+    /// callers go through [`CustomVocab::load`] which reads the TSV from disk
+    /// before delegating to `parse`.
     ///
     /// # Errors
     ///
     /// - [`KanjiError::Backend`] when any non-comment line has a field count
     ///   other than 4 or a non-parsable score.
+    #[cfg(test)]
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(content: &str) -> Result<Self, KanjiError> {
         Self::parse(content, "inline")
