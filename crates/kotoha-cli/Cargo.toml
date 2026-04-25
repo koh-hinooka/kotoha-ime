@@ -11,6 +11,12 @@ description = "Kotoha: command-line frontend for manual verification of the Koto
 [dependencies]
 kotoha-core = { path = "../kotoha-core" }
 clap = { workspace = true }
+kotoha-storage = { path = "../kotoha-storage", optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+assert_cmd = { workspace = true }
+serial_test = { workspace = true }
 
 [features]
 # Default feature set is empty so `cargo build -p kotoha-cli` remains fast
@@ -19,6 +25,7 @@ clap = { workspace = true }
 # the `kotoha-kanji` binary to consume the Layer 3 backend.
 default = []
 llama-cpp = ["kotoha-core/llama-cpp"]
+dict-persist = ["kotoha-core/dict-persist", "dep:kotoha-storage"]
 
 [[bin]]
 name = "kotoha-romaji"
@@ -32,6 +39,14 @@ path = "src/bin/romaji.rs"
 name = "kotoha-kanji"
 path = "src/bin/kanji.rs"
 required-features = ["llama-cpp"]
+
+# `kotoha-dict` is gated on the `dict-persist` feature so default builds
+# do not pull rusqlite C dep. Enable with
+# `cargo build -p kotoha-cli --bin kotoha-dict --features dict-persist` (P2-B spec §7.1).
+[[bin]]
+name = "kotoha-dict"
+path = "src/bin/dict.rs"
+required-features = ["dict-persist"]
 
 # src/lib.rs は process_line / format_line_output (Phase 0 romaji 用) と
 # kanji_cli module (P1-3 の kotoha-kanji 用 pure helper) を unit-testable
