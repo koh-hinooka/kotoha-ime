@@ -20,6 +20,7 @@ sudachi = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+serial_test = { workspace = true }
 
 [features]
 default = []

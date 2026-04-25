@@ -536,13 +536,13 @@ mod tests {
 
     #[cfg(feature = "dict")]
     #[test]
+    #[serial_test::serial]
     fn dictionary_config_load_backend_missing_env_errors_backend() {
         use crate::dict::DictionaryConfig;
         // env var も config も無い状態で load_backend を呼ぶと、actionable な
         // hint を含む KanjiError::Backend を返す契約。
-        // 注意: `std::env::remove_var` は process-global state の変更であり、
-        // 並列実行する他 test が同 env var を set した場合 race する。
-        // P2-A 範囲では本 risk を受容する(tasks.md Notes §2)。
+        // `#[serial_test::serial]` で同 env var を読み書きする他 test と直列化し、
+        // process-global state の race を排除する(P2-A hardening item 8)。
         std::env::remove_var("KOTOHA_SYSTEM_DICT_PATH");
         let cfg = BackendConfig::Dictionary {
             config: DictionaryConfig::default(),

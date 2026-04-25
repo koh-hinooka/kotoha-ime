@@ -50,3 +50,16 @@ pre-push:
         else
           echo "lefthook: skip test (no crates/ yet; enforced from M2)"
         fi
+    # `test` step は default features のみを実行する。`feature = "dict"` 配下の
+    # hardening test (`custom_vocab::tests::*` / `sudachi_adapter::tests::*`) は
+    # default では compile されないため、本 step を別に走らせて pre-push gate で
+    # 保護する(P2-A hardening review Fix 4)。`mock-backend` は default の
+    # `cargo test --workspace` でカバー済みなので含めない。
+    # `dict-smoke` は SudachiDict-core file が必要なため pre-push では走らせない。
+    test-dict:
+      run: |
+        if [ -d crates ] && [ -n "$(ls -A crates 2>/dev/null)" ]; then
+          cargo test --workspace --features dict
+        else
+          echo "lefthook: skip test-dict (no crates/ yet; enforced from M2)"
+        fi

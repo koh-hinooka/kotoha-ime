@@ -13,6 +13,7 @@ use kotoha_core::dict::DictionaryConfig;
 use kotoha_core::kanji::{load_backend, BackendConfig, KanjiError};
 
 #[test]
+#[serial_test::serial]
 fn load_backend_dictionary_without_env_errors_backend_with_actionable_hint() {
     std::env::remove_var("KOTOHA_SYSTEM_DICT_PATH");
     let cfg = BackendConfig::Dictionary {
@@ -39,6 +40,7 @@ fn load_backend_dictionary_without_env_errors_backend_with_actionable_hint() {
 }
 
 #[test]
+#[serial_test::serial]
 fn load_backend_dictionary_with_nonexistent_path_errors_model_not_found() {
     let cfg = BackendConfig::Dictionary {
         config: DictionaryConfig {
@@ -58,6 +60,7 @@ fn load_backend_dictionary_with_nonexistent_path_errors_model_not_found() {
 }
 
 #[test]
+#[serial_test::serial]
 fn dictionary_config_env_var_resolve_fallback_works() {
     // NOTE: env var を直接書き換える test は並列実行で flaky になる可能性
     // があるため、resolve は unit test 側 (dict::config_tests) で検証し、
@@ -79,6 +82,7 @@ fn dictionary_config_env_var_resolve_fallback_works() {
 }
 
 #[test]
+#[serial_test::serial]
 fn dictionary_config_custom_vocab_missing_errors_backend() {
     let cfg = DictionaryConfig {
         system_dict_path: Some(PathBuf::from("/tmp/no-such-system.dic")),

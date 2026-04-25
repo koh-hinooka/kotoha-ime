@@ -1,8 +1,13 @@
 """Tests for bulk stratified sampling."""
 
+from pathlib import Path
+
+import pytest
+
 from p2a_fixture_gen.sample import (
     bucket_for_reading_length,
     bulk_as_tsv_rows,
+    load_sample_pairs,
     stratified_sample,
 )
 
@@ -41,3 +46,16 @@ def test_bulk_tsv_rows_have_four_fields() -> None:
     sampled = stratified_sample(pairs, per_bucket=3)
     for row in bulk_as_tsv_rows(sampled):
         assert len(row.split("\t")) == 4
+
+
+def test_load_sample_pairs_raises_when_missing(tmp_path: Path) -> None:
+    """load_sample_pairs must raise FileNotFoundError when the path is absent.
+
+    Regression guard for P2-A hardening item 9: silent failure (returning empty
+    list) hides upstream pipeline misconfiguration. The error message must
+    contain "p5a sample not found" so users can identify the missing artefact
+    without consulting the source.
+    """
+    missing = tmp_path / "nonexistent.tsv"
+    with pytest.raises(FileNotFoundError, match="p5a sample not found"):
+        load_sample_pairs(missing)
