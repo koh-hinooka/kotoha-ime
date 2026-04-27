@@ -1,8 +1,10 @@
 //! `crates/kotoha-storage/src/learning_cache/mod.rs`
 //! LearningCacheReader / LearningCacheWriter trait(spec §3.1、P2-C 本実装)。
 
+pub mod mock;
 pub mod sqlite;
 
+pub use mock::MockLearningCacheStore;
 pub use sqlite::SqliteLearningCacheStore;
 
 /// `CapOverrideGuard` is a **test-only** RAII helper that overrides the
