@@ -31,8 +31,8 @@ parent-plan: docs/superpowers/plans/2026-04-26-feature-105-p2-c-learning-cache.m
 | `dict-persist` features 合計(P2-C 新 baseline) | **394 PASS**(P2-B baseline 355 から +39) |
 | 工数(実) | 1 セッション(plan 執筆 + 実装 + Phase D fix を subagent dispatch で消化) |
 | 変更 file 数 | 20(WBS 含めると 21) |
-| 変更 lines | +1756 / -166(WBS 除く、`git diff 130a214..HEAD --stat` 出力) |
-| commit 数 | 27(`git log --oneline 130a214..HEAD` 集計、Phase A 8 + B 12 + C 3 + D 2 + Phase D fix 1 + Phase E WBS 1) |
+| 変更 lines | +1756 / -166(WBS 除く、`git diff 130a214..HEAD --stat` 出力)。+39 each(default = dict = dict-persist の +39 は L1 unit 26 + L2 integration 5 + proptest 3 + v002 runner 3 + factory test 2 = 39 件、全 feature gate しないため 3 構成共通) |
+| commit 数 | 29(本 commit 反映前、`git log --oneline 130a214..HEAD` 集計、Phase A 8 + B 12 + C 3 + D 2 + Phase D fix 1 + Phase E WBS 3 = 29、本 commit 反映後 32、最終 merge 時に確定数) |
 | production binary 検査 | `nm -C` で test-only symbol 0 件(`CapOverrideGuard` / `LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE` / `CAP_OVERRIDE_LOCK` / `effective_max_rows` を全件 grep で確認) |
 | clippy 警告 | 0(`--features kotoha-storage/test-helpers -- -D warnings`) |
 | `cargo audit` | 0 vulnerability |
@@ -97,21 +97,43 @@ parent-plan: docs/superpowers/plans/2026-04-26-feature-105-p2-c-learning-cache.m
 - `evict_lru` の `ORDER BY last_used_at ASC LIMIT N` を index で走査可能にし、cap eviction の計算量を O(N) から O(log N + cap) に改善。
 - runner test(`90132af`)で fresh DB / v001 から v002 への自動 upgrade の双方を検証済み。
 
-## 4-dim review 結果
+## Review 結果(全 7 review tier)
 
-`agent-teams:team-review` skill を 4 dimension(security / architecture / testing / performance)で逐次実行(memory 9Gi 帯のため並列回避、global CLAUDE.md System Resource Management)。各 reviewer は実機検証(grep / cargo build / cargo test / EXPLAIN QUERY PLAN / nm -C 等)の verbatim 出力を report に含めた。
+PR #106 に対して、以下 7 tier の review を逐次実行した(memory 9Gi 帯のため並列回避、global CLAUDE.md System Resource Management)。各 reviewer は実機検証(grep / cargo build / cargo test / EXPLAIN QUERY PLAN / nm -C 等)の verbatim 出力を report に含めた。
+
+実施 review 一覧:
+
+1. `agent-teams:team-review` security
+2. `agent-teams:team-review` architecture
+3. `agent-teams:team-review` testing
+4. `agent-teams:team-review` performance
+5. `secrets-check`(Large tier 必須)
+6. `cargo audit`(Large tier 必須)
+7. `pr-review-toolkit:review-pr`(code-reviewer / comment-analyzer / type-design-analyzer の 3 sub-agent)
 
 ### Verdict 一覧
 
 | dimension | Critical | High | Medium | Low | Verdict |
 |---|---|---|---|---|---|
-| security | 0 | 0 | 1 | 4 | ⚠ MINOR_FINDINGS |
-| architecture | 0 | 0 | 4 | 3 | ⚠ MINOR_FINDINGS |
-| testing | 0 | 0 | 4 | 6 | ⚠ MINOR_FINDINGS |
-| performance | 0 | 0 | 2 | 3 | ⚠ MINOR_FINDINGS |
-| **合計** | **0** | **0** | **11** | **16** | **MINOR_FINDINGS** |
+| security | 0 | 0 | 1 | 4 | ⚠ MINOR |
+| architecture | 0 | 0 | 4 | 3 | ⚠ MINOR |
+| testing | 0 | 0 | 4 | 6 | ⚠ MINOR |
+| performance | 0 | 0 | 2 | 3 | ⚠ MINOR |
+| code-reviewer | 0 | 0 | 4 | 3 | ⚠ MERGE_AFTER_MINOR_FIX(M-1, M-3 既 fix) |
+| comment-analyzer | 0 | **2** | 5 | 3 | ⚠ MINOR(H-1, H-2 既 fix) |
+| type-design-analyzer | 0 | 0 | 3 | 6 | ⚠ APPROVE with MEDIUM |
+| **合計** | **0** | **2** | **23** | **28** | **MINOR(merge ready)** |
 
-Critical / High = 0 のため、本 PR で fix する必要なし。Medium / Low 計 27 件は **follow-up Issue #107** に集約済(plan §7.3 / §E7 規定通り)。
+Critical = 0、High = 2 のうち 2 件は本 PR 内 commit `334ac23` で fix 済み。code-reviewer M-1 / M-3 も本 PR 内 commit `094fb35` で fix 済み。残 Medium 21 件 / Low 28 件は merge blocker でないため **follow-up Issue #107** に集約する(plan §7.3 / §E7 規定通り)。
+
+### Review 後の本 PR 内 fix(merge ready 状態)
+
+| commit | finding | 修正内容 |
+|---|---|---|
+| `094fb35` | code-reviewer M-1 | glossary.md の旧 trait 名 `UserVocabStore` / `LearningCacheStore` を `UserVocabReader/Writer` / `LearningCacheReader/Writer` に更新、`test-helpers` feature / `CapOverrideGuard` / `evict_to_cap` の 3 用語を新規追加 |
+| `094fb35` | code-reviewer M-3 | spec §6.6 に 2026-04-26 実測値(default 320 / dict 379 / dict-persist 394)note を追記、+16/+16/+10 deviation の根拠(B-followup `726b07d` + v002 runner test)を明記 |
+| `334ac23` | comment-analyzer H-1 | `user_vocab/sqlite.rs:1` の module-level doc を `UserVocabStore の SQLite 実装` から `UserVocabReader + UserVocabWriter の SQLite 実装(arch-M-2)` に修正 |
+| `334ac23` | comment-analyzer H-2 | `database.rs` 4 factory method の Postconditions に `Arc<Sqlite*Store>` 保持と記述された誤りを `Box` で `SqliteStore` を保持し、内部 `Arc<Database>` を `Arc::clone` で共有する正しい記述に統一 |
 
 ### 追加実施した security 検査
 
@@ -160,16 +182,28 @@ Phase 3 IBus engine の hot-path latency budget に対して **3 桁余裕** あ
 3. Phase 5 personalization で動的 cap が必要になった場合、`Database` 構造体への `cap_override: AtomicUsize` field 追加を検討(現状の static AtomicUsize ベースは production の dynamic cap と排他制御が衝突する設計)
 4. ADR 0016「kotoha-storage における ISP split と test-helpers feature 方針」を別 PR で起票(arch-M-2 + test-helpers feature の判断根拠を ADR 化)
 5. proptest strategy の collision 強化(invariant 1 / 2 が trivial に成立しないよう、kana 集合を 5 種類に固定 + record 件数下限を cap × 2 に引き上げる)
+6. **F-1**(comment-analyzer 由来): Phase 3 着手前に doc comment 内 stale phase 名(`P2-C 本実装`)を spec 参照のみに置換(該当箇所の固定名を排除し spec へのリンクで代用)
+7. **F-2**(type-design-analyzer 由来): Phase 5 personalization 着手時に Record 型を `pub(crate)` 化 + smart constructor 化、`Score(f32)` / `Timestamp(i64)` newtype を導入(現状 `pub` 露出の primitive 型を domain newtype で置換し型安全性を強化)
 
-## deferred 項目(新規 Issue に移管予定)
+## deferred 項目(follow-up Issue #107 に集約)
 
-以下の Medium / Low finding は PR merge 後に新規 follow-up Issue を起票して管理する候補である。E5 review 結果に応じて確定する。
+以下の Medium / Low finding は本 PR の merge 後に follow-up Issue #107 へ追記する形で管理する。Issue #107 は 4-dim review 由来 27 件で起票済みであり、本セッションで実施した追加 3 review 由来の 22 件を `gh issue comment` で追記する(本 PR merge 完了後)。
+
+### 4-dim review 由来(既登録、計 27 件)
 
 - **connection pool(perf-M-1)**: `Mutex<Connection>` をコネクションプールに置き換える。Phase 3 IBus engine から高頻度で呼び出す前提で遅延を測定し、必要性が確認された場合に実施する
 - **Mutex poison handling 改善(sec-L-2)**: `lock_conn` が panic する代わりに `StorageError::Sqlite` を返す recover 経路を追加する
 - **LearningCache CLI 公開検討(Phase 3-A 以降)**: `kotoha-dict cache list` / `kotoha-dict cache flush` の subcommand を Phase 3 kick-off で判断する
 - **cap 値の動的化 / config 化(Phase 5)**: `LEARNING_CACHE_MAX_ROWS` を設定ファイルから読み込む機構を Phase 5 personalization で追加する
-- **review 由来の Medium / Low finding**: E5 実行後に確定
+- security / architecture / testing / performance 各 dimension の Medium / Low 残件(計 23 件)
+
+### 追加 3 review 由来(本セッションで確定、計 22 件)
+
+- **comment-analyzer**: Medium 5 件(M-1〜M-5)+ Low 3 件(L-1〜L-3)
+- **type-design-analyzer**: Medium 3 件(M-1〜M-3、すべて Phase 5 personalization 着手時対応)+ Low 6 件(L-1〜L-6)
+- **code-reviewer 残**: Medium 2 件(M-2 WBS commit 数 27→29、M-4 WBS metric +39 補足)+ Low 3 件
+
+これら 22 件は本 PR merge 直後に main agent が `gh issue comment 107` で Issue #107 へ追記する。M-2 / M-4 は本 commit で WBS に直接反映済(commit 数 29、+39 each の breakdown)。
 
 ## 参照
 
