@@ -931,6 +931,8 @@ proptest の実行設定は `PROPTEST_CASES=64`(P2-B 同水準)とする。
 
 予測根拠: L1 単体 23 件 + L2 integration 3 件 + proptest 3 件 = 29 件の新規 test が追加される。既存 test の修正によるカウント変動は発生しない(削除 / 統合なし)。退行ゼロ(P2-B 着地時の全 355+ test PASS 維持)を必須条件とする。
 
+> **2026-04-26 実測 note(P2-C 着地後)**: 実装着地時の test count baseline は default 320 / dict 379 / dict-persist 394 となった。本予測値との差分(+16 / +16 / +10)は、Phase B-followup commit `726b07d` で plan §6.2 23 件のうち初回 dispatch で漏れた 7 件 reject path test を追加実装したこと、および Phase C で v002 migration runner test を当初想定の 2 件から 3 件に拡張したことに起因する。退行ゼロ + 全 PASS は維持されており、実装は予測上回りで着地した。
+
 ---
 
 ## 7. 実装順序と branch / PR 戦略

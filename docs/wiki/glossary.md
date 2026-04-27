@@ -184,7 +184,7 @@
 
 ### Phase 2 Dictionary layer (P2-A 以降)
 
-以下 15 entry は ADR 0014 (`docs/adr/0014-phase-2-dictionary-layer-architecture.md`) / ADR 0015 (`docs/adr/0015-kotoha-storage-sqlite-adoption.md`) および Phase 2 spec / P2-A spec / P2-B spec で初出した用語を集約する。実装 identifier は P2-A で確定済のもの、P2-B で確定したもの (kotoha-dict / kotoha-storage / kotoha.db / UserVocab / UserVocabStore の 5 entry)、P2-D 以降で確定予定のものを含む。
+以下 15 entry は ADR 0014 (`docs/adr/0014-phase-2-dictionary-layer-architecture.md`) / ADR 0015 (`docs/adr/0015-kotoha-storage-sqlite-adoption.md`) および Phase 2 spec / P2-A spec / P2-B spec / P2-C spec で初出した用語を集約する。実装 identifier は P2-A で確定済のもの、P2-B で確定したもの (kotoha-dict / kotoha-storage / kotoha.db / UserVocab / UserVocabStore の 5 entry。P2-C で `UserVocabStore` は `UserVocabReader` / `UserVocabWriter` の 2 trait に分割した)、P2-C で確定したもの (`LearningCacheReader` / `LearningCacheWriter` / `test-helpers` feature flag / `CapOverrideGuard` / `evict_to_cap` helper の 5 entry)、P2-D 以降で確定予定のものを含む。
 
 ### 形態素解析 (Morphological Analysis)
 
@@ -239,8 +239,8 @@
 
 - **定義**: ユーザの変換候補選択履歴を永続化し、後続の rerank に利用する cache。永続化形式は SQLite 共用 DB `kotoha.db` の `learning_cache` table である (ADR 0015 / P2-B spec §5.2、2026-04-25 P2-B kick-off で確定)。runtime での in-memory LRU 形態を採るか SQLite 直読みのみとするかは P2-C kick-off で empirical 確定する。同一 kana 入力に対するユーザ選択の偏りを時系列で反映する目的で導入する。
 - **初出**: ADR 0014 D3 / Phase 2 spec §5 / ADR 0015
-- **対応する identifier**: `kotoha_storage::learning_cache::LearningCacheStore` trait (P2-B で skeleton 先出し、P2-C で `SqliteLearningCacheStore` 本実装)
-- **備考**: LRU 容量上限 (暫定 10,000 entry) / eviction 方針 / pruning 閾値は P2-C で empirical 確定する。Phase 5 `KotohaNative` backend でも再利用可能な layer として設計する (ADR 0014 D6)。
+- **対応する identifier**: `kotoha_storage::learning_cache::{LearningCacheReader, LearningCacheWriter}` trait (P2-B で `LearningCacheStore` 1 trait の skeleton として先出し、P2-C で arch-M-2 ISP split + 本実装に置換)。SQLite 実装は `kotoha_storage::learning_cache::sqlite::SqliteLearningCacheStore` が両 trait を impl する。
+- **備考**: P2-B 段階では skeleton(stub)であったが、P2-C(PR #106)で UPSERT(`record_choice`)+ 自動 LRU eviction(行数上限超過時に `last_used_at ASC` 順で削除)+ lookup(`frequency DESC, last_used_at DESC` 順)の本実装に置換した。LRU 容量上限は `LEARNING_CACHE_MAX_ROWS` 定数(暫定 10,000 entry)で表現し、Phase 5 personalization での動的 cap 化を後段 Issue として残す。Phase 5 `KotohaNative` backend でも再利用可能な layer として設計する (ADR 0014 D6)。
 
 ### Ranker / Reranker
 
@@ -265,10 +265,10 @@
 
 ### kotoha-storage
 
-- **定義**: Phase 2 P2-B で新規導入する Rust crate。SQLite ベースの永続化層を提供し、`Database` 構造体 / Migration runner / `UserVocabStore` / `LearningCacheStore` の 2 trait + 各実装(Sqlite + Mock)を含む。`rusqlite + bundled` を採用し、SQLite C library の依存を本 crate 内に閉じ込める。
+- **定義**: Phase 2 P2-B で新規導入する Rust crate。SQLite ベースの永続化層を提供し、`Database` 構造体 / Migration runner / `UserVocabReader` / `UserVocabWriter` / `LearningCacheReader` / `LearningCacheWriter` の 4 trait + 各実装(Sqlite + Mock)を含む。`rusqlite + bundled` を採用し、SQLite C library の依存を本 crate 内に閉じ込める。
 - **初出**: ADR 0015 / Phase 2 P2-B spec §4
-- **対応する identifier**: `crates/kotoha-storage/`(crate root)、`kotoha_storage::Database` / `kotoha_storage::user_vocab::UserVocabStore` 等
-- **備考**: Clean Architecture「Interface 依存」/ SOLID DIP に整合させるため、`kotoha-core` に逆依存しない。`kotoha-core::dict::user_vocab::UserVocab` が `Box<dyn UserVocabStore>` を field 保持することで `kotoha-core` 単体 build は SQLite C library コンパイル不要となる。
+- **対応する identifier**: `crates/kotoha-storage/`(crate root)、`kotoha_storage::Database` / `kotoha_storage::user_vocab::{UserVocabReader, UserVocabWriter}` / `kotoha_storage::learning_cache::{LearningCacheReader, LearningCacheWriter}` 等
+- **備考**: Clean Architecture「Interface 依存」/ SOLID DIP に整合させるため、`kotoha-core` に逆依存しない。`kotoha-core::dict::user_vocab::UserVocab` が `Box<dyn UserVocabReader>` を field 保持することで `kotoha-core` 単体 build は SQLite C library コンパイル不要となる。P2-B 着地時点では `UserVocabStore` / `LearningCacheStore` の 2 trait 構成であったが、P2-C(2026-04-26、PR #106)で arch-M-2 ISP split を適用し Reader/Writer の 4 trait 構成に置換した。
 
 ### kotoha.db
 
@@ -284,12 +284,40 @@
 - **対応する identifier**: `crates/kotoha-core/src/dict/user_vocab.rs` の `UserVocab` 構造体 (`impl VocabularyLookup`)
 - **備考**: `UserVocab::lookup` は SQLite backend エラー時に空 Vec を返す (`unwrap_or_default()`) ことで、`VocabularyLookup::lookup` の sync signature を維持しつつ MorphologicalEngine 経路と CustomVocab 経路の recall を保護する。
 
-### UserVocabStore
+### UserVocabReader / UserVocabWriter (ISP split)
 
-- **定義**: `kotoha-storage` crate 内で定義する trait。UserVocab の永続化抽象境界として `find_by_reading` / `list_all` / `insert` / `delete_by_id` / `delete_by_surface_reading` の 5 method を提供する。SQLite 実装 (`SqliteUserVocabStore`) と Mock 実装 (`MockUserVocabStore`) を持ち、Clean Architecture「Interface 依存」/ SOLID DIP に整合させる。
-- **初出**: Phase 2 P2-B spec §6.1
-- **対応する identifier**: `kotoha_storage::user_vocab::UserVocabStore` trait
-- **備考**: `Send + Sync` 制約を持ち、`Box<dyn UserVocabStore>` で `kotoha-core::dict::user_vocab::UserVocab` に注入される。`MockUserVocabStore` は SQLite 不在環境での Layer 2 integration test を可能にする目的で同 crate 内に配置する (P2-A `MockEngine` / `MockVocab` と同 pattern)。
+- **定義**: `kotoha-storage` crate 内で定義する 2 trait。`UserVocabReader` は read-only(`find_by_id` / `find_by_reading` / `find_by_prefix` / `list_all` の 4 method)、`UserVocabWriter` は write-only(`insert` / `delete_by_id` / `delete_by_surface_reading` の 3 method)である。SOLID Interface Segregation Principle(arch-M-2)に従い、Phase 3 IBus engine などの read-only consumer に Writer 系 method を露出しない設計とする。SQLite 実装(`SqliteUserVocabStore`)と Mock 実装(`MockUserVocabStore`)が両 trait を impl する。
+- **初出**: Phase 2 P2-B spec §6.1(`UserVocabStore` 1 trait として導入) / Phase 2 P2-C spec §3.2(arch-M-2 ISP split で 2 trait に分割)
+- **対応する identifier**: `kotoha_storage::user_vocab::store::{UserVocabReader, UserVocabWriter}`
+- **備考**: 両 trait とも `Send + Sync` 制約を持ち、`Box<dyn UserVocabReader>` / `Box<dyn UserVocabWriter>` で `kotoha-core::dict::user_vocab::UserVocab` 等の上位層に注入される。`MockUserVocabStore` は SQLite 不在環境での Layer 2 integration test を可能にする目的で同 crate 内に配置する(P2-A `MockEngine` / `MockVocab` と同 pattern)。履歴: P2-B(2026-04-25、PR #101)で `UserVocabStore` 1 trait として導入したが、P2-C(2026-04-26、PR #106)で arch-M-2 ISP split を適用し Reader / Writer の 2 trait に分割した。旧 `UserVocabStore` trait は P2-C で削除済。
+
+### LearningCacheReader / LearningCacheWriter (ISP split)
+
+- **定義**: `kotoha-storage` crate 内で定義する 2 trait。`LearningCacheReader` は read-only(`lookup(kana_input, limit) -> Vec<LearningCacheRecord>` の 1 method、`frequency DESC, last_used_at DESC` 順で返す)、`LearningCacheWriter` は write-only(`record_choice(kana_input, chosen_kanji)` UPSERT + 自動 LRU eviction、明示 eviction 用 `evict_lru(max_entries) -> usize` の 2 method)である。SOLID Interface Segregation Principle に従い、rerank consumer に Writer 系 method を露出しない設計とする。SQLite 実装(`SqliteLearningCacheStore`)が両 trait を impl する。
+- **初出**: Phase 2 P2-C spec §3.1 / §6.1(P2-B 段階の `LearningCacheStore` skeleton を ISP split で 2 trait に分割)
+- **対応する identifier**: `kotoha_storage::learning_cache::{LearningCacheReader, LearningCacheWriter}` trait + `kotoha_storage::learning_cache::sqlite::SqliteLearningCacheStore` 実装
+- **備考**: 両 trait とも `Send + Sync` 制約を持ち、`Box<dyn LearningCacheReader>` / `Box<dyn LearningCacheWriter>` で上位層に注入される。`record_choice` 内部では `effective_max_rows()` を cap として `evict_to_cap` helper を呼出し自動 LRU eviction を行うため、通常の consumer は `evict_lru` を明示呼出しする必要は少ない。履歴: P2-B(2026-04-25、PR #101)で `LearningCacheStore` 1 trait の skeleton として先出ししたが、P2-C(2026-04-26、PR #106)で arch-M-2 ISP split + 本実装に置換した。旧 `LearningCacheStore` trait は P2-C で削除済。
+
+### test-helpers feature flag
+
+- **定義**: `kotoha-storage` crate の Cargo feature。test-only API(`CapOverrideGuard` / `LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE` / `CAP_OVERRIDE_LOCK` / `effective_max_rows`)を `#[cfg(any(test, feature = "test-helpers"))]` で gate し、production binary に test-only API が漏出しない設計を実現する。default では off であり、integration test crate(`crates/kotoha-storage/tests/learning_cache_*`)が `[[test]] required-features = ["test-helpers"]` で要求する。
+- **初出**: Phase 2 P2-C spec §4.5 / §4.6(commit `42f5cd2` で導入)
+- **対応する identifier**: `crates/kotoha-storage/Cargo.toml` の `[features]` 節 `test-helpers = []` + 各 test-only 定義の `#[cfg(any(test, feature = "test-helpers"))]` gate
+- **備考**: lefthook pre-push の test step が `--features kotoha-storage/test-helpers` を強制することで、production-only build と test build の両方を CI で機械検証する。本 feature gate により「test-only RAII guard が production API に漏出する」という arch-M-2 / sec-M finding を構造的に防止する。
+
+### CapOverrideGuard
+
+- **定義**: `kotoha-storage` crate の test-only RAII guard。`#[cfg(any(test, feature = "test-helpers"))]` で gate される。`new(cap)` は test override 値設定 + `CAP_OVERRIDE_LOCK` 取得を同時に行い、`lock_only()` は override 値変更なしに `CAP_OVERRIDE_LOCK` のみを取得する(parallel 実行される他 test の `record_choice` 内 auto eviction を小さな cap で発火させない用途)。Drop 時に override 値を 0 に戻す。
+- **初出**: Phase 2 P2-C spec §4.5(commit `1af6d6b` で `LEARNING_CACHE_MAX_ROWS` cap const と同時導入、`eef7cc9` で `lock_only` API 追加、`42f5cd2` で test-helpers feature gate 化)
+- **対応する identifier**: `kotoha_storage::learning_cache::sqlite::CapOverrideGuard` 構造体(`crates/kotoha-storage/src/learning_cache/sqlite.rs`)
+- **備考**: `kotoha_storage::user_vocab::sqlite::QuotaOverrideGuard`(P2-B 由来)と同 pattern であり、static `LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE: AtomicUsize` の値を test scope で一時的に上書きする。process 全体の static を変更する性質上、test 間の race を `CAP_OVERRIDE_LOCK: Mutex<()>` で serialize する。
+
+### evict_to_cap helper
+
+- **定義**: `kotoha-storage` crate の `pub(crate)` 内部関数。signature は `pub(crate) fn evict_to_cap(conn: &Connection, cap: usize) -> Result<usize, StorageError>`。`COUNT(*)` で `learning_cache` table の行数を取得し、`cap` を超過していれば超過分の entry を `last_used_at ASC, id ASC` 順に DELETE し、削除件数を返す。
+- **初出**: Phase 2 P2-C spec §4.6(commit `fd124b7` で抽出)
+- **対応する identifier**: `kotoha_storage::learning_cache::sqlite::evict_to_cap`(`crates/kotoha-storage/src/learning_cache/sqlite.rs`)
+- **備考**: `record_choice` の自動 eviction(commit `fd124b7`)と `evict_lru` の明示 eviction(commit `3c8391d`)で共通化された helper。tie-breaker `id ASC` を併用することで `last_used_at` が同値の場合でも決定論的な削除順序を保証する。
 
 ## 5. LLM 推論とプロンプト
 
