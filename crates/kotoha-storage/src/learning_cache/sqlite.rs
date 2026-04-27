@@ -33,7 +33,6 @@ pub(crate) static CAP_OVERRIDE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::ne
 /// - `#[cfg(test)]` かつ override が 0 の場合は `LEARNING_CACHE_MAX_ROWS` を返す
 /// - `#[cfg(test)]` かつ override が 0 より大きい場合は override 値を返す
 #[inline]
-#[allow(dead_code)] // B8 で record_choice / evict_to_cap から呼び出し開始
 pub(crate) fn effective_max_rows() -> usize {
     #[cfg(test)]
     {
@@ -101,6 +100,48 @@ const UPSERT_SQL: &str =
          frequency     = frequency + 1,
          last_used_at  = excluded.last_used_at";
 
+/// 総行数チェック SQL(spec §4.4)。
+const COUNT_SQL: &str = "SELECT count(*) FROM learning_cache";
+
+/// LRU 削除 SQL(spec §4.4)。`last_used_at ASC, id ASC` 順で `LIMIT ?1` 件削除する。
+const EVICT_SQL: &str = "DELETE FROM learning_cache
+     WHERE id IN (
+         SELECT id FROM learning_cache
+         ORDER BY last_used_at ASC, id ASC
+         LIMIT ?1
+     )";
+
+/// `learning_cache` の行数が `cap` を超えている場合、LRU から `count - cap` 行削除する。
+///
+/// `record_choice` の自動 eviction(`effective_max_rows()` を cap に渡す)と
+/// `evict_lru(max_entries)` の明示 eviction の両方から呼ばれる共通 helper。
+///
+/// # Preconditions
+///
+/// - `conn` は `Database::lock_conn()` で取得済の `MutexGuard<Connection>`(または
+///   その deref を経由した `&Connection`)
+/// - `cap` は呼び出し元が指定する行数上限値
+///
+/// # Postconditions
+///
+/// - 戻り値は削除した行数
+/// - 行数 ≤ cap が保証される
+///
+/// # Errors
+///
+/// - [`StorageError::Sqlite`][]: SQLite backend 障害の場合
+pub(crate) fn evict_to_cap(conn: &rusqlite::Connection, cap: usize) -> Result<usize, StorageError> {
+    let total: i64 = conn.query_row(COUNT_SQL, [], |r| r.get(0))?;
+    let total = total as usize;
+    if total <= cap {
+        return Ok(0);
+    }
+    let excess = total - cap;
+    let mut stmt = conn.prepare_cached(EVICT_SQL)?;
+    let deleted = stmt.execute(rusqlite::params![excess as i64])?;
+    Ok(deleted)
+}
+
 pub struct SqliteLearningCacheStore {
     pub(crate) db: Arc<Database>,
 }
@@ -156,9 +197,12 @@ impl LearningCacheWriter for SqliteLearningCacheStore {
             .unwrap_or(0);
         let conn = self.db.lock_conn();
         // perf-H1: prepare_cached により SQL コンパイルを 1 度きりにする。
-        let mut stmt = conn.prepare_cached(UPSERT_SQL)?;
-        stmt.execute(rusqlite::params![kana_input, chosen_kanji, now])?;
-        // NOTE: eviction は B8 でここに追加する。
+        {
+            let mut stmt = conn.prepare_cached(UPSERT_SQL)?;
+            stmt.execute(rusqlite::params![kana_input, chosen_kanji, now])?;
+        }
+        // 行数が effective_max_rows() を超えた場合、LRU entry を自動削除する(spec §4.2)。
+        evict_to_cap(&conn, effective_max_rows())?;
         Ok(())
     }
 
@@ -367,18 +411,30 @@ mod tests {
     }
 
     /// LRU 保護: record_choice で update された entry は eviction 対象から外れる。
+    ///
+    /// last_used_at は秒精度の `SystemTime::now()` のため、同一秒内に複数 record_choice
+    /// が走ると tie となり id ASC で評価されてしまう。本 test はそれを避けるため
+    /// 各 step 間で `std::thread::sleep(Duration::from_secs(1))` を挟み、
+    /// 秒境界を確実に跨ぐようにしている。production code 側の精度問題ではなく
+    /// test 構成の精度問題なので、test 側で吸収する。
     /// (B7) TDD red: B5 実装は eviction を含まないので挙動を検証できず行数超過で FAIL する。
     #[test]
     fn eviction_protects_recently_updated_entry_from_lru() {
+        use std::thread::sleep;
+        use std::time::Duration;
         let _guard = CapOverrideGuard::new(2);
         let store = fresh_store_b();
-        // "亜" を先に insert する(古い entry)。
+        // "亜" を先に insert する(古い entry、last_used_at = T0)。
         store.record_choice("あ", "亜").expect("ok");
-        // "以" を後で insert する(新しい entry)。
+        sleep(Duration::from_secs(1));
+        // "以" を後で insert する(中間 entry、last_used_at = T0 + 1)。
         store.record_choice("い", "以").expect("ok");
-        // "亜" を再度 record_choice して last_used_at を更新する。
+        sleep(Duration::from_secs(1));
+        // "亜" を再度 record_choice して last_used_at を T0 + 2 に更新する。
         store.record_choice("あ", "亜").expect("ok");
-        // 3 件目 insert で cap=2 を超える。"以" のほうが古いので evict される。
+        sleep(Duration::from_secs(1));
+        // "う" を insert(last_used_at = T0 + 3)。これで cap=2 を超える。
+        // "以" の last_used_at が最も古いので evict される。
         store.record_choice("う", "宇").expect("ok");
         // "亜" は残っており、"以" は evict されている。
         let result_a = store.lookup("あ", 10).expect("ok");
