@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::database::Database;
 use crate::error::StorageError;
 use crate::learning_cache::{LearningCacheReader, LearningCacheRecord, LearningCacheWriter};
-use crate::validation::validate_reading;
+use crate::validation::{validate_reading, validate_surface};
 
 /// `lookup` SQL(spec §4.3)。`(kana_input)` index を seek して
 /// `frequency DESC, last_used_at DESC` 順に `LIMIT ?2` 件を返す。
@@ -14,6 +14,15 @@ const LOOKUP_SQL: &str = "SELECT id, kana_input, chosen_kanji, frequency, last_u
      WHERE kana_input = ?1
      ORDER BY frequency DESC, last_used_at DESC
      LIMIT ?2";
+
+/// `record_choice` の UPSERT SQL(spec §4.2、SQLite 3.24+ ON CONFLICT UPSERT 構文)。
+const UPSERT_SQL: &str =
+    "INSERT INTO learning_cache (kana_input, chosen_kanji, frequency, last_used_at)
+     VALUES (?1, ?2, 1, ?3)
+     ON CONFLICT(kana_input, chosen_kanji)
+     DO UPDATE SET
+         frequency     = frequency + 1,
+         last_used_at  = excluded.last_used_at";
 
 pub struct SqliteLearningCacheStore {
     pub(crate) db: Arc<Database>,
@@ -61,8 +70,18 @@ impl LearningCacheReader for SqliteLearningCacheStore {
 }
 
 impl LearningCacheWriter for SqliteLearningCacheStore {
-    fn record_choice(&self, _kana_input: &str, _chosen_kanji: &str) -> Result<(), StorageError> {
-        // B5 で本実装する。
+    fn record_choice(&self, kana_input: &str, chosen_kanji: &str) -> Result<(), StorageError> {
+        validate_reading(kana_input)?;
+        validate_surface(chosen_kanji)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let conn = self.db.lock_conn();
+        // perf-H1: prepare_cached により SQL コンパイルを 1 度きりにする。
+        let mut stmt = conn.prepare_cached(UPSERT_SQL)?;
+        stmt.execute(rusqlite::params![kana_input, chosen_kanji, now])?;
+        // NOTE: eviction は B8 でここに追加する。
         Ok(())
     }
 
