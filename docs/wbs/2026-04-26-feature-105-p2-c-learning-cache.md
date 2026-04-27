@@ -27,12 +27,12 @@ parent-plan: docs/superpowers/plans/2026-04-26-feature-105-p2-c-learning-cache.m
 | 項目 | 値 |
 |---|---|
 | `default` features 合計 | **320 PASS**(P2-B baseline 281 から +39) |
-| `dict` features 合計 | **368 PASS**(P2-B baseline 340 から +28) |
-| `dict-persist` features 合計(P2-C 新 baseline) | **411 PASS**(P2-B baseline 355 から +56) |
+| `dict` features 合計 | **379 PASS**(P2-B baseline 340 から +39) |
+| `dict-persist` features 合計(P2-C 新 baseline) | **394 PASS**(P2-B baseline 355 から +39) |
 | 工数(実) | 1 セッション(plan 執筆 + 実装 + Phase D fix を subagent dispatch で消化) |
 | 変更 file 数 | 20(WBS 含めると 21) |
 | 変更 lines | +1756 / -166(WBS 除く、`git diff 130a214..HEAD --stat` 出力) |
-| commit 数 | 26(`git log --oneline 130a214..HEAD` 集計、Phase A 7 + B 12 + C 3 + D 2 + Phase D fix 1) |
+| commit 数 | 27(`git log --oneline 130a214..HEAD` 集計、Phase A 8 + B 12 + C 3 + D 2 + Phase D fix 1 + Phase E WBS 1) |
 | production binary 検査 | `nm -C` で test-only symbol 0 件(`CapOverrideGuard` / `LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE` / `CAP_OVERRIDE_LOCK` / `effective_max_rows` を全件 grep で確認) |
 | clippy 警告 | 0(`--features kotoha-storage/test-helpers -- -D warnings`) |
 | `cargo audit` | 0 vulnerability |
