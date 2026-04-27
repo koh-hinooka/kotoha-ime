@@ -1,4 +1,4 @@
-//! SqliteUserVocabStore: UserVocabStore の SQLite 実装(spec §6.1 / §6.4)。
+//! SqliteUserVocabStore: UserVocabReader + UserVocabWriter の SQLite 実装(arch-M-2、spec §3.2 / §6.1 / §6.4)。
 
 use std::sync::Arc;
 

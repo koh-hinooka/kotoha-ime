@@ -85,8 +85,9 @@ impl Database {
     ///
     /// # Postconditions
     ///
-    /// - 戻り値の trait object は内部で `Arc<SqliteUserVocabStore>` を保持し、
-    ///   同一 `Database` から生成された他の factory の戻り値と同一 SQLite connection を共有する
+    /// - 戻り値の trait object は内部で `SqliteUserVocabStore` を `Box` で保持し、
+    ///   その `SqliteUserVocabStore` は `Arc<Database>` を `Arc::clone` で共有する
+    /// - 同一 `Arc<Database>` から生成した reader / writer は同一 `Mutex<Connection>` を共有する
     pub fn user_vocab_reader(
         self: &Arc<Self>,
     ) -> Box<dyn crate::user_vocab::store::UserVocabReader> {
@@ -99,7 +100,9 @@ impl Database {
     ///
     /// # Postconditions
     ///
-    /// - 戻り値の trait object は内部で `Arc<SqliteUserVocabStore>` を保持する
+    /// - 戻り値の trait object は内部で `SqliteUserVocabStore` を `Box` で保持し、
+    ///   その `SqliteUserVocabStore` は `Arc<Database>` を `Arc::clone` で共有する
+    /// - 同一 `Arc<Database>` から生成した reader / writer は同一 `Mutex<Connection>` を共有する
     pub fn user_vocab_writer(
         self: &Arc<Self>,
     ) -> Box<dyn crate::user_vocab::store::UserVocabWriter> {
@@ -112,7 +115,8 @@ impl Database {
     ///
     /// # Postconditions
     ///
-    /// - 戻り値の trait object は内部で `Arc<SqliteLearningCacheStore>` を保持する
+    /// - 戻り値の trait object は内部で `SqliteLearningCacheStore` を `Box` で保持し、
+    ///   その `SqliteLearningCacheStore` は `Arc<Database>` を `Arc::clone` で共有する
     /// - 同一 `Arc<Database>` から生成した reader / writer は同一 `Mutex<Connection>` を共有する
     pub fn learning_cache_reader(
         self: &Arc<Self>,
@@ -126,7 +130,8 @@ impl Database {
     ///
     /// # Postconditions
     ///
-    /// - 戻り値の trait object は内部で `Arc<SqliteLearningCacheStore>` を保持する
+    /// - 戻り値の trait object は内部で `SqliteLearningCacheStore` を `Box` で保持し、
+    ///   その `SqliteLearningCacheStore` は `Arc<Database>` を `Arc::clone` で共有する
     /// - 同一 `Arc<Database>` から生成した reader / writer は同一 `Mutex<Connection>` を共有する
     pub fn learning_cache_writer(
         self: &Arc<Self>,
