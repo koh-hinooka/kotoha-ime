@@ -17,8 +17,8 @@ use crate::error::StorageError;
 ///
 /// # Errors
 ///
-/// - [`StorageError::InvalidField`]: `reading` が validation 違反の場合
-/// - [`StorageError::Sqlite`]: SQLite backend 障害の場合
+/// - [`StorageError::InvalidField`][]:`reading` が validation 違反の場合
+/// - [`StorageError::Sqlite`][]:SQLite backend 障害の場合
 pub trait UserVocabReader: Send + Sync {
     /// `reading` が完全一致する entry を `score DESC` 順で返す。
     ///
@@ -29,8 +29,8 @@ pub trait UserVocabReader: Send + Sync {
     ///
     /// # Errors
     ///
-    /// - [`StorageError::InvalidField`]: `reading` が hiragana 以外を含む場合
-    /// - [`StorageError::Sqlite`]: SQLite backend 障害の場合
+    /// - [`StorageError::InvalidField`][]:`reading` が hiragana 以外を含む場合
+    /// - [`StorageError::Sqlite`][]:SQLite backend 障害の場合
     fn find_by_reading(
         &self,
         reading: &str,
@@ -45,7 +45,7 @@ pub trait UserVocabReader: Send + Sync {
     ///
     /// # Errors
     ///
-    /// - [`StorageError::Sqlite`]: SQLite backend 障害の場合
+    /// - [`StorageError::Sqlite`][]:SQLite backend 障害の場合
     fn find_by_id(&self, id: i64) -> Result<Option<UserVocabRecord>, StorageError>;
 
     /// `reading` が `reading_prefix` で前方一致する entry を `score DESC` 順で返す。
@@ -58,8 +58,8 @@ pub trait UserVocabReader: Send + Sync {
     ///
     /// # Errors
     ///
-    /// - [`StorageError::InvalidField`]: `reading_prefix` が validation 違反の場合
-    /// - [`StorageError::Sqlite`]: SQLite backend 障害の場合
+    /// - [`StorageError::InvalidField`][]:`reading_prefix` が validation 違反の場合
+    /// - [`StorageError::Sqlite`][]:SQLite backend 障害の場合
     fn find_by_prefix(
         &self,
         reading_prefix: &str,
@@ -70,7 +70,7 @@ pub trait UserVocabReader: Send + Sync {
     ///
     /// # Errors
     ///
-    /// - [`StorageError::Sqlite`]: SQLite backend 障害の場合
+    /// - [`StorageError::Sqlite`][]:SQLite backend 障害の場合
     fn list_all(&self, limit: usize, offset: usize) -> Result<Vec<UserVocabRecord>, StorageError>;
 }
 
@@ -88,10 +88,10 @@ pub trait UserVocabReader: Send + Sync {
 ///
 /// # Errors
 ///
-/// - [`StorageError::InvalidField`]: validation 違反の場合
-/// - [`StorageError::DuplicateEntry`]: UNIQUE 制約違反の場合
-/// - [`StorageError::NotFound`]: 削除対象が存在しない場合
-/// - [`StorageError::Sqlite`]: SQLite backend 障害の場合
+/// - [`StorageError::InvalidField`][]:validation 違反の場合
+/// - [`StorageError::DuplicateEntry`][]:UNIQUE 制約違反の場合
+/// - [`StorageError::NotFound`][]:削除対象が存在しない場合
+/// - [`StorageError::Sqlite`][]:SQLite backend 障害の場合
 pub trait UserVocabWriter: Send + Sync {
     /// `record` を `user_vocab` table に insert し、採番された `id` を返す。
     ///
@@ -106,26 +106,26 @@ pub trait UserVocabWriter: Send + Sync {
     ///
     /// # Errors
     ///
-    /// - [`StorageError::InvalidField`]: field validation 違反の場合
-    /// - [`StorageError::DuplicateEntry`]: UNIQUE(surface, reading) 違反の場合
-    /// - [`StorageError::QuotaExceeded`]: 行数が `USER_VOCAB_MAX_ROWS` に到達している場合
-    /// - [`StorageError::Sqlite`]: SQLite backend 障害の場合
+    /// - [`StorageError::InvalidField`][]:field validation 違反の場合
+    /// - [`StorageError::DuplicateEntry`][]:UNIQUE(surface, reading) 違反の場合
+    /// - [`StorageError::QuotaExceeded`][]:行数が `USER_VOCAB_MAX_ROWS` に到達している場合
+    /// - [`StorageError::Sqlite`][]:SQLite backend 障害の場合
     fn insert(&self, record: UserVocabRecord) -> Result<i64, StorageError>;
 
     /// 主キー `id` で entry を 1 件削除する。
     ///
     /// # Errors
     ///
-    /// - [`StorageError::NotFound`]: `id` が存在しない場合
-    /// - [`StorageError::Sqlite`]: SQLite backend 障害の場合
+    /// - [`StorageError::NotFound`][]:`id` が存在しない場合
+    /// - [`StorageError::Sqlite`][]:SQLite backend 障害の場合
     fn delete_by_id(&self, id: i64) -> Result<(), StorageError>;
 
     /// `(surface, reading)` で entry を 1 件削除する。
     ///
     /// # Errors
     ///
-    /// - [`StorageError::NotFound`]: 対象 entry が存在しない場合
-    /// - [`StorageError::Sqlite`]: SQLite backend 障害の場合
+    /// - [`StorageError::NotFound`][]:対象 entry が存在しない場合
+    /// - [`StorageError::Sqlite`][]:SQLite backend 障害の場合
     fn delete_by_surface_reading(&self, surface: &str, reading: &str) -> Result<(), StorageError>;
 }
 
