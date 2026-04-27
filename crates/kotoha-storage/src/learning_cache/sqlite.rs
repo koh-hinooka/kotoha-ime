@@ -5,9 +5,17 @@ use std::sync::Arc;
 use crate::database::Database;
 use crate::error::StorageError;
 use crate::learning_cache::{LearningCacheReader, LearningCacheRecord, LearningCacheWriter};
+use crate::validation::validate_reading;
+
+/// `lookup` SQL(spec §4.3)。`(kana_input)` index を seek して
+/// `frequency DESC, last_used_at DESC` 順に `LIMIT ?2` 件を返す。
+const LOOKUP_SQL: &str = "SELECT id, kana_input, chosen_kanji, frequency, last_used_at
+     FROM learning_cache
+     WHERE kana_input = ?1
+     ORDER BY frequency DESC, last_used_at DESC
+     LIMIT ?2";
 
 pub struct SqliteLearningCacheStore {
-    #[allow(dead_code)] // B3 / B5 / B10 で本実装と同時に使用開始
     pub(crate) db: Arc<Database>,
 }
 
@@ -17,9 +25,9 @@ impl SqliteLearningCacheStore {
     }
 }
 
-/// `SqliteLearningCacheStore` の B1 段階の動作:
+/// `SqliteLearningCacheStore` の B3 段階の動作:
 ///
-/// - `lookup`: 常に空 `Vec` を返す(B3 で本実装)
+/// - `lookup`: 本実装(`LOOKUP_SQL` + `prepare_cached`)
 /// - `record_choice`: 常に Ok(())(B5 で本実装)
 /// - `evict_lru`: 常に Ok(0)(B10 で本実装)
 ///
@@ -27,11 +35,28 @@ impl SqliteLearningCacheStore {
 impl LearningCacheReader for SqliteLearningCacheStore {
     fn lookup(
         &self,
-        _kana_input: &str,
-        _limit: usize,
+        kana_input: &str,
+        limit: usize,
     ) -> Result<Vec<LearningCacheRecord>, StorageError> {
-        // B3 で本実装する。
-        Ok(Vec::new())
+        validate_reading(kana_input)?;
+        let conn = self.db.lock_conn();
+        // perf-H1: prepare_cached により Phase 3 IBus engine の打鍵毎呼び出しでも
+        // SQL コンパイルを 1 度きりにする(同一 SQL ⇒ cache hit)。
+        let mut stmt = conn.prepare_cached(LOOKUP_SQL)?;
+        let rows = stmt.query_map(rusqlite::params![kana_input, limit as i64], |row| {
+            Ok(LearningCacheRecord {
+                id: row.get(0)?,
+                kana_input: row.get(1)?,
+                chosen_kanji: row.get(2)?,
+                frequency: row.get::<_, u32>(3)?,
+                last_used_at: row.get(4)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 }
 
