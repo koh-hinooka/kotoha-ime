@@ -153,14 +153,14 @@ pub fn normalize_reading(reading: &str) -> Result<String, String> {
 }
 
 use kotoha_storage::error::StorageError;
-use kotoha_storage::user_vocab::store::{UserVocabRecord, UserVocabStore};
+use kotoha_storage::user_vocab::store::{UserVocabReader, UserVocabRecord, UserVocabWriter};
 
 /// `kotoha-dict add` 実装。
 ///
 /// # Errors
 ///
 /// Exit code を文字列で返す(`Result<exit_code, String>`)。
-pub fn run_add(store: &dyn UserVocabStore, args: &AddArgs, quiet: bool) -> Result<i32, String> {
+pub fn run_add(store: &dyn UserVocabWriter, args: &AddArgs, quiet: bool) -> Result<i32, String> {
     let reading = match normalize_reading(&args.reading) {
         Ok(s) => s,
         Err(e) => {
@@ -212,7 +212,7 @@ pub fn run_add(store: &dyn UserVocabStore, args: &AddArgs, quiet: bool) -> Resul
 ///
 /// Exit code を文字列で返す(`Result<exit_code, String>`)。
 pub fn run_remove(
-    store: &dyn UserVocabStore,
+    store: &dyn UserVocabWriter,
     args: &RemoveArgs,
     quiet: bool,
 ) -> Result<i32, String> {
@@ -266,7 +266,7 @@ pub fn run_remove(
 ///
 /// Exit code を文字列で返す(`Result<exit_code, String>`)。
 pub fn run_list(
-    store: &dyn UserVocabStore,
+    store: &dyn UserVocabReader,
     args: &ListArgs,
     json_global: bool,
 ) -> Result<i32, String> {
@@ -342,7 +342,7 @@ pub fn run_list(
 ///
 /// Exit code を文字列で返す(`Result<exit_code, String>`)。
 pub fn run_show(
-    store: &dyn UserVocabStore,
+    store: &dyn UserVocabReader,
     args: &ShowArgs,
     json_global: bool,
 ) -> Result<i32, String> {

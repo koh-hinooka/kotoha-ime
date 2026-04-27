@@ -27,15 +27,16 @@ fn main() {
             std::process::exit(EXIT_INTERNAL);
         }
     };
-    let store = db.user_vocab_store();
+    let reader = db.user_vocab_reader();
+    let writer = db.user_vocab_writer();
 
     let exit_code = match &cli.command {
-        Command::Add(args) => run_add(store.as_ref(), args, cli.quiet).unwrap_or(EXIT_INTERNAL),
+        Command::Add(args) => run_add(writer.as_ref(), args, cli.quiet).unwrap_or(EXIT_INTERNAL),
         Command::Remove(args) => {
-            run_remove(store.as_ref(), args, cli.quiet).unwrap_or(EXIT_INTERNAL)
+            run_remove(writer.as_ref(), args, cli.quiet).unwrap_or(EXIT_INTERNAL)
         }
-        Command::List(args) => run_list(store.as_ref(), args, cli.json).unwrap_or(EXIT_INTERNAL),
-        Command::Show(args) => run_show(store.as_ref(), args, cli.json).unwrap_or(EXIT_INTERNAL),
+        Command::List(args) => run_list(reader.as_ref(), args, cli.json).unwrap_or(EXIT_INTERNAL),
+        Command::Show(args) => run_show(reader.as_ref(), args, cli.json).unwrap_or(EXIT_INTERNAL),
     };
     std::process::exit(exit_code);
 }
