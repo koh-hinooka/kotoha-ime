@@ -445,4 +445,81 @@ mod tests {
         let result_i = store.lookup("い", 10).expect("ok");
         assert!(result_i.is_empty(), "以 must be evicted as the LRU entry");
     }
+
+    // --- evict_lru tests (B9 red phase) ---
+
+    /// `evict_lru` は行数が max_entries 以下の場合 0 を返す。
+    /// (B9) TDD red: stub は Ok(0) を返すので本 test は PASS する。B10 後も PASS を維持する。
+    #[test]
+    fn evict_lru_returns_zero_when_below_cap() {
+        let store = fresh_store_b();
+        store.record_choice("あ", "亜").expect("ok");
+        store.record_choice("い", "以").expect("ok");
+        // 行数 2 < max_entries=5 なので 0 が返る。
+        let deleted = store.evict_lru(5).expect("ok");
+        assert_eq!(deleted, 0);
+    }
+
+    /// `evict_lru` は超過分の行数を削除して削除件数を返す。
+    /// (B9) TDD red: stub は Ok(0) を返すので行数が変化せず FAIL する。
+    #[test]
+    fn evict_lru_deletes_excess_entries_and_returns_count() {
+        let store = fresh_store_b();
+        // 5 件 insert する。
+        for kanji in ["亜", "以", "宇", "江", "尾"] {
+            let kana = match kanji {
+                "亜" => "あ",
+                "以" => "い",
+                "宇" => "う",
+                "江" => "え",
+                "尾" => "お",
+                _ => unreachable!(),
+            };
+            store.record_choice(kana, kanji).expect("ok");
+        }
+        // max_entries=3 で呼び出す。5-3=2 件削除される。
+        let deleted = store.evict_lru(3).expect("ok");
+        assert_eq!(deleted, 2);
+        let conn = store.db.lock_conn();
+        let total: i64 = conn
+            .query_row("SELECT count(*) FROM learning_cache", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(total, 3);
+    }
+
+    /// `evict_lru` は last_used_at が同値の場合 id ASC で tie-break する。
+    /// (B9) TDD red: stub は Ok(0) を返すので削除されず FAIL する。
+    #[test]
+    fn evict_lru_uses_id_asc_as_tiebreak_for_same_last_used_at() {
+        let store = fresh_store_b();
+        // last_used_at を同値(0)に固定して 3 件 insert する。
+        {
+            let conn = store.db.lock_conn();
+            conn.execute(
+                "INSERT INTO learning_cache (kana_input, chosen_kanji, frequency, last_used_at)
+                 VALUES ('あ', '亜', 1, 0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO learning_cache (kana_input, chosen_kanji, frequency, last_used_at)
+                 VALUES ('い', '以', 1, 0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO learning_cache (kana_input, chosen_kanji, frequency, last_used_at)
+                 VALUES ('う', '宇', 1, 0)",
+                [],
+            )
+            .unwrap();
+        }
+        // max_entries=1 で呼び出す。id の小さい順に 2 件が削除される。
+        let deleted = store.evict_lru(1).expect("ok");
+        assert_eq!(deleted, 2);
+        // 残っているのは id が最大の "う/宇" である。
+        let result = store.lookup("う", 10).expect("ok");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].chosen_kanji, "宇");
+    }
 }
