@@ -80,15 +80,34 @@ impl Database {
         self.conn.lock().expect("Database mutex poisoned")
     }
 
-    /// `Arc<Database>` を `SqliteUserVocabStore` で wrap し owned `Box<dyn UserVocabStore>` を返す
-    /// (spec §6.4 共有 ownership)。
-    pub fn user_vocab_store(self: &Arc<Self>) -> Box<dyn crate::user_vocab::store::UserVocabStore> {
+    /// `Arc<Database>` を `Box<dyn UserVocabReader>` として公開する(arch-M-2 ISP split)。
+    ///
+    /// # Postconditions
+    ///
+    /// - 戻り値の trait object は内部で `Arc<SqliteUserVocabStore>` を保持し、
+    ///   同一 `Database` から生成された他の factory の戻り値と同一 SQLite connection を共有する
+    pub fn user_vocab_reader(
+        self: &Arc<Self>,
+    ) -> Box<dyn crate::user_vocab::store::UserVocabReader> {
         Box::new(crate::user_vocab::sqlite::SqliteUserVocabStore::new(
             Arc::clone(self),
         ))
     }
 
-    /// (P2-B では unimplemented stub、P2-C で本実装、spec §6.3)
+    /// `Arc<Database>` を `Box<dyn UserVocabWriter>` として公開する(arch-M-2 ISP split)。
+    ///
+    /// # Postconditions
+    ///
+    /// - 戻り値の trait object は内部で `Arc<SqliteUserVocabStore>` を保持する
+    pub fn user_vocab_writer(
+        self: &Arc<Self>,
+    ) -> Box<dyn crate::user_vocab::store::UserVocabWriter> {
+        Box::new(crate::user_vocab::sqlite::SqliteUserVocabStore::new(
+            Arc::clone(self),
+        ))
+    }
+
+    /// (P2-B では unimplemented stub、P2-C-B で本実装 + ISP split、spec §6.3)
     pub fn learning_cache_store(
         self: &Arc<Self>,
     ) -> Box<dyn crate::learning_cache::LearningCacheStore> {
@@ -208,14 +227,14 @@ mod tests {
     #[test]
     fn user_vocab_store_factory_returns_owned_box() {
         let db = Database::open_in_memory().expect("memory open");
-        let _store: Box<dyn crate::user_vocab::store::UserVocabStore> = db.user_vocab_store();
+        let _store: Box<dyn crate::user_vocab::store::UserVocabReader> = db.user_vocab_reader();
     }
 
     #[test]
     fn user_vocab_store_factory_shares_arc() {
         let db = Database::open_in_memory().expect("memory open");
-        let store1 = db.user_vocab_store();
-        let store2 = db.user_vocab_store();
+        let writer = db.user_vocab_writer();
+        let reader = db.user_vocab_reader();
         let r = crate::user_vocab::store::UserVocabRecord {
             id: None,
             surface: "x".to_string(),
@@ -225,8 +244,8 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         };
-        store1.insert(r).expect("insert ok");
-        let result = store2.find_by_reading("あ", 10).expect("find ok");
+        writer.insert(r).expect("insert ok");
+        let result = reader.find_by_reading("あ", 10).expect("find ok");
         assert_eq!(result.len(), 1);
     }
 
@@ -247,10 +266,10 @@ mod tests {
         use std::thread;
 
         let db = Database::open_in_memory().expect("memory open");
-        let store = Arc::new(db.user_vocab_store());
+        let writer = Arc::new(db.user_vocab_writer());
         let handles: Vec<_> = (0..8u32)
             .map(|i| {
-                let store = Arc::clone(&store);
+                let writer = Arc::clone(&writer);
                 thread::spawn(move || {
                     // hiragana を index から計算する(ASCII 数字混入を避ける)。
                     // U+3042 = 'あ' 起点で、あ/い/う/え/お/か/き/く を割り当てる。
@@ -266,14 +285,15 @@ mod tests {
                         created_at: 0,
                         updated_at: 0,
                     };
-                    store.insert(r).expect("insert ok");
+                    writer.insert(r).expect("insert ok");
                 })
             })
             .collect();
         for h in handles {
             h.join().unwrap();
         }
-        let result = store.list_all(100, 0).unwrap();
+        let reader = db.user_vocab_reader();
+        let result = reader.list_all(100, 0).unwrap();
         assert_eq!(result.len(), 8);
     }
 }
