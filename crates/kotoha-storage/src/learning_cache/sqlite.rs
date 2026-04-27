@@ -154,4 +154,61 @@ mod tests {
         let result = store.lookup("あい", 2).expect("ok");
         assert!(result.len() <= 2);
     }
+
+    // --- record_choice tests (B4 red phase) ---
+
+    /// `record_choice` は新規 entry を frequency=1 で insert する。
+    /// (B4) TDD red: stub は Ok(()) を返すが lookup で空 Vec が返るので FAIL。
+    #[test]
+    fn record_choice_inserts_new_entry_with_frequency_one() {
+        let store = fresh_store_b();
+        store.record_choice("かわ", "川").expect("record ok");
+        let result = store.lookup("かわ", 10).expect("ok");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].chosen_kanji, "川");
+        assert_eq!(result[0].frequency, 1);
+    }
+
+    /// `record_choice` は同じ `(kana_input, chosen_kanji)` の重複呼び出しで frequency を +1 する。
+    /// (B4) TDD red: stub は Ok(()) を返すが lookup で正しい frequency が返らない。
+    #[test]
+    fn record_choice_increments_frequency_on_duplicate() {
+        let store = fresh_store_b();
+        store.record_choice("かわ", "川").expect("1st ok");
+        store.record_choice("かわ", "川").expect("2nd ok");
+        let result = store.lookup("かわ", 10).expect("ok");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].frequency, 2);
+    }
+
+    /// `record_choice` は同じ kana_input でも chosen_kanji が異なる場合は別行として insert する。
+    /// (B4) TDD red: stub は Ok(()) を返すが lookup で 1 件しか返らない。
+    #[test]
+    fn record_choice_separates_different_chosen_kanji() {
+        let store = fresh_store_b();
+        store.record_choice("かわ", "川").expect("ok");
+        store.record_choice("かわ", "河").expect("ok");
+        let result = store.lookup("かわ", 10).expect("ok");
+        assert_eq!(result.len(), 2);
+    }
+
+    /// `record_choice` 呼び出し後は `last_used_at` が 0 より大きい値になる。
+    /// (B4) TDD red: stub は Ok(()) を返すが lookup で last_used_at=0 が返る。
+    #[test]
+    fn record_choice_sets_last_used_at_to_nonzero() {
+        let store = fresh_store_b();
+        store.record_choice("かわ", "川").expect("ok");
+        let result = store.lookup("かわ", 10).expect("ok");
+        assert!(!result.is_empty());
+        assert!(result[0].last_used_at > 0);
+    }
+
+    /// `record_choice` はひらがな以外の kana_input を拒否する。
+    /// (B4) TDD red: stub は validation を行わないので Ok(()) を返し FAIL。
+    #[test]
+    fn record_choice_rejects_non_hiragana_kana_input() {
+        let store = fresh_store_b();
+        let err = store.record_choice("abc", "川").unwrap_err();
+        assert!(matches!(err, StorageError::InvalidField { .. }));
+    }
 }
