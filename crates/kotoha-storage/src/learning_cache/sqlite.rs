@@ -1,6 +1,5 @@
 //! SqliteLearningCacheStore: P2-C で本実装(spec §3.1 / §4.2-§4.5 / §6.3)。
 
-#[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -14,32 +13,37 @@ pub const LEARNING_CACHE_MAX_ROWS: usize = 10_000;
 
 /// テスト時の行数上限上書き(0 = unset、`LEARNING_CACHE_MAX_ROWS` を使用)。
 ///
-/// `cargo test` ビルドでのみ意味を持ち、production binary には含まれない。
+/// production binary でも static 自体は存在するが、[`CapOverrideGuard`] を使わない限り
+/// 値は 0 のまま変化しないため `effective_max_rows()` の挙動には影響しない。
+/// integration test(`crates/kotoha-storage/tests/*.rs`)からも触れるよう
+/// `#[cfg(test)]` ガードを外して `pub` で公開している(P2-C-D Phase D 対応)。
+///
 /// 10,000 行を実際に挿入するテストは時間 / メモリの観点で非現実的なため、
-/// 単体テストはこの override を介して小さな上限値で eviction 動作を検証する。
-#[cfg(test)]
-pub(crate) static LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
+/// 単体テスト / integration テストはこの override を介して小さな上限値で
+/// eviction 動作を検証する。
+pub static LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
 
 /// override の直列化用 Mutex(複数 test が同時 override しないよう直列化)。
-#[cfg(test)]
-#[allow(dead_code)] // B7 で test、B8 で record_choice 経由使用開始
-pub(crate) static CAP_OVERRIDE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+///
+/// production binary でも存在するが、override 自体を変更しない限り
+/// 取得しても何も起こらない。integration test から触れるよう `pub` で公開する。
+pub static CAP_OVERRIDE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// 行数上限の effective value を返す(`#[cfg(test)]` 時のみ override を考慮)。
+/// 行数上限の effective value を返す。
+///
+/// override が 0(unset)の場合は `LEARNING_CACHE_MAX_ROWS` を返し、
+/// 0 より大きい場合は override 値を返す。production binary では
+/// override は常に 0 のままなので戻り値は常に `LEARNING_CACHE_MAX_ROWS` となる。
 ///
 /// # Postconditions
 ///
-/// - `#[cfg(not(test))]` 時は常に `LEARNING_CACHE_MAX_ROWS` を返す
-/// - `#[cfg(test)]` かつ override が 0 の場合は `LEARNING_CACHE_MAX_ROWS` を返す
-/// - `#[cfg(test)]` かつ override が 0 より大きい場合は override 値を返す
+/// - override が 0 の場合は `LEARNING_CACHE_MAX_ROWS` を返す
+/// - override が 0 より大きい場合は override 値を返す
 #[inline]
-pub(crate) fn effective_max_rows() -> usize {
-    #[cfg(test)]
-    {
-        let v = LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.load(Ordering::SeqCst);
-        if v != 0 {
-            return v;
-        }
+pub fn effective_max_rows() -> usize {
+    let v = LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.load(Ordering::SeqCst);
+    if v != 0 {
+        return v;
     }
     LEARNING_CACHE_MAX_ROWS
 }
@@ -51,24 +55,29 @@ pub(crate) fn effective_max_rows() -> usize {
 /// override を活性化すると競合する。よって `CAP_OVERRIDE_LOCK` を
 /// 取得して直列化する。
 ///
+/// production code では本 struct を構築しないので、override は 0 のまま、
+/// `effective_max_rows()` は常に `LEARNING_CACHE_MAX_ROWS` を返す。
+/// integration test(`tests/*.rs`)からも利用するため `#[cfg(test)]` ガードを
+/// 外して `pub` で公開している(P2-C-D Phase D 対応)。
+///
 /// # Examples
 ///
-/// ```ignore
-/// // tests-only:
+/// ```no_run
+/// use kotoha_storage::learning_cache::sqlite::CapOverrideGuard;
+/// // test 内のみで使用:
 /// let _guard = CapOverrideGuard::new(5);
 /// // このブロック内では cap = 5 で動作する
 /// // _guard が drop されると cap = LEARNING_CACHE_MAX_ROWS に戻る
 /// ```
-#[cfg(test)]
-#[allow(dead_code)] // B7 で eviction tests から使用開始
-pub(crate) struct CapOverrideGuard {
+pub struct CapOverrideGuard {
     _lock: std::sync::MutexGuard<'static, ()>,
 }
 
-#[cfg(test)]
 impl CapOverrideGuard {
-    #[allow(dead_code)] // B7 で eviction tests から呼び出し開始
-    pub(crate) fn new(cap: usize) -> Self {
+    /// override を `cap` に設定し、`CAP_OVERRIDE_LOCK` を取得する。
+    ///
+    /// drop 時に override を 0 に戻す。
+    pub fn new(cap: usize) -> Self {
         // poison していても続行(直前 test の panic でも次 test を回したい)。
         let lock = CAP_OVERRIDE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.store(cap, Ordering::SeqCst);
@@ -81,15 +90,13 @@ impl CapOverrideGuard {
     /// 並列実行されている他 test の override(`CapOverrideGuard::new(N)`)が
     /// 残っている瞬間に `record_choice` の自動 eviction が小さな cap で走るのを
     /// 避けるための serialization 用 guard。
-    #[allow(dead_code)] // record_choice 系 test の race 回避で使用
-    pub(crate) fn lock_only() -> Self {
+    pub fn lock_only() -> Self {
         let lock = CAP_OVERRIDE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         // override は変更しない(0 のまま、effective_max_rows = LEARNING_CACHE_MAX_ROWS)。
         Self { _lock: lock }
     }
 }
 
-#[cfg(test)]
 impl Drop for CapOverrideGuard {
     fn drop(&mut self) {
         LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.store(0, Ordering::SeqCst);

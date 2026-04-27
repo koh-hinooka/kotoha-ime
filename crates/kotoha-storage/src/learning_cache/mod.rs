@@ -3,7 +3,7 @@
 
 pub mod sqlite;
 
-pub use sqlite::SqliteLearningCacheStore;
+pub use sqlite::{CapOverrideGuard, SqliteLearningCacheStore};
 
 use crate::error::StorageError;
 
