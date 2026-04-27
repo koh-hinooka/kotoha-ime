@@ -9,8 +9,9 @@ use crate::error::StorageError;
 use crate::migrations::apply_migrations;
 
 /// SQLite Database wrapper(spec §6.4)。`Mutex<Connection>` を内部保持し、
-/// `Arc<Database>` で複数 Store(`UserVocabStore` / `LearningCacheStore`)が
-/// 同一 Connection を共有する(spec §6.4.1 共有 ownership)。
+/// `Arc<Database>` で複数 Store(`UserVocabReader/Writer` /
+/// `LearningCacheReader/Writer`)が同一 Connection を共有する
+/// (spec §6.4.1 共有 ownership)。
 pub struct Database {
     conn: Mutex<Connection>,
 }
@@ -70,8 +71,8 @@ impl Database {
     /// 内部 `Mutex<Connection>` を lock する。Store 実装側で使用。
     ///
     /// `pub(crate)` に絞って、外部 crate からは Connection 直アクセスではなく
-    /// `UserVocabStore` / `LearningCacheStore` 抽象境界を通すことを強制する
-    /// (review A-H2)。
+    /// `UserVocabReader/Writer` / `LearningCacheReader/Writer` 抽象境界を
+    /// 通すことを強制する(review A-H2)。
     ///
     /// # Panics
     ///
@@ -80,18 +81,61 @@ impl Database {
         self.conn.lock().expect("Database mutex poisoned")
     }
 
-    /// `Arc<Database>` を `SqliteUserVocabStore` で wrap し owned `Box<dyn UserVocabStore>` を返す
-    /// (spec §6.4 共有 ownership)。
-    pub fn user_vocab_store(self: &Arc<Self>) -> Box<dyn crate::user_vocab::store::UserVocabStore> {
+    /// `Arc<Database>` を `Box<dyn UserVocabReader>` として公開する(arch-M-2 ISP split)。
+    ///
+    /// # Postconditions
+    ///
+    /// - 戻り値の trait object は内部で `SqliteUserVocabStore` を `Box` で保持し、
+    ///   その `SqliteUserVocabStore` は `Arc<Database>` を `Arc::clone` で共有する
+    /// - 同一 `Arc<Database>` から生成した reader / writer は同一 `Mutex<Connection>` を共有する
+    pub fn user_vocab_reader(
+        self: &Arc<Self>,
+    ) -> Box<dyn crate::user_vocab::store::UserVocabReader> {
         Box::new(crate::user_vocab::sqlite::SqliteUserVocabStore::new(
             Arc::clone(self),
         ))
     }
 
-    /// (P2-B では unimplemented stub、P2-C で本実装、spec §6.3)
-    pub fn learning_cache_store(
+    /// `Arc<Database>` を `Box<dyn UserVocabWriter>` として公開する(arch-M-2 ISP split)。
+    ///
+    /// # Postconditions
+    ///
+    /// - 戻り値の trait object は内部で `SqliteUserVocabStore` を `Box` で保持し、
+    ///   その `SqliteUserVocabStore` は `Arc<Database>` を `Arc::clone` で共有する
+    /// - 同一 `Arc<Database>` から生成した reader / writer は同一 `Mutex<Connection>` を共有する
+    pub fn user_vocab_writer(
         self: &Arc<Self>,
-    ) -> Box<dyn crate::learning_cache::LearningCacheStore> {
+    ) -> Box<dyn crate::user_vocab::store::UserVocabWriter> {
+        Box::new(crate::user_vocab::sqlite::SqliteUserVocabStore::new(
+            Arc::clone(self),
+        ))
+    }
+
+    /// `Arc<Database>` を `Box<dyn LearningCacheReader>` として公開する(spec §3.1 / §4.6)。
+    ///
+    /// # Postconditions
+    ///
+    /// - 戻り値の trait object は内部で `SqliteLearningCacheStore` を `Box` で保持し、
+    ///   その `SqliteLearningCacheStore` は `Arc<Database>` を `Arc::clone` で共有する
+    /// - 同一 `Arc<Database>` から生成した reader / writer は同一 `Mutex<Connection>` を共有する
+    pub fn learning_cache_reader(
+        self: &Arc<Self>,
+    ) -> Box<dyn crate::learning_cache::LearningCacheReader> {
+        Box::new(crate::learning_cache::SqliteLearningCacheStore::new(
+            Arc::clone(self),
+        ))
+    }
+
+    /// `Arc<Database>` を `Box<dyn LearningCacheWriter>` として公開する(spec §3.1 / §4.6)。
+    ///
+    /// # Postconditions
+    ///
+    /// - 戻り値の trait object は内部で `SqliteLearningCacheStore` を `Box` で保持し、
+    ///   その `SqliteLearningCacheStore` は `Arc<Database>` を `Arc::clone` で共有する
+    /// - 同一 `Arc<Database>` から生成した reader / writer は同一 `Mutex<Connection>` を共有する
+    pub fn learning_cache_writer(
+        self: &Arc<Self>,
+    ) -> Box<dyn crate::learning_cache::LearningCacheWriter> {
         Box::new(crate::learning_cache::SqliteLearningCacheStore::new(
             Arc::clone(self),
         ))
@@ -208,14 +252,14 @@ mod tests {
     #[test]
     fn user_vocab_store_factory_returns_owned_box() {
         let db = Database::open_in_memory().expect("memory open");
-        let _store: Box<dyn crate::user_vocab::store::UserVocabStore> = db.user_vocab_store();
+        let _store: Box<dyn crate::user_vocab::store::UserVocabReader> = db.user_vocab_reader();
     }
 
     #[test]
     fn user_vocab_store_factory_shares_arc() {
         let db = Database::open_in_memory().expect("memory open");
-        let store1 = db.user_vocab_store();
-        let store2 = db.user_vocab_store();
+        let writer = db.user_vocab_writer();
+        let reader = db.user_vocab_reader();
         let r = crate::user_vocab::store::UserVocabRecord {
             id: None,
             surface: "x".to_string(),
@@ -225,8 +269,8 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         };
-        store1.insert(r).expect("insert ok");
-        let result = store2.find_by_reading("あ", 10).expect("find ok");
+        writer.insert(r).expect("insert ok");
+        let result = reader.find_by_reading("あ", 10).expect("find ok");
         assert_eq!(result.len(), 1);
     }
 
@@ -243,14 +287,44 @@ mod tests {
     }
 
     #[test]
+    fn learning_cache_reader_factory_returns_owned_box() {
+        let db = Database::open_in_memory().expect("memory open");
+        let _reader: Box<dyn crate::learning_cache::LearningCacheReader> =
+            db.learning_cache_reader();
+    }
+
+    #[test]
+    fn learning_cache_writer_factory_returns_owned_box() {
+        let db = Database::open_in_memory().expect("memory open");
+        let _writer: Box<dyn crate::learning_cache::LearningCacheWriter> =
+            db.learning_cache_writer();
+    }
+
+    #[test]
+    fn learning_cache_factories_share_same_connection() {
+        // writer で record_choice → reader で lookup が同一 DB に到達することを確認する
+        // (両 factory が同じ `Arc<Database>` の同一 `Mutex<Connection>` を共有している証拠)。
+        // 並列実行される他 test の `CapOverrideGuard` が record_choice 内の自動 eviction を
+        // 小さな cap で発火させないように `CAP_OVERRIDE_LOCK` を取得する。
+        let _lock = crate::learning_cache::sqlite::CapOverrideGuard::lock_only();
+        let db = Database::open_in_memory().expect("memory open");
+        let writer = db.learning_cache_writer();
+        let reader = db.learning_cache_reader();
+        writer.record_choice("あい", "愛").expect("record ok");
+        let result = reader.lookup("あい", 10).expect("lookup ok");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].chosen_kanji, "愛");
+    }
+
+    #[test]
     fn parallel_inserts_via_arc_share_does_not_deadlock() {
         use std::thread;
 
         let db = Database::open_in_memory().expect("memory open");
-        let store = Arc::new(db.user_vocab_store());
+        let writer = Arc::new(db.user_vocab_writer());
         let handles: Vec<_> = (0..8u32)
             .map(|i| {
-                let store = Arc::clone(&store);
+                let writer = Arc::clone(&writer);
                 thread::spawn(move || {
                     // hiragana を index から計算する(ASCII 数字混入を避ける)。
                     // U+3042 = 'あ' 起点で、あ/い/う/え/お/か/き/く を割り当てる。
@@ -266,14 +340,15 @@ mod tests {
                         created_at: 0,
                         updated_at: 0,
                     };
-                    store.insert(r).expect("insert ok");
+                    writer.insert(r).expect("insert ok");
                 })
             })
             .collect();
         for h in handles {
             h.join().unwrap();
         }
-        let result = store.list_all(100, 0).unwrap();
+        let reader = db.user_vocab_reader();
+        let result = reader.list_all(100, 0).unwrap();
         assert_eq!(result.len(), 8);
     }
 }

@@ -4,9 +4,10 @@
 //! ADR: `docs/adr/0015-kotoha-storage-sqlite-adoption.md`.
 //!
 //! この crate は永続化詳細層であり、`kotoha-core` の domain layer に依存しない
-//! (spec §4.2 Clean Architecture DIP)。`UserVocabStore` / `LearningCacheStore`
-//! trait は本 crate 側に置き、`kotoha-core::dict::user_vocab::UserVocab` が
-//! `Box<dyn UserVocabStore>` を field に保持することで DIP を成立させる。
+//! (spec §4.2 Clean Architecture DIP)。`UserVocabReader` / `UserVocabWriter` /
+//! `LearningCacheReader` / `LearningCacheWriter` trait は本 crate 側に置き、
+//! `kotoha-core::dict::user_vocab::UserVocab` が `Box<dyn UserVocabReader>` を
+//! field に保持することで DIP + ISP を成立させる(arch-M-2、P2-C-A / P2-C-B)。
 
 pub mod database;
 pub mod error;
