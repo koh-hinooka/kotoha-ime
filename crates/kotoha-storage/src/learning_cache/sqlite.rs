@@ -152,11 +152,11 @@ impl SqliteLearningCacheStore {
     }
 }
 
-/// `SqliteLearningCacheStore` の B3 段階の動作:
+/// `SqliteLearningCacheStore` の本実装(P2-C-B 完了時点):
 ///
-/// - `lookup`: 本実装(`LOOKUP_SQL` + `prepare_cached`)
-/// - `record_choice`: 常に Ok(())(B5 で本実装)
-/// - `evict_lru`: 常に Ok(0)(B10 で本実装)
+/// - `lookup`: `LOOKUP_SQL` + `prepare_cached`、`frequency DESC, last_used_at DESC` 順で `LIMIT ?2` 件
+/// - `record_choice`: `UPSERT_SQL` で UPSERT、その後 `evict_to_cap(effective_max_rows())` で自動 eviction
+/// - `evict_lru`: `evict_to_cap(max_entries)` を直接呼び出して LRU から超過分を削除
 ///
 /// table `learning_cache` schema は v001 migration で同梱済(spec §5.2)。
 impl LearningCacheReader for SqliteLearningCacheStore {

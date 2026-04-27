@@ -282,6 +282,33 @@ mod tests {
     }
 
     #[test]
+    fn learning_cache_reader_factory_returns_owned_box() {
+        let db = Database::open_in_memory().expect("memory open");
+        let _reader: Box<dyn crate::learning_cache::LearningCacheReader> =
+            db.learning_cache_reader();
+    }
+
+    #[test]
+    fn learning_cache_writer_factory_returns_owned_box() {
+        let db = Database::open_in_memory().expect("memory open");
+        let _writer: Box<dyn crate::learning_cache::LearningCacheWriter> =
+            db.learning_cache_writer();
+    }
+
+    #[test]
+    fn learning_cache_factories_share_same_connection() {
+        // writer で record_choice → reader で lookup が同一 DB に到達することを確認する
+        // (両 factory が同じ `Arc<Database>` の同一 `Mutex<Connection>` を共有している証拠)。
+        let db = Database::open_in_memory().expect("memory open");
+        let writer = db.learning_cache_writer();
+        let reader = db.learning_cache_reader();
+        writer.record_choice("あい", "愛").expect("record ok");
+        let result = reader.lookup("あい", 10).expect("lookup ok");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].chosen_kanji, "愛");
+    }
+
+    #[test]
     fn parallel_inserts_via_arc_share_does_not_deadlock() {
         use std::thread;
 
