@@ -187,13 +187,18 @@ const EVICT_SQL: &str = "DELETE FROM learning_cache
 /// - [`StorageError::Sqlite`][]: SQLite backend 障害の場合
 pub(crate) fn evict_to_cap(conn: &rusqlite::Connection, cap: usize) -> Result<usize, StorageError> {
     let total: i64 = conn.query_row(COUNT_SQL, [], |r| r.get(0))?;
-    let total = total as usize;
+    // sec-F4: bind 方向と対称に、SQLite -> Rust 方向の変換も `as` cast ではなく
+    // `try_from + clamp` を使用する。64-bit target では `i64::MAX < usize::MAX`
+    // のため変換は必ず成功し、32-bit target では clamp により切り捨てを防ぐ
+    // (spec §F4)。
+    let total = usize::try_from(total).unwrap_or(usize::MAX);
     if total <= cap {
         return Ok(0);
     }
     let excess = total - cap;
     let mut stmt = conn.prepare_cached(EVICT_SQL)?;
-    let deleted = stmt.execute(rusqlite::params![excess as i64])?;
+    let excess_i64 = i64::try_from(excess).unwrap_or(i64::MAX);
+    let deleted = stmt.execute(rusqlite::params![excess_i64])?;
     Ok(deleted)
 }
 
@@ -225,7 +230,8 @@ impl LearningCacheReader for SqliteLearningCacheStore {
         // perf-H1: prepare_cached により Phase 3 IBus engine の打鍵毎呼び出しでも
         // SQL コンパイルを 1 度きりにする(同一 SQL ⇒ cache hit)。
         let mut stmt = conn.prepare_cached(LOOKUP_SQL)?;
-        let rows = stmt.query_map(rusqlite::params![kana_input, limit as i64], |row| {
+        let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(rusqlite::params![kana_input, limit_i64], |row| {
             Ok(LearningCacheRecord {
                 id: row.get(0)?,
                 kana_input: row.get(1)?,
@@ -300,6 +306,24 @@ mod tests {
     fn fresh_store_b() -> SqliteLearningCacheStore {
         let db = Database::open_in_memory().expect("memory open");
         SqliteLearningCacheStore::new(db)
+    }
+
+    // --- trace test infrastructure (sec-F4 TC-1) ---
+    //
+    // `Connection::trace(Some(fn(&str)))` は plain fn pointer のみ受け付ける
+    // (closure 不可)ため、capture した state は static で持つ必要がある。
+    // `record_trace` は callback、`TRACED_SQL` は accumulator、`TRACE_LOCK` は
+    // 並列 trace test 同士の直列化 mutex。
+    static TRACED_SQL: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    static TRACE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn record_trace(sql: &str) {
+        let mut buf = TRACED_SQL.lock().unwrap_or_else(|p| p.into_inner());
+        // 改行で区切って追記する(複数 SQL の累積に対応)。
+        if !buf.is_empty() {
+            buf.push('\n');
+        }
+        buf.push_str(sql);
     }
 
     /// `lookup` は存在しない kana_input に対して空 Vec を返す。
@@ -637,6 +661,68 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    // --- TC-1 / TC-3 trace-based regression tests (sec-F4) ---
+    //
+    // rusqlite 0.32 の `Connection::trace(Some(fn(&str)))` は **plain fn pointer**
+    // のみを受け付ける(closure 不可)ため、capture したい state は
+    // `static Mutex<String>` に置く必要がある。複数 trace test が同一 static を
+    // 共有するため、`TRACE_LOCK` で直列化する。
+    //
+    // trace callback が観測する SQL は parameter 展開後 (`LIMIT -1` のように
+    // 数値が literal として埋め込まれる) なので、bind 値が `i64::MAX` ではなく
+    // `-1` になっている旧 buggy code を直接検出できる。
+    //
+    // ## TC-1 (FAIL on old `usize as i64` code)
+    //
+    // `lookup` の `limit as i64` は `usize::MAX` で `-1` に wrap する。
+    // SQLite の `LIMIT -1` は "unlimited" 扱い(silent bypass)。
+    // 新 code (`i64::try_from(limit).unwrap_or(i64::MAX)`) では `LIMIT 9223372036854775807`
+    // が trace に現れる。
+    /// `lookup` は `usize::MAX` を `limit` に渡しても trace 上に `LIMIT -1` を
+    /// 書き出さない(sec-F4)。
+    ///
+    /// 旧実装の `limit as i64` は `usize::MAX` を `-1` に wrap し、SQLite は
+    /// `LIMIT -1` を unlimited として解釈するため、API 表面の row count では
+    /// 旧 code と新 code を区別できない。本 test は SQLite の trace callback で
+    /// expanded SQL を捕捉し、bound LIMIT が `-1` でないことを直接検証する。
+    #[test]
+    fn lookup_passes_non_negative_limit_to_sqlite() {
+        let _serialize = TRACE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _cap_lock = CapOverrideGuard::lock_only();
+        let store = fresh_store_b();
+        store.record_choice("あい", "愛").expect("ok");
+        store.record_choice("あい", "哀").expect("ok");
+        store.record_choice("あい", "藍").expect("ok");
+
+        // trace 取得前に既存 buffer をクリアする(他 test の leftover 防止)。
+        TRACED_SQL.lock().unwrap().clear();
+
+        // trace を attach -> lookup 実行 -> trace を detach。
+        {
+            let mut conn = store.db.lock_conn();
+            conn.trace(Some(record_trace));
+        }
+        let _ = store.lookup("あい", usize::MAX).expect("ok");
+        {
+            let mut conn = store.db.lock_conn();
+            conn.trace(None);
+        }
+
+        let traced = TRACED_SQL.lock().unwrap().clone();
+        // bound LIMIT が `-1` として現れていないことを assert する。
+        // 新 code (`i64::try_from(limit).unwrap_or(i64::MAX)`) では `LIMIT 9223372036854775807`、
+        // 旧 code (`limit as i64`) では `LIMIT -1` が観測される。
+        assert!(
+            !traced.contains("LIMIT -1"),
+            "SQLite trace must not contain bound LIMIT of -1 (old `usize as i64` regression); got: {traced}"
+        );
+        // sanity: trace に LOOKUP_SQL の prefix が記録されている(callback が動作している証拠)。
+        assert!(
+            traced.contains("SELECT id, kana_input"),
+            "trace must capture LOOKUP_SQL; got: {traced}"
+        );
     }
 
     /// `lookup` はひらがな以外の kana_input を reject する。

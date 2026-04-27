@@ -93,7 +93,8 @@ impl UserVocabReader for SqliteUserVocabStore {
              ORDER BY score DESC \
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(rusqlite::params![reading, limit as i64], |row| {
+        let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(rusqlite::params![reading, limit_i64], |row| {
             Ok(UserVocabRecord {
                 id: Some(row.get(0)?),
                 surface: row.get(1)?,
@@ -120,7 +121,9 @@ impl UserVocabReader for SqliteUserVocabStore {
              ORDER BY id ASC \
              LIMIT ?1 OFFSET ?2",
         )?;
-        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+        let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
+        let offset_i64 = i64::try_from(offset).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(rusqlite::params![limit_i64, offset_i64], |row| {
             Ok(UserVocabRecord {
                 id: Some(row.get(0)?),
                 surface: row.get(1)?,
@@ -157,7 +160,8 @@ impl UserVocabReader for SqliteUserVocabStore {
              ORDER BY score DESC, id ASC \
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(rusqlite::params![pattern, limit as i64], |row| {
+        let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(rusqlite::params![pattern, limit_i64], |row| {
             Ok(UserVocabRecord {
                 id: Some(row.get(0)?),
                 surface: row.get(1)?,
@@ -236,8 +240,16 @@ impl UserVocabWriter for SqliteUserVocabStore {
         {
             let mut count_stmt =
                 conn.prepare_cached("SELECT EXISTS(SELECT 1 FROM user_vocab LIMIT 1 OFFSET ?1)")?;
+            // `max_rows` は `effective_max_rows()` により `>= 1` が保証される
+            // (override == 0 ⇒ default `USER_VOCAB_MAX_ROWS = 50_000` を返す)。
+            // よって `cap_minus_one >= 0` であり、SQLite の `OFFSET 0`(1 行目)
+            // で min cap pathway を exercise できる(test:
+            // `insert_rejects_when_max_rows_is_one_at_or_above`)。
+            let cap_minus_one = i64::try_from(max_rows)
+                .unwrap_or(i64::MAX)
+                .saturating_sub(1);
             let at_or_over_cap: i64 =
-                count_stmt.query_row(rusqlite::params![max_rows as i64 - 1], |r| r.get(0))?;
+                count_stmt.query_row(rusqlite::params![cap_minus_one], |r| r.get(0))?;
             if at_or_over_cap != 0 {
                 return Err(StorageError::QuotaExceeded {
                     table: "user_vocab".to_string(),
@@ -356,6 +368,109 @@ mod tests {
         }
         let result = store.find_by_reading("ひのおか", 3).expect("ok");
         assert_eq!(result.len(), 3);
+    }
+
+    // --- TC-1 / TC-3 trace-based regression tests (sec-F4) ---
+    //
+    // rusqlite 0.32 の `Connection::trace(Some(fn(&str)))` は plain fn pointer
+    // のみを受け付ける(closure 不可)ため、capture したい state は
+    // `static Mutex<String>` に置く。複数 trace test は `TRACE_LOCK` で直列化する。
+    //
+    // trace callback が観測する SQL は parameter 展開後 (`LIMIT -1` のように
+    // 数値が literal として埋め込まれる) なので、bind 値が `i64::MAX` ではなく
+    // `-1` になっている旧 buggy code を直接検出できる。
+
+    static TRACED_SQL: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    static TRACE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn record_trace(sql: &str) {
+        let mut buf = TRACED_SQL.lock().unwrap_or_else(|p| p.into_inner());
+        if !buf.is_empty() {
+            buf.push('\n');
+        }
+        buf.push_str(sql);
+    }
+
+    /// `find_by_reading` は `usize::MAX` を `limit` に渡しても trace 上に
+    /// `LIMIT -1` を書き出さない(sec-F4)。
+    ///
+    /// 旧実装の `limit as i64` は `usize::MAX` を `-1` に wrap し、SQLite は
+    /// `LIMIT -1` を unlimited として解釈するため、API 表面の row count では
+    /// 旧 code と新 code を区別できない。本 test は SQLite の trace callback で
+    /// expanded SQL を捕捉し、bound LIMIT が `-1` でないことを直接検証する。
+    #[test]
+    fn find_by_reading_passes_non_negative_limit_to_sqlite() {
+        let _serialize = TRACE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let store = fresh_store();
+        for i in 0..3 {
+            seed_row(&store, &format!("s{}", i), "ひのおか", i as f32);
+        }
+
+        TRACED_SQL.lock().unwrap().clear();
+
+        {
+            let mut conn = store.db.lock_conn();
+            conn.trace(Some(record_trace));
+        }
+        let _ = store.find_by_reading("ひのおか", usize::MAX).expect("ok");
+        {
+            let mut conn = store.db.lock_conn();
+            conn.trace(None);
+        }
+
+        let traced = TRACED_SQL.lock().unwrap().clone();
+        assert!(
+            !traced.contains("LIMIT -1"),
+            "SQLite trace must not contain bound LIMIT of -1 (old `usize as i64` regression); got: {traced}"
+        );
+        // sanity: trace に find_by_reading SQL が記録されている(callback が動作している証拠)。
+        assert!(
+            traced.contains("FROM user_vocab"),
+            "trace must capture find_by_reading SQL; got: {traced}"
+        );
+    }
+
+    /// `list_all` は `usize::MAX` を `limit` / `offset` に渡しても trace 上に
+    /// `LIMIT -1` / `OFFSET -1` を書き出さない(sec-F4 / TC-3)。
+    ///
+    /// `list_all` は唯一 LIMIT と OFFSET の両方に clamp を持つ site であり、
+    /// 旧実装では LIMIT / OFFSET 両方が `-1` に wrap し得る。SQLite は
+    /// `LIMIT -1` を unlimited、`OFFSET -1` を 0 として silently coerce するため、
+    /// API 表面では旧 code と新 code を区別できない。trace で bind 値を直接検証する。
+    #[test]
+    fn list_all_passes_non_negative_limit_and_offset_to_sqlite() {
+        let _serialize = TRACE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let store = fresh_store();
+        seed_row(&store, "s", "あ", 0.0);
+
+        TRACED_SQL.lock().unwrap().clear();
+
+        {
+            let mut conn = store.db.lock_conn();
+            conn.trace(Some(record_trace));
+        }
+        let _ = store.list_all(usize::MAX, usize::MAX).expect("ok");
+        {
+            let mut conn = store.db.lock_conn();
+            conn.trace(None);
+        }
+
+        let traced = TRACED_SQL.lock().unwrap().clone();
+        // 単一 token として `-1` が現れないことを確認する。
+        // 旧 code では `LIMIT -1 OFFSET -1` が観測される。
+        assert!(
+            !traced.contains("LIMIT -1"),
+            "SQLite trace must not contain bound LIMIT of -1; got: {traced}"
+        );
+        assert!(
+            !traced.contains("OFFSET -1"),
+            "SQLite trace must not contain bound OFFSET of -1; got: {traced}"
+        );
+        // sanity: trace に list_all SQL が記録されている(callback が動作している証拠)。
+        assert!(
+            traced.contains("ORDER BY id ASC"),
+            "trace must capture list_all SQL; got: {traced}"
+        );
     }
 
     #[test]
@@ -576,6 +691,45 @@ mod tests {
         let store = fresh_store();
         let got = store.find_by_id(99_999).expect("find ok");
         assert!(got.is_none());
+    }
+
+    /// sec-F4 TC-2: `max_rows = 1` の境界では `cap_minus_one = 0` となり、
+    /// `cap_minus_one >= 4` を exercise する `sqlite_insert_rejects_at_quota_cap`
+    /// (max_rows=5)とは SQLite の `OFFSET 0` codepath を異なる位置で叩く。
+    ///
+    /// `max_rows = 0` は `effective_max_rows()` の override 仕様(`0 ⇒ default`)
+    /// により unreachable のため test は不要(production 不変条件:
+    /// `effective_max_rows() >= 1`)。
+    #[test]
+    fn insert_rejects_when_max_rows_is_one_at_or_above() {
+        let _guard = QuotaOverrideGuard::new(1);
+        let store = fresh_store();
+        // 1 件目の insert は cap=1 ぴったりで成功する(`OFFSET 0` 行が未存在)。
+        let first = UserVocabRecord {
+            id: None,
+            surface: "first".to_string(),
+            reading: "あ".to_string(),
+            pos: "名詞".to_string(),
+            score: 0.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        store.insert(first).expect("first insert under cap ok");
+        // 2 件目で cap=1 に到達済(`OFFSET 0` で 1 行目が見つかる)、QuotaExceeded で reject。
+        let over = UserVocabRecord {
+            id: None,
+            surface: "second".to_string(),
+            reading: "い".to_string(),
+            pos: "名詞".to_string(),
+            score: 0.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let err = store.insert(over).unwrap_err();
+        assert!(matches!(
+            err,
+            StorageError::QuotaExceeded { ref table, max } if table == "user_vocab" && max == 1
+        ));
     }
 
     /// sec-M5 review T-C1: 行数上限到達時に `QuotaExceeded` を返すことを検証する。
