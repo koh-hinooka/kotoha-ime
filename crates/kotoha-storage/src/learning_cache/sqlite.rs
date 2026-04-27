@@ -539,6 +539,130 @@ mod tests {
         assert_eq!(total, 3);
     }
 
+    // --- additional validation / cap-guard tests (B-followup, plan §6.2) ---
+
+    /// `record_choice` は空文字列の chosen_kanji を reject する(`validate_surface` empty 判定)。
+    ///
+    /// production は空 kanji を許容してはならない(spec §6.2 / §9.1)。
+    /// CapOverrideGuard::lock_only() は record_choice 系 test の race condition 回避規約。
+    #[test]
+    fn record_choice_rejects_empty_chosen_kanji() {
+        let _lock = CapOverrideGuard::lock_only();
+        let store = fresh_store_b();
+        let err = store.record_choice("あい", "").unwrap_err();
+        match err {
+            StorageError::InvalidField { name, reason } => {
+                assert_eq!(name, "surface");
+                assert_eq!(reason, "empty");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    /// `record_choice` は PUA(U+E000)を含む chosen_kanji を reject する。
+    ///
+    /// `validate_surface` -> `validate_field` の `is_disallowed_pua` で reject される
+    /// (Phase 5 allowlist U+EE00..=U+EE03 を除く)。
+    #[test]
+    fn record_choice_rejects_pua_in_chosen_kanji() {
+        let _lock = CapOverrideGuard::lock_only();
+        let store = fresh_store_b();
+        let err = store.record_choice("あい", "\u{E000}").unwrap_err();
+        match err {
+            StorageError::InvalidField { name, reason } => {
+                assert_eq!(name, "surface");
+                assert_eq!(reason, "PUA char");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    /// `record_choice` は 256 byte 上限を超える kana_input を reject する。
+    ///
+    /// "あ" = 3 byte UTF-8 なので 86 文字で 258 byte となり `validate_field` の
+    /// `value.len() > 256` 判定で reject される(spec §9.1 / `validate_reading`)。
+    #[test]
+    fn record_choice_rejects_oversize_kana_input() {
+        let _lock = CapOverrideGuard::lock_only();
+        let store = fresh_store_b();
+        let oversize = "あ".repeat(86); // 86 * 3 = 258 byte > 256
+        assert!(oversize.len() > 256, "test fixture must exceed 256 byte");
+        let err = store.record_choice(&oversize, "愛").unwrap_err();
+        match err {
+            StorageError::InvalidField { name, reason } => {
+                assert_eq!(name, "reading");
+                assert_eq!(reason, "byte size > 256");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    /// `lookup` はひらがな以外の kana_input を reject する。
+    ///
+    /// `validate_reading` の `is_hiragana_or_long_sound` 判定で
+    /// カタカナは reject される(reason = "non-hiragana reading")。
+    #[test]
+    fn lookup_rejects_non_hiragana() {
+        let store = fresh_store_b();
+        let err = store.lookup("カタカナ", 10).unwrap_err();
+        match err {
+            StorageError::InvalidField { name, reason } => {
+                assert_eq!(name, "reading");
+                assert_eq!(reason, "non-hiragana reading");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    /// `CapOverrideGuard` は drop 時に override を 0 に戻し、
+    /// `effective_max_rows()` を `LEARNING_CACHE_MAX_ROWS` (10_000) に復元する。
+    ///
+    /// guard scope を限定するために inner block で `_g` を作成し、
+    /// block 終了時の暗黙 drop で復元することを観測する。
+    /// `CAP_OVERRIDE_LOCK` の reentrant 不可制約を遵守し、内側 guard を drop
+    /// してから次の guard を作成する形にしている。
+    #[test]
+    fn cap_override_guard_restores_default_on_drop() {
+        // 1) 初期状態(他 test が override を残していない前提を `lock_only()` で直列化確認)
+        let outer_lock = CapOverrideGuard::lock_only();
+        assert_eq!(effective_max_rows(), LEARNING_CACHE_MAX_ROWS);
+        drop(outer_lock);
+
+        // 2) inner scope で override = 5 を活性化
+        {
+            let _g = CapOverrideGuard::new(5);
+            assert_eq!(effective_max_rows(), 5);
+            // _g は block 終了時に drop され、override は 0 に reset される
+        }
+
+        // 3) drop 後は再び default 値に復元されている
+        let outer_lock_after = CapOverrideGuard::lock_only();
+        assert_eq!(effective_max_rows(), LEARNING_CACHE_MAX_ROWS);
+        drop(outer_lock_after);
+    }
+
+    /// `effective_max_rows()` は `CapOverrideGuard::new(N)` の scope 内で N を返す。
+    ///
+    /// API contract test: `LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.store()` を
+    /// 直接触らず、`CapOverrideGuard` 経由で override が反映されることを確認する。
+    #[test]
+    fn effective_max_rows_returns_override_in_test() {
+        let _g = CapOverrideGuard::new(42);
+        assert_eq!(effective_max_rows(), 42);
+    }
+
+    /// `effective_max_rows()` は override が 0(unset)の場合 `LEARNING_CACHE_MAX_ROWS` を返す。
+    ///
+    /// `CAP_OVERRIDE_LOCK` を取得して並列 test の override 干渉を排除した上で、
+    /// 明示的に store(0) してから default 復元を確認する。
+    #[test]
+    fn effective_max_rows_returns_default_when_override_zero() {
+        let _lock = CapOverrideGuard::lock_only();
+        // 念のため明示的に override を 0(unset)へ。
+        LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.store(0, Ordering::SeqCst);
+        assert_eq!(effective_max_rows(), LEARNING_CACHE_MAX_ROWS);
+    }
+
     /// `evict_lru` は last_used_at が同値の場合 id ASC で tie-break する。
     /// (B9) TDD red: stub は Ok(0) を返すので削除されず FAIL する。
     #[test]
