@@ -299,6 +299,9 @@ mod tests {
     fn learning_cache_factories_share_same_connection() {
         // writer で record_choice → reader で lookup が同一 DB に到達することを確認する
         // (両 factory が同じ `Arc<Database>` の同一 `Mutex<Connection>` を共有している証拠)。
+        // 並列実行される他 test の `CapOverrideGuard` が record_choice 内の自動 eviction を
+        // 小さな cap で発火させないように `CAP_OVERRIDE_LOCK` を取得する。
+        let _lock = crate::learning_cache::sqlite::CapOverrideGuard::lock_only();
         let db = Database::open_in_memory().expect("memory open");
         let writer = db.learning_cache_writer();
         let reader = db.learning_cache_reader();

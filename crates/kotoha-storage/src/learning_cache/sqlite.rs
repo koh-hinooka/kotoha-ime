@@ -74,6 +74,19 @@ impl CapOverrideGuard {
         LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.store(cap, Ordering::SeqCst);
         Self { _lock: lock }
     }
+
+    /// override を変更せずに `CAP_OVERRIDE_LOCK` のみ取得する。
+    ///
+    /// `record_choice` を呼ぶ test が、override を必要としない一方で、
+    /// 並列実行されている他 test の override(`CapOverrideGuard::new(N)`)が
+    /// 残っている瞬間に `record_choice` の自動 eviction が小さな cap で走るのを
+    /// 避けるための serialization 用 guard。
+    #[allow(dead_code)] // record_choice 系 test の race 回避で使用
+    pub(crate) fn lock_only() -> Self {
+        let lock = CAP_OVERRIDE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        // override は変更しない(0 のまま、effective_max_rows = LEARNING_CACHE_MAX_ROWS)。
+        Self { _lock: lock }
+    }
 }
 
 #[cfg(test)]
@@ -226,6 +239,7 @@ mod tests {
 
     #[test]
     fn p2b_stub_record_choice_noop() {
+        let _lock = CapOverrideGuard::lock_only();
         let db = Database::open_in_memory().expect("memory open");
         let store = SqliteLearningCacheStore::new(db);
         store.record_choice("あい", "愛").expect("noop ok");
@@ -260,6 +274,7 @@ mod tests {
     /// (B2) TDD red: stub は常に空 Vec を返すので本 test は FAIL する。
     #[test]
     fn lookup_returns_recorded_entry() {
+        let _lock = CapOverrideGuard::lock_only();
         let store = fresh_store_b();
         store.record_choice("あい", "愛").expect("record ok");
         let result = store.lookup("あい", 10).expect("ok");
@@ -272,6 +287,7 @@ mod tests {
     /// (B2) TDD red: stub は常に空 Vec を返すので本 test は FAIL する。
     #[test]
     fn lookup_orders_by_frequency_desc() {
+        let _lock = CapOverrideGuard::lock_only();
         let store = fresh_store_b();
         // "愛" を 2 回、"哀" を 1 回記録する。
         store.record_choice("あい", "愛").expect("record ok");
@@ -287,6 +303,7 @@ mod tests {
     /// (B2) TDD red: stub は常に空 Vec を返すので本 test は FAIL する。
     #[test]
     fn lookup_respects_limit() {
+        let _lock = CapOverrideGuard::lock_only();
         let store = fresh_store_b();
         store.record_choice("あい", "愛").expect("ok");
         store.record_choice("あい", "哀").expect("ok");
@@ -301,6 +318,7 @@ mod tests {
     /// (B4) TDD red: stub は Ok(()) を返すが lookup で空 Vec が返るので FAIL。
     #[test]
     fn record_choice_inserts_new_entry_with_frequency_one() {
+        let _lock = CapOverrideGuard::lock_only();
         let store = fresh_store_b();
         store.record_choice("かわ", "川").expect("record ok");
         let result = store.lookup("かわ", 10).expect("ok");
@@ -313,6 +331,7 @@ mod tests {
     /// (B4) TDD red: stub は Ok(()) を返すが lookup で正しい frequency が返らない。
     #[test]
     fn record_choice_increments_frequency_on_duplicate() {
+        let _lock = CapOverrideGuard::lock_only();
         let store = fresh_store_b();
         store.record_choice("かわ", "川").expect("1st ok");
         store.record_choice("かわ", "川").expect("2nd ok");
@@ -325,6 +344,7 @@ mod tests {
     /// (B4) TDD red: stub は Ok(()) を返すが lookup で 1 件しか返らない。
     #[test]
     fn record_choice_separates_different_chosen_kanji() {
+        let _lock = CapOverrideGuard::lock_only();
         let store = fresh_store_b();
         store.record_choice("かわ", "川").expect("ok");
         store.record_choice("かわ", "河").expect("ok");
@@ -336,6 +356,7 @@ mod tests {
     /// (B4) TDD red: stub は Ok(()) を返すが lookup で last_used_at=0 が返る。
     #[test]
     fn record_choice_sets_last_used_at_to_nonzero() {
+        let _lock = CapOverrideGuard::lock_only();
         let store = fresh_store_b();
         store.record_choice("かわ", "川").expect("ok");
         let result = store.lookup("かわ", 10).expect("ok");
@@ -347,6 +368,7 @@ mod tests {
     /// (B4) TDD red: stub は validation を行わないので Ok(()) を返し FAIL。
     #[test]
     fn record_choice_rejects_non_hiragana_kana_input() {
+        let _lock = CapOverrideGuard::lock_only();
         let store = fresh_store_b();
         let err = store.record_choice("abc", "川").unwrap_err();
         assert!(matches!(err, StorageError::InvalidField { .. }));
@@ -449,33 +471,63 @@ mod tests {
     // --- evict_lru tests (B9 red phase) ---
 
     /// `evict_lru` は行数が max_entries 以下の場合 0 を返す。
+    ///
+    /// NOTE: `record_choice` を使うと並列に実行される `eviction_*` test が
+    /// `CapOverrideGuard` で設定した小さい cap で自動 eviction を発火させる
+    /// 可能性がある(`CAP_OVERRIDE_LOCK` は guard 所有者しか直列化しない)。
+    /// 本 test は race を避けるために SQL を直接 INSERT する。
     /// (B9) TDD red: stub は Ok(0) を返すので本 test は PASS する。B10 後も PASS を維持する。
     #[test]
     fn evict_lru_returns_zero_when_below_cap() {
         let store = fresh_store_b();
-        store.record_choice("あ", "亜").expect("ok");
-        store.record_choice("い", "以").expect("ok");
+        {
+            let conn = store.db.lock_conn();
+            conn.execute(
+                "INSERT INTO learning_cache (kana_input, chosen_kanji, frequency, last_used_at)
+                 VALUES ('あ', '亜', 1, 100)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO learning_cache (kana_input, chosen_kanji, frequency, last_used_at)
+                 VALUES ('い', '以', 1, 200)",
+                [],
+            )
+            .unwrap();
+        }
         // 行数 2 < max_entries=5 なので 0 が返る。
         let deleted = store.evict_lru(5).expect("ok");
         assert_eq!(deleted, 0);
     }
 
     /// `evict_lru` は超過分の行数を削除して削除件数を返す。
+    ///
+    /// NOTE: `record_choice` の自動 eviction と並列 test の `CapOverrideGuard`
+    /// が干渉するので、本 test も SQL 直 INSERT で 5 件を準備する。
     /// (B9) TDD red: stub は Ok(0) を返すので行数が変化せず FAIL する。
     #[test]
     fn evict_lru_deletes_excess_entries_and_returns_count() {
         let store = fresh_store_b();
-        // 5 件 insert する。
-        for kanji in ["亜", "以", "宇", "江", "尾"] {
-            let kana = match kanji {
-                "亜" => "あ",
-                "以" => "い",
-                "宇" => "う",
-                "江" => "え",
-                "尾" => "お",
-                _ => unreachable!(),
-            };
-            store.record_choice(kana, kanji).expect("ok");
+        {
+            let conn = store.db.lock_conn();
+            // last_used_at を昇順に振って LRU 順序を明示する(同値 tie を回避)。
+            for (i, (kana, kanji)) in [
+                ("あ", "亜"),
+                ("い", "以"),
+                ("う", "宇"),
+                ("え", "江"),
+                ("お", "尾"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                conn.execute(
+                    "INSERT INTO learning_cache (kana_input, chosen_kanji, frequency, last_used_at)
+                     VALUES (?1, ?2, 1, ?3)",
+                    rusqlite::params![kana, kanji, (100 + i) as i64],
+                )
+                .unwrap();
+            }
         }
         // max_entries=3 で呼び出す。5-3=2 件削除される。
         let deleted = store.evict_lru(3).expect("ok");
