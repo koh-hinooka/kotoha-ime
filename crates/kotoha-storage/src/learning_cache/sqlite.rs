@@ -1,5 +1,6 @@
 //! SqliteLearningCacheStore: P2-C で本実装(spec §3.1 / §4.2-§4.5 / §6.3)。
 
+#[cfg(any(test, feature = "test-helpers"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -13,38 +14,63 @@ pub const LEARNING_CACHE_MAX_ROWS: usize = 10_000;
 
 /// テスト時の行数上限上書き(0 = unset、`LEARNING_CACHE_MAX_ROWS` を使用)。
 ///
-/// production binary でも static 自体は存在するが、[`CapOverrideGuard`] を使わない限り
-/// 値は 0 のまま変化しないため `effective_max_rows()` の挙動には影響しない。
-/// integration test(`crates/kotoha-storage/tests/*.rs`)からも触れるよう
-/// `#[cfg(test)]` ガードを外して `pub` で公開している(P2-C-D Phase D 対応)。
+/// 本 static は **test-only** であり、`#[cfg(any(test, feature = "test-helpers"))]`
+/// で gate されているため production / release binary には含まれない
+/// (spec §4.5 / §4.6)。
+/// integration test crate(`crates/kotoha-storage/tests/*.rs`)から利用するため、
+/// crate feature `test-helpers` を有効化したときのみ `pub` として可視化する。
+/// 本 feature は `--features kotoha-storage/test-helpers` を渡したテスト時のみ
+/// 有効化する想定で、production binary では常に compile-out される。
 ///
 /// 10,000 行を実際に挿入するテストは時間 / メモリの観点で非現実的なため、
 /// 単体テスト / integration テストはこの override を介して小さな上限値で
 /// eviction 動作を検証する。
+#[cfg(any(test, feature = "test-helpers"))]
 pub static LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
 
 /// override の直列化用 Mutex(複数 test が同時 override しないよう直列化)。
 ///
-/// production binary でも存在するが、override 自体を変更しない限り
-/// 取得しても何も起こらない。integration test から触れるよう `pub` で公開する。
+/// 本 static は **test-only** であり、`#[cfg(any(test, feature = "test-helpers"))]`
+/// で gate されているため production / release binary には含まれない。
+/// integration test crate から利用するため、crate feature `test-helpers` を
+/// 有効化したときのみ `pub` として可視化する。
+#[cfg(any(test, feature = "test-helpers"))]
 pub static CAP_OVERRIDE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// 行数上限の effective value を返す。
 ///
-/// override が 0(unset)の場合は `LEARNING_CACHE_MAX_ROWS` を返し、
-/// 0 より大きい場合は override 値を返す。production binary では
-/// override は常に 0 のままなので戻り値は常に `LEARNING_CACHE_MAX_ROWS` となる。
+/// production build では本関数の本体は `LEARNING_CACHE_MAX_ROWS` を返すだけで、
+/// override の参照を行わない(`LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE` 自体が
+/// `#[cfg(any(test, feature = "test-helpers"))]` で compile-out されるため)。
+/// test build (`cargo test` の unit test、または `--features test-helpers` を
+/// 有効化した integration test) では override 値を反映する。
+///
+/// `pub` 公開は test build に限定する(spec §4.5 / §4.6)。production からは
+/// `pub(crate)` でのみ参照可能で、外部 crate に test-only API は露出しない。
 ///
 /// # Postconditions
 ///
-/// - override が 0 の場合は `LEARNING_CACHE_MAX_ROWS` を返す
-/// - override が 0 より大きい場合は override 値を返す
+/// - production build: 常に [`LEARNING_CACHE_MAX_ROWS`] を返す
+/// - test / `test-helpers` build: override が 0 の場合は [`LEARNING_CACHE_MAX_ROWS`]、
+///   それ以外の場合は override 値を返す
+#[cfg(any(test, feature = "test-helpers"))]
 #[inline]
 pub fn effective_max_rows() -> usize {
     let v = LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.load(Ordering::SeqCst);
     if v != 0 {
         return v;
     }
+    LEARNING_CACHE_MAX_ROWS
+}
+
+/// production build 用の `effective_max_rows()`。
+///
+/// override 機構は `#[cfg(any(test, feature = "test-helpers"))]` で
+/// compile-out されるため、production では常に [`LEARNING_CACHE_MAX_ROWS`] を返す。
+/// crate-internal 利用に限定するため `pub(crate)` で公開する。
+#[cfg(not(any(test, feature = "test-helpers")))]
+#[inline]
+pub(crate) fn effective_max_rows() -> usize {
     LEARNING_CACHE_MAX_ROWS
 }
 
@@ -55,24 +81,32 @@ pub fn effective_max_rows() -> usize {
 /// override を活性化すると競合する。よって `CAP_OVERRIDE_LOCK` を
 /// 取得して直列化する。
 ///
-/// production code では本 struct を構築しないので、override は 0 のまま、
-/// `effective_max_rows()` は常に `LEARNING_CACHE_MAX_ROWS` を返す。
-/// integration test(`tests/*.rs`)からも利用するため `#[cfg(test)]` ガードを
-/// 外して `pub` で公開している(P2-C-D Phase D 対応)。
+/// 本 struct は **test-only** であり、`#[cfg(any(test, feature = "test-helpers"))]`
+/// で gate されているため production / release binary には含まれない
+/// (spec §4.5 / §4.6)。integration test crate(`crates/kotoha-storage/tests/*.rs`)
+/// からは `--features kotoha-storage/test-helpers` を有効化したときに限り `pub`
+/// として可視化する。production code では本 struct を構築する手段がないため、
+/// override は常に 0 のまま、`effective_max_rows()` は常に
+/// `LEARNING_CACHE_MAX_ROWS` を返す。
 ///
 /// # Examples
 ///
 /// ```no_run
+/// # #[cfg(any(test, feature = "test-helpers"))]
+/// # {
 /// use kotoha_storage::learning_cache::sqlite::CapOverrideGuard;
 /// // test 内のみで使用:
 /// let _guard = CapOverrideGuard::new(5);
 /// // このブロック内では cap = 5 で動作する
 /// // _guard が drop されると cap = LEARNING_CACHE_MAX_ROWS に戻る
+/// # }
 /// ```
+#[cfg(any(test, feature = "test-helpers"))]
 pub struct CapOverrideGuard {
     _lock: std::sync::MutexGuard<'static, ()>,
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl CapOverrideGuard {
     /// override を `cap` に設定し、`CAP_OVERRIDE_LOCK` を取得する。
     ///
@@ -97,6 +131,7 @@ impl CapOverrideGuard {
     }
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl Drop for CapOverrideGuard {
     fn drop(&mut self) {
         LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.store(0, Ordering::SeqCst);

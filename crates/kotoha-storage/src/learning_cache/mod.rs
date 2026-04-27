@@ -3,7 +3,16 @@
 
 pub mod sqlite;
 
-pub use sqlite::{CapOverrideGuard, SqliteLearningCacheStore};
+pub use sqlite::SqliteLearningCacheStore;
+
+/// `CapOverrideGuard` is a **test-only** RAII helper that overrides the
+/// learning_cache row cap during tests. It is gated behind the
+/// `test-helpers` feature so that the symbol is compiled out of
+/// production / release builds (spec §4.5 / §4.6). Integration test crates
+/// under `crates/kotoha-storage/tests/` enable the feature via
+/// `[[test]] required-features = ["test-helpers"]`.
+#[cfg(any(test, feature = "test-helpers"))]
+pub use sqlite::CapOverrideGuard;
 
 use crate::error::StorageError;
 

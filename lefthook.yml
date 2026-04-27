@@ -46,7 +46,7 @@ pre-push:
     test:
       run: |
         if [ -d crates ] && [ -n "$(ls -A crates 2>/dev/null)" ]; then
-          cargo test --workspace
+          cargo test --workspace --features kotoha-storage/test-helpers
         else
           echo "lefthook: skip test (no crates/ yet; enforced from M2)"
         fi
@@ -59,7 +59,7 @@ pre-push:
     test-dict:
       run: |
         if [ -d crates ] && [ -n "$(ls -A crates 2>/dev/null)" ]; then
-          cargo test --workspace --features dict
+          cargo test --workspace --features dict,kotoha-storage/test-helpers
         else
           echo "lefthook: skip test-dict (no crates/ yet; enforced from M2)"
         fi
@@ -71,7 +71,7 @@ pre-push:
     test-dict-persist:
       run: |
         if [ -d crates ] && [ -n "$(ls -A crates 2>/dev/null)" ]; then
-          cargo test --workspace --features kotoha-cli/dict-persist
+          cargo test --workspace --features kotoha-cli/dict-persist,kotoha-storage/test-helpers
         else
           echo "lefthook: skip test-dict-persist (no crates/ yet; enforced from M2)"
         fi
