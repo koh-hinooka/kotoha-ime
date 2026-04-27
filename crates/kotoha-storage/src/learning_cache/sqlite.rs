@@ -1,11 +1,88 @@
 //! SqliteLearningCacheStore: P2-C で本実装(spec §3.1 / §4.2-§4.5 / §6.3)。
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::database::Database;
 use crate::error::StorageError;
 use crate::learning_cache::{LearningCacheReader, LearningCacheRecord, LearningCacheWriter};
 use crate::validation::{validate_reading, validate_surface};
+
+/// Learning cache の行数上限(production 値、spec §4.6)。
+pub const LEARNING_CACHE_MAX_ROWS: usize = 10_000;
+
+/// テスト時の行数上限上書き(0 = unset、`LEARNING_CACHE_MAX_ROWS` を使用)。
+///
+/// `cargo test` ビルドでのみ意味を持ち、production binary には含まれない。
+/// 10,000 行を実際に挿入するテストは時間 / メモリの観点で非現実的なため、
+/// 単体テストはこの override を介して小さな上限値で eviction 動作を検証する。
+#[cfg(test)]
+pub(crate) static LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
+
+/// override の直列化用 Mutex(複数 test が同時 override しないよう直列化)。
+#[cfg(test)]
+#[allow(dead_code)] // B7 で test、B8 で record_choice 経由使用開始
+pub(crate) static CAP_OVERRIDE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 行数上限の effective value を返す(`#[cfg(test)]` 時のみ override を考慮)。
+///
+/// # Postconditions
+///
+/// - `#[cfg(not(test))]` 時は常に `LEARNING_CACHE_MAX_ROWS` を返す
+/// - `#[cfg(test)]` かつ override が 0 の場合は `LEARNING_CACHE_MAX_ROWS` を返す
+/// - `#[cfg(test)]` かつ override が 0 より大きい場合は override 値を返す
+#[inline]
+#[allow(dead_code)] // B8 で record_choice / evict_to_cap から呼び出し開始
+pub(crate) fn effective_max_rows() -> usize {
+    #[cfg(test)]
+    {
+        let v = LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.load(Ordering::SeqCst);
+        if v != 0 {
+            return v;
+        }
+    }
+    LEARNING_CACHE_MAX_ROWS
+}
+
+/// テスト中だけ `LEARNING_CACHE_MAX_ROWS` を `cap` に上書きする RAII guard。
+///
+/// drop 時に自動で 0(無効)に戻すので、test 同士の干渉を防ぐ。
+/// override は process 全体の static なため、複数 test が同時に
+/// override を活性化すると競合する。よって `CAP_OVERRIDE_LOCK` を
+/// 取得して直列化する。
+///
+/// # Examples
+///
+/// ```ignore
+/// // tests-only:
+/// let _guard = CapOverrideGuard::new(5);
+/// // このブロック内では cap = 5 で動作する
+/// // _guard が drop されると cap = LEARNING_CACHE_MAX_ROWS に戻る
+/// ```
+#[cfg(test)]
+#[allow(dead_code)] // B7 で eviction tests から使用開始
+pub(crate) struct CapOverrideGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl CapOverrideGuard {
+    #[allow(dead_code)] // B7 で eviction tests から呼び出し開始
+    pub(crate) fn new(cap: usize) -> Self {
+        // poison していても続行(直前 test の panic でも次 test を回したい)。
+        let lock = CAP_OVERRIDE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.store(cap, Ordering::SeqCst);
+        Self { _lock: lock }
+    }
+}
+
+#[cfg(test)]
+impl Drop for CapOverrideGuard {
+    fn drop(&mut self) {
+        LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.store(0, Ordering::SeqCst);
+    }
+}
 
 /// `lookup` SQL(spec §4.3)。`(kana_input)` index を seek して
 /// `frequency DESC, last_used_at DESC` 順に `LIMIT ?2` 件を返す。
