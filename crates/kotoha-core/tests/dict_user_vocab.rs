@@ -4,7 +4,7 @@
 
 use kotoha_core::dict::{UserVocab, VocabularyLookup};
 use kotoha_storage::user_vocab::mock::MockUserVocabStore;
-use kotoha_storage::user_vocab::store::{UserVocabRecord, UserVocabStore};
+use kotoha_storage::user_vocab::store::{UserVocabRecord, UserVocabWriter};
 
 fn seed(mock: &MockUserVocabStore, surface: &str, reading: &str, score: f32) {
     mock.insert(UserVocabRecord {

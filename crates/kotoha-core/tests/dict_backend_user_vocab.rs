@@ -8,7 +8,7 @@ use kotoha_core::dict::{
 };
 use kotoha_core::kanji::{ConvertOptions, KanjiBackend, KanjiError};
 use kotoha_storage::user_vocab::mock::MockUserVocabStore;
-use kotoha_storage::user_vocab::store::{UserVocabRecord, UserVocabStore};
+use kotoha_storage::user_vocab::store::{UserVocabRecord, UserVocabWriter};
 
 struct StubEngine {
     canned: Vec<EngineCandidate>,

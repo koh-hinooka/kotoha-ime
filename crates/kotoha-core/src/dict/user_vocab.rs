@@ -1,18 +1,22 @@
-//! `UserVocab`: `VocabularyLookup` の SQLite 永続化版実装(spec §6.7、P2-B)。
+//! `UserVocab`: `VocabularyLookup` の SQLite 永続化版実装(spec §6.7、P2-B / P2-C-A)。
 
-use kotoha_storage::user_vocab::store::UserVocabStore;
+use kotoha_storage::user_vocab::store::UserVocabReader;
 
 use crate::dict::vocab::{VocabEntry, VocabularyLookup};
 
-/// User-managed vocabulary、`Box<dyn UserVocabStore>` に依存(DIP、spec §4.2)。
+/// User-managed vocabulary、`Box<dyn UserVocabReader>` に依存(DIP + ISP、spec §4.2 / arch-M-2)。
 pub struct UserVocab {
-    store: Box<dyn UserVocabStore>,
+    store: Box<dyn UserVocabReader>,
     vocab_id: String,
 }
 
 impl UserVocab {
-    /// `Box<dyn UserVocabStore>` を inject して構築する。
-    pub fn new(store: Box<dyn UserVocabStore>) -> Self {
+    /// `Box<dyn UserVocabReader>` を inject して構築する。
+    ///
+    /// # Preconditions
+    ///
+    /// - `store` は `UserVocabReader` を実装した任意の backend を受け付ける
+    pub fn new(store: Box<dyn UserVocabReader>) -> Self {
         Self {
             store,
             vocab_id: "user-vocab".to_string(),
@@ -46,7 +50,7 @@ impl VocabularyLookup for UserVocab {
 mod tests {
     use super::*;
     use kotoha_storage::user_vocab::mock::MockUserVocabStore;
-    use kotoha_storage::user_vocab::store::UserVocabRecord;
+    use kotoha_storage::user_vocab::store::{UserVocabRecord, UserVocabWriter};
 
     fn seed_mock(store: &MockUserVocabStore, surface: &str, reading: &str, score: f32) {
         store

@@ -83,8 +83,8 @@ impl DictionaryBackend {
                         ),
                     }
                 })?;
-                let store = db.user_vocab_store();
-                vocab_sources.push(Box::new(crate::dict::user_vocab::UserVocab::new(store)));
+                let reader = db.user_vocab_reader();
+                vocab_sources.push(Box::new(crate::dict::user_vocab::UserVocab::new(reader)));
             }
         }
         let model_id = format!("dictionary({})", engine.engine_id());
