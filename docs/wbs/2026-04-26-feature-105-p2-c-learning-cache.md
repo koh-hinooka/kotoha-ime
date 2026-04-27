@@ -99,17 +99,67 @@ parent-plan: docs/superpowers/plans/2026-04-26-feature-105-p2-c-learning-cache.m
 
 ## 4-dim review 結果
 
-本 Phase E 前半(E1〜E4)時点では未実施。**Phase E 後半(E5)で `agent-teams:team-review` skill を 4 dimension(security / architecture / testing / performance)で実行予定**。
+`agent-teams:team-review` skill を 4 dimension(security / architecture / testing / performance)で逐次実行(memory 9Gi 帯のため並列回避、global CLAUDE.md System Resource Management)。各 reviewer は実機検証(grep / cargo build / cargo test / EXPLAIN QUERY PLAN / nm -C 等)の verbatim 出力を report に含めた。
 
-| dimension | Critical | High | Medium | Low |
-|---|---|---|---|---|
-| security | pending | pending | pending | pending |
-| architecture | pending | pending | pending | pending |
-| testing | pending | pending | pending | pending |
-| performance | pending | pending | pending | pending |
-| **合計** | (E5 で確定)| (E5 で確定)| (新規 Issue に移管)| (新規 Issue に移管)|
+### Verdict 一覧
 
-E6 で Critical / High finding を全消化、Medium / Low は新規 follow-up Issue に移管予定(spec §7.3 deferred Issue 方針準拠)。
+| dimension | Critical | High | Medium | Low | Verdict |
+|---|---|---|---|---|---|
+| security | 0 | 0 | 1 | 4 | ⚠ MINOR_FINDINGS |
+| architecture | 0 | 0 | 4 | 3 | ⚠ MINOR_FINDINGS |
+| testing | 0 | 0 | 4 | 6 | ⚠ MINOR_FINDINGS |
+| performance | 0 | 0 | 2 | 3 | ⚠ MINOR_FINDINGS |
+| **合計** | **0** | **0** | **11** | **16** | **MINOR_FINDINGS** |
+
+Critical / High = 0 のため、本 PR で fix する必要なし。Medium / Low 計 27 件は **follow-up Issue #107** に集約済(plan §7.3 / §E7 規定通り)。
+
+### 追加実施した security 検査
+
+- **secrets-check**(Large tier 必須項目): 0 secrets found
+  - API key / token / password / private key / connection string パターン: 0 hit
+  - user-specific path(`/home/<user>/`)混入: 0 hit
+  - sensitive file extension(`.env` / `.pem` / `.key` 等): 0 hit
+  - `.gitignore` に `.env` / `.pem` / `.key` パターン 7 件登録済
+- **cargo audit**(Large tier 必須項目): 0 vulnerabilities
+  - 167 crate dependencies、RustSec advisory database hit 0 件
+- **production binary 検査**(test-only API leak): 0 hit
+  - `nm -C target/release/kotoha-dict` で `CapOverrideGuard` / `LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE` / `CAP_OVERRIDE_LOCK` / `effective_max_rows` 全て検出されず
+  - `--features test-helpers` 同時指定時のみ rlib に symbol が現れることを確認(feature gate が compile-time に機能している実証)
+
+### 主要 finding 概要(詳細は #107)
+
+#### Phase 3 prerequisite 候補(Medium / Low から)
+
+1. **S-1** `usize as i64` lossy cast(`learning_cache/sqlite.rs:196,228`)→ `i64::try_from` への切替で IBus engine `limit` 経路の防御
+2. **S-4** `Database::lock_conn` の Mutex poison panic(`database.rs:81`)→ `unwrap_or_else(|p| p.into_inner())` で IME プロセスごと落ちる経路を防ぐ
+3. **A-2** `MockLearningCacheStore` 不在 → P2-D Ranker / Phase 3 IBus engine の test 注入で必要
+4. **P-1** `evict_to_cap` の COUNT_SQL が `prepare_cached` 経由していない → record_choice latency 11% 削減 + コード規約一貫性
+
+#### performance 実機計測(Phase 3 IBus engine 要件との比較)
+
+| 項目 | 計測値 | 要件 | 余裕 |
+|---|---|---|---|
+| `lookup` latency | 13.69 μs/op | < 10 ms | 1/700 |
+| `record_choice` latency | 36.05 μs/op | < 50 ms | 1/1400 |
+| proptest 全 invariant 実行時間 | 0.27 s | (CI 時間) | 十分 |
+| L2 integration test 実行時間 | 4.40 s | (CI 時間) | 十分(うち sleep 5.5s 分散) |
+
+Phase 3 IBus engine の hot-path latency budget に対して **3 桁余裕** あり、release blocker 不在。
+
+### EXPLAIN QUERY PLAN 検証(performance reviewer 計測、cap 5_000 行)
+
+- **LOOKUP_SQL**: `SEARCH learning_cache USING INDEX idx_learning_cache_kana (kana_input=?)` + `USE TEMP B-TREE FOR ORDER BY`(P-2 finding の根拠、Phase 3 telemetry 観測後に v003 複合 index 検討)
+- **COUNT_SQL**: `SCAN learning_cache USING COVERING INDEX idx_learning_cache_last_used`(v002 効果)
+- **EVICT_SQL**: `LIST SUBQUERY ... SCAN learning_cache USING COVERING INDEX idx_learning_cache_last_used`(v002 効果、cap 10_000 でも sub-ms)
+- v002 を drop すると EVICT_SQL が `SCAN + USE TEMP B-TREE` に降格(v002 必要性の定量裏付け)
+
+### Phase 3 / 5 への申送り(各 reviewer 共通項)
+
+1. Phase 3 着手前に S-1 / S-4 / A-2 / P-1 の 4 件を fix(別 PR、軽量)
+2. Phase 3 telemetry で「lookup p99 latency > 5ms」または「同 kana_input に対する候補数 p95 ≥ 100」が観測されたら v003 複合 index(`idx_learning_cache_kana_freq_lastused`)を検討
+3. Phase 5 personalization で動的 cap が必要になった場合、`Database` 構造体への `cap_override: AtomicUsize` field 追加を検討(現状の static AtomicUsize ベースは production の dynamic cap と排他制御が衝突する設計)
+4. ADR 0016「kotoha-storage における ISP split と test-helpers feature 方針」を別 PR で起票(arch-M-2 + test-helpers feature の判断根拠を ADR 化)
+5. proptest strategy の collision 強化(invariant 1 / 2 が trivial に成立しないよう、kana 集合を 5 種類に固定 + record 件数下限を cap × 2 に引き上げる)
 
 ## deferred 項目(新規 Issue に移管予定)
 
