@@ -1,13 +1,13 @@
-//! SqliteLearningCacheStore: P2-B では unimplemented stub、P2-C で実装(spec §6.3)。
+//! SqliteLearningCacheStore: P2-C で本実装(spec §3.1 / §4.2-§4.5 / §6.3)。
 
 use std::sync::Arc;
 
 use crate::database::Database;
 use crate::error::StorageError;
-use crate::learning_cache::{LearningCacheRecord, LearningCacheStore};
+use crate::learning_cache::{LearningCacheReader, LearningCacheRecord, LearningCacheWriter};
 
 pub struct SqliteLearningCacheStore {
-    #[allow(dead_code)] // P2-C で使用開始
+    #[allow(dead_code)] // B3 / B5 / B10 で本実装と同時に使用開始
     pub(crate) db: Arc<Database>,
 }
 
@@ -17,30 +17,32 @@ impl SqliteLearningCacheStore {
     }
 }
 
-/// `SqliteLearningCacheStore` の P2-B 動作:
+/// `SqliteLearningCacheStore` の B1 段階の動作:
 ///
-/// - `lookup`: 常に空 `Vec` を返す(LearningCache の lookup 実装は P2-C)
-/// - `record_choice`: 常に Ok(())(record 実装は P2-C)
-/// - `evict_lru`: 常に Ok(0)(eviction 実装は P2-C)
+/// - `lookup`: 常に空 `Vec` を返す(B3 で本実装)
+/// - `record_choice`: 常に Ok(())(B5 で本実装)
+/// - `evict_lru`: 常に Ok(0)(B10 で本実装)
 ///
 /// table `learning_cache` schema は v001 migration で同梱済(spec §5.2)。
-impl LearningCacheStore for SqliteLearningCacheStore {
+impl LearningCacheReader for SqliteLearningCacheStore {
     fn lookup(
         &self,
         _kana_input: &str,
         _limit: usize,
     ) -> Result<Vec<LearningCacheRecord>, StorageError> {
-        // P2-C で実装
+        // B3 で本実装する。
         Ok(Vec::new())
     }
+}
 
+impl LearningCacheWriter for SqliteLearningCacheStore {
     fn record_choice(&self, _kana_input: &str, _chosen_kanji: &str) -> Result<(), StorageError> {
-        // P2-C で実装
+        // B5 で本実装する。
         Ok(())
     }
 
     fn evict_lru(&self, _max_entries: usize) -> Result<usize, StorageError> {
-        // P2-C で実装
+        // B10 で本実装する。
         Ok(0)
     }
 }

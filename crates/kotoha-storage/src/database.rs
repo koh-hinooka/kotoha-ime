@@ -9,8 +9,9 @@ use crate::error::StorageError;
 use crate::migrations::apply_migrations;
 
 /// SQLite Database wrapper(spec §6.4)。`Mutex<Connection>` を内部保持し、
-/// `Arc<Database>` で複数 Store(`UserVocabStore` / `LearningCacheStore`)が
-/// 同一 Connection を共有する(spec §6.4.1 共有 ownership)。
+/// `Arc<Database>` で複数 Store(`UserVocabReader/Writer` /
+/// `LearningCacheReader/Writer`)が同一 Connection を共有する
+/// (spec §6.4.1 共有 ownership)。
 pub struct Database {
     conn: Mutex<Connection>,
 }
@@ -70,8 +71,8 @@ impl Database {
     /// 内部 `Mutex<Connection>` を lock する。Store 実装側で使用。
     ///
     /// `pub(crate)` に絞って、外部 crate からは Connection 直アクセスではなく
-    /// `UserVocabStore` / `LearningCacheStore` 抽象境界を通すことを強制する
-    /// (review A-H2)。
+    /// `UserVocabReader/Writer` / `LearningCacheReader/Writer` 抽象境界を
+    /// 通すことを強制する(review A-H2)。
     ///
     /// # Panics
     ///
@@ -107,10 +108,29 @@ impl Database {
         ))
     }
 
-    /// (P2-B では unimplemented stub、P2-C-B で本実装 + ISP split、spec §6.3)
-    pub fn learning_cache_store(
+    /// `Arc<Database>` を `Box<dyn LearningCacheReader>` として公開する(spec §3.1 / §4.6)。
+    ///
+    /// # Postconditions
+    ///
+    /// - 戻り値の trait object は内部で `Arc<SqliteLearningCacheStore>` を保持する
+    /// - 同一 `Arc<Database>` から生成した reader / writer は同一 `Mutex<Connection>` を共有する
+    pub fn learning_cache_reader(
         self: &Arc<Self>,
-    ) -> Box<dyn crate::learning_cache::LearningCacheStore> {
+    ) -> Box<dyn crate::learning_cache::LearningCacheReader> {
+        Box::new(crate::learning_cache::SqliteLearningCacheStore::new(
+            Arc::clone(self),
+        ))
+    }
+
+    /// `Arc<Database>` を `Box<dyn LearningCacheWriter>` として公開する(spec §3.1 / §4.6)。
+    ///
+    /// # Postconditions
+    ///
+    /// - 戻り値の trait object は内部で `Arc<SqliteLearningCacheStore>` を保持する
+    /// - 同一 `Arc<Database>` から生成した reader / writer は同一 `Mutex<Connection>` を共有する
+    pub fn learning_cache_writer(
+        self: &Arc<Self>,
+    ) -> Box<dyn crate::learning_cache::LearningCacheWriter> {
         Box::new(crate::learning_cache::SqliteLearningCacheStore::new(
             Arc::clone(self),
         ))
