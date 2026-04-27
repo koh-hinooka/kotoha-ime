@@ -16,6 +16,10 @@ thiserror = { workspace = true }
 tempfile = { workspace = true }
 proptest = { workspace = true }
 serial_test = { workspace = true }
+# `trace` feature を test 時のみ有効化する。Issue #108 の `usize as i64`
+# silent-bypass 回帰検出に SQLite の `sqlite3_trace` callback を利用する。
+# release / production binary には混入しない(dev-dependency 限定)。
+rusqlite = { workspace = true, features = ["trace"] }
 
 [features]
 default = ["bundled-sqlite"]
