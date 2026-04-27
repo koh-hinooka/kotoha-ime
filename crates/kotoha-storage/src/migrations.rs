@@ -3,13 +3,19 @@
 use crate::error::StorageError;
 
 /// 最新 schema version。新 migration を `MIGRATIONS` に追加する際は本値を増やす。
-pub const LATEST_VERSION: i32 = 1;
+pub const LATEST_VERSION: i32 = 2;
 
 /// (version, sql) 配列。version 昇順厳守(spec §10.1.1)。
 ///
 /// `include_str!` でバイナリ同梱するため、distribution 時に migrations
 /// directory を別配布する必要はない(spec §3.6)。
-pub const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("../migrations/v001_initial.sql"))];
+pub const MIGRATIONS: &[(i32, &str)] = &[
+    (1, include_str!("../migrations/v001_initial.sql")),
+    (
+        2,
+        include_str!("../migrations/v002_learning_cache_index.sql"),
+    ),
+];
 
 /// 未適用 migration を順次 apply する(spec §6.5)。
 ///
