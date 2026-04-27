@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::database::Database;
 use crate::error::StorageError;
-use crate::user_vocab::store::{UserVocabRecord, UserVocabStore};
+use crate::user_vocab::store::{UserVocabReader, UserVocabRecord, UserVocabWriter};
 use crate::validation::{validate_pos, validate_reading, validate_score, validate_surface};
 
 /// User vocab 行数上限(sec-M5、spec §F6)。
@@ -76,7 +76,7 @@ impl SqliteUserVocabStore {
     }
 }
 
-impl UserVocabStore for SqliteUserVocabStore {
+impl UserVocabReader for SqliteUserVocabStore {
     fn find_by_reading(
         &self,
         reading: &str,
@@ -138,6 +138,68 @@ impl UserVocabStore for SqliteUserVocabStore {
         Ok(out)
     }
 
+    fn find_by_prefix(
+        &self,
+        reading_prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<UserVocabRecord>, StorageError> {
+        // prefix は hiragana / 空文字どちらも許容(空 prefix = 全件)
+        if !reading_prefix.is_empty() {
+            validate_reading(reading_prefix)?;
+        }
+        let conn = self.db.lock_conn();
+        let pattern = format!("{}%", reading_prefix);
+        // perf-H1: prepare_cached で SQL コンパイルを再利用する。
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, surface, reading, pos, score, created_at, updated_at \
+             FROM user_vocab \
+             WHERE reading LIKE ?1 \
+             ORDER BY score DESC, id ASC \
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![pattern, limit as i64], |row| {
+            Ok(UserVocabRecord {
+                id: Some(row.get(0)?),
+                surface: row.get(1)?,
+                reading: row.get(2)?,
+                pos: row.get(3)?,
+                score: row.get::<_, f64>(4)? as f32,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    fn find_by_id(&self, id: i64) -> Result<Option<UserVocabRecord>, StorageError> {
+        let conn = self.db.lock_conn();
+        // perf-H1: prepare_cached で SQL コンパイルを再利用する。
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, surface, reading, pos, score, created_at, updated_at \
+             FROM user_vocab WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(UserVocabRecord {
+                id: Some(row.get(0)?),
+                surface: row.get(1)?,
+                reading: row.get(2)?,
+                pos: row.get(3)?,
+                score: row.get::<_, f64>(4)? as f32,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl UserVocabWriter for SqliteUserVocabStore {
     fn insert(&self, record: UserVocabRecord) -> Result<i64, StorageError> {
         validate_surface(&record.surface)?;
         validate_reading(&record.reading)?;
@@ -237,66 +299,6 @@ impl UserVocabStore for SqliteUserVocabStore {
             return Err(StorageError::NotFound);
         }
         Ok(())
-    }
-
-    fn find_by_prefix(
-        &self,
-        reading_prefix: &str,
-        limit: usize,
-    ) -> Result<Vec<UserVocabRecord>, StorageError> {
-        // prefix は hiragana / 空文字どちらも許容(空 prefix = 全件)
-        if !reading_prefix.is_empty() {
-            validate_reading(reading_prefix)?;
-        }
-        let conn = self.db.lock_conn();
-        let pattern = format!("{}%", reading_prefix);
-        // perf-H1: prepare_cached で SQL コンパイルを再利用する。
-        let mut stmt = conn.prepare_cached(
-            "SELECT id, surface, reading, pos, score, created_at, updated_at \
-             FROM user_vocab \
-             WHERE reading LIKE ?1 \
-             ORDER BY score DESC, id ASC \
-             LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![pattern, limit as i64], |row| {
-            Ok(UserVocabRecord {
-                id: Some(row.get(0)?),
-                surface: row.get(1)?,
-                reading: row.get(2)?,
-                pos: row.get(3)?,
-                score: row.get::<_, f64>(4)? as f32,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            })
-        })?;
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r?);
-        }
-        Ok(out)
-    }
-
-    fn find_by_id(&self, id: i64) -> Result<Option<UserVocabRecord>, StorageError> {
-        let conn = self.db.lock_conn();
-        // perf-H1: prepare_cached で SQL コンパイルを再利用する。
-        let mut stmt = conn.prepare_cached(
-            "SELECT id, surface, reading, pos, score, created_at, updated_at \
-             FROM user_vocab WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query(rusqlite::params![id])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(UserVocabRecord {
-                id: Some(row.get(0)?),
-                surface: row.get(1)?,
-                reading: row.get(2)?,
-                pos: row.get(3)?,
-                score: row.get::<_, f64>(4)? as f32,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            }))
-        } else {
-            Ok(None)
-        }
     }
 }
 
