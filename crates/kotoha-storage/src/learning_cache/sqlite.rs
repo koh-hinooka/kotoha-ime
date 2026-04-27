@@ -206,9 +206,9 @@ impl LearningCacheWriter for SqliteLearningCacheStore {
         Ok(())
     }
 
-    fn evict_lru(&self, _max_entries: usize) -> Result<usize, StorageError> {
-        // B10 で本実装する。
-        Ok(0)
+    fn evict_lru(&self, max_entries: usize) -> Result<usize, StorageError> {
+        let conn = self.db.lock_conn();
+        evict_to_cap(&conn, max_entries)
     }
 }
 
