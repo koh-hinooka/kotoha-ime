@@ -186,7 +186,11 @@ const EVICT_SQL: &str = "DELETE FROM learning_cache
 ///
 /// - [`StorageError::Sqlite`][]: SQLite backend 障害の場合
 pub(crate) fn evict_to_cap(conn: &rusqlite::Connection, cap: usize) -> Result<usize, StorageError> {
-    let total: i64 = conn.query_row(COUNT_SQL, [], |r| r.get(0))?;
+    // perf-H1: prepare_cached により COUNT_SQL の compile を初回のみとし、
+    // 以降は statement cache から再利用する。`record_choice` は Phase 3 IBus engine の
+    // 打鍵毎に呼ばれるため、~1.4 µs/op の compile cost を毎打鍵分削減する。
+    let mut stmt = conn.prepare_cached(COUNT_SQL)?;
+    let total: i64 = stmt.query_row([], |r| r.get(0))?;
     // sec-F4: bind 方向と対称に、SQLite -> Rust 方向の変換も `as` cast ではなく
     // `try_from + clamp` を使用する。64-bit target では `i64::MAX < usize::MAX`
     // のため変換は必ず成功し、32-bit target では clamp により切り捨てを防ぐ
@@ -315,6 +319,11 @@ mod tests {
     // `record_trace` は callback、`TRACED_SQL` は accumulator、`TRACE_LOCK` は
     // 並列 trace test 同士の直列化 mutex。
     static TRACED_SQL: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+    /// 並列 trace test 同士の直列化 mutex。`Connection::trace`(PR #109、`record_trace`
+    /// callback) と `sqlite3_trace_v2`(PR #114、`count_sql_stmt_trace` callback)の
+    /// 両方が共有する。新しい trace test を追加する場合も、この同じ `TRACE_LOCK` を
+    /// 取得して直列化すること(個別の lock を作らない)。
     static TRACE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn record_trace(sql: &str) {
@@ -324,6 +333,82 @@ mod tests {
             buf.push('\n');
         }
         buf.push_str(sql);
+    }
+
+    // --- trace_v2 (SQLITE_TRACE_STMT) infrastructure ---
+    //
+    // `sqlite3_trace_v2` を `SQLITE_TRACE_STMT` mask で attach すると、prepared
+    // statement が **実行開始** する瞬間に callback が発火し、第 2 引数で当該
+    // `sqlite3_stmt*` が渡される。同一の prepared statement instance が
+    // 複数回実行されるたびに同じ pointer 値が観測される一方、毎回 new prepare
+    // される場合は異なる pointer 値が観測される。
+    //
+    // すなわち pointer 値の `unique count` を測れば「prepared statement instance が
+    // 何個 compile されたか」が機械的に判定できる:
+    //
+    // - `prepare_cached(SQL)` を N 回呼ぶ → unique pointer = 1
+    // - `query_row(SQL, ...)` を N 回呼ぶ(毎回 prepare + finalize) → unique pointer = N
+    //
+    // SQL text は `sqlite3_sql(stmt)` で取得し、`COUNT_SQL` の prefix で filter する
+    // (UPSERT_SQL や EVICT_SQL の compile を分離するため)。
+    //
+    // pointer は `usize` に cast して static `Mutex<HashSet<usize>>` に蓄える
+    // (raw pointer は `Send`/`Sync` でないため)。
+    //
+    // NOTE: rusqlite 0.32 は `Connection::trace_v2` を safe API として export していない
+    // (rusqlite/issues/977 で TODO)。将来 safe wrapper が提供されたら、本 FFI 実装は
+    // closure-captured な `Arc<Mutex<...>>` の safe 版に折り畳める。
+    //
+    // IMPORTANT: 本 statics を使用する test は test 開頭で必ず clear する
+    // (`COUNT_SQL_STMT_PTRS.lock()...clear()` と `COUNT_SQL_STMT_EVENTS.store(0, ...)`)。
+    // `TRACE_LOCK` は serialization のみで auto-reset しないため、cross-test の
+    // state leak を防ぐ責任は test 側にある。
+    static COUNT_SQL_STMT_PTRS: std::sync::Mutex<std::collections::BTreeSet<usize>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+    static COUNT_SQL_STMT_EVENTS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    /// `SQLITE_TRACE_STMT` callback。`COUNT_SQL` を実行している prepared statement
+    /// pointer を `COUNT_SQL_STMT_PTRS` に蓄積する。
+    ///
+    /// # Safety
+    ///
+    /// - `_p_ctx` / `p_stmt` / `_x` は SQLite が管理する有効ポインタ。
+    /// - `p_stmt` は active な prepared statement で、`sqlite3_sql` の呼び出しは
+    ///   safe(NUL 終端 C 文字列を返す)。
+    /// - callback は `catch_unwind` で panic を抑止し、SQLite 側に unwind を
+    ///   逃さない(C ABI からの unwind は UB)。
+    unsafe extern "C" fn count_sql_stmt_trace(
+        _event: std::os::raw::c_uint,
+        _p_ctx: *mut std::os::raw::c_void,
+        p_stmt: *mut std::os::raw::c_void,
+        _x: *mut std::os::raw::c_void,
+    ) -> std::os::raw::c_int {
+        let _ = std::panic::catch_unwind(|| {
+            if p_stmt.is_null() {
+                return;
+            }
+            let stmt = p_stmt as *mut rusqlite::ffi::sqlite3_stmt;
+            // SAFETY: `stmt` is non-null and SQLite guarantees `sqlite3_sql`
+            // returns a static C string for the duration of the statement.
+            let sql_ptr = unsafe { rusqlite::ffi::sqlite3_sql(stmt) };
+            if sql_ptr.is_null() {
+                return;
+            }
+            // SAFETY: SQLite-owned NUL-terminated C string.
+            let sql = unsafe { std::ffi::CStr::from_ptr(sql_ptr) }.to_string_lossy();
+            // COUNT_SQL の prefix で filter する(UPSERT / EVICT は除外)。
+            // ハードコードした SQL literal ではなく定数を直接参照することで、
+            // `COUNT_SQL` 定数の表記を変更しても自動的に追従する。
+            if sql.contains(COUNT_SQL) {
+                let mut set = COUNT_SQL_STMT_PTRS
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                set.insert(stmt as usize);
+                COUNT_SQL_STMT_EVENTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        0
     }
 
     /// `lookup` は存在しない kana_input に対して空 Vec を返す。
@@ -722,6 +807,143 @@ mod tests {
         assert!(
             traced.contains("SELECT id, kana_input"),
             "trace must capture LOOKUP_SQL; got: {traced}"
+        );
+    }
+
+    /// `sqlite3_trace_v2` を attach した状態で `body` を実行し、終了時 / panic 時の
+    /// どちらでも必ず detach する panic-safe な closure helper。
+    ///
+    /// # Why a closure instead of a Drop-based RAII guard
+    ///
+    /// `Mutex<Connection>` の都合で、attach / detach は短い lock scope で行い、
+    /// `body` 内の `record_choice` は別 lock scope で `db.lock_conn()` を取得する
+    /// 必要がある(`MutexGuard<Connection>` を `body` 全体で保持すると
+    /// `record_choice` 内部の `lock_conn()` が deadlock する)。
+    /// SQLite 側の trace callback は connection 単位で保存されるため、attach 後に
+    /// MutexGuard を解放しても `body` の `record_choice` 呼び出しでは callback が
+    /// 引き続き発火する。`Drop` ベースの guard は `&'a Connection` を抱え込んで
+    /// MutexGuard の lifetime と結合してしまうため、本 helper では closure 形で
+    /// 「attach -> `catch_unwind(body)` -> detach -> `resume_unwind`」の順で
+    /// 強制 detach を担保する設計を採る。
+    ///
+    /// # Safety contract
+    ///
+    /// - `count_sql_stmt_trace` は `unsafe extern "C"` で、内部で `catch_unwind`
+    ///   により panic を抑止しているため、C ABI 越しの unwind は起きない。
+    /// - attach と detach は同じ connection の `sqlite3*` 上で対称に呼ばれる。
+    fn with_trace<F: FnOnce() + std::panic::UnwindSafe>(store: &SqliteLearningCacheStore, body: F) {
+        // attach
+        {
+            let conn = store.db.lock_conn();
+            // SAFETY: `handle()` is valid for the lifetime of `conn`. We attach
+            // here while holding the MutexGuard and detach later via the same
+            // path; SQLite stores the callback per-connection, so the callback
+            // remains active even after we release the MutexGuard.
+            let rc = unsafe {
+                rusqlite::ffi::sqlite3_trace_v2(
+                    conn.handle(),
+                    rusqlite::ffi::SQLITE_TRACE_STMT as std::os::raw::c_uint,
+                    Some(count_sql_stmt_trace),
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_eq!(
+                rc,
+                rusqlite::ffi::SQLITE_OK,
+                "sqlite3_trace_v2 attach must succeed (rc={rc})"
+            );
+        }
+        // body を catch_unwind で実行し、panic でも detach に到達させる。
+        let result = std::panic::catch_unwind(body);
+        // detach (always runs)
+        {
+            let conn = store.db.lock_conn();
+            // SAFETY: same Connection; passing None removes the callback.
+            unsafe {
+                rusqlite::ffi::sqlite3_trace_v2(
+                    conn.handle(),
+                    rusqlite::ffi::SQLITE_TRACE_STMT as std::os::raw::c_uint,
+                    None,
+                    std::ptr::null_mut(),
+                );
+            }
+        }
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    /// `evict_to_cap` の `COUNT_SQL` が `prepare_cached` 経由で statement cache から
+    /// 再利用され、`record_choice` を 4 連続呼び出ししても **prepared statement instance
+    /// は 1 個** しか作られないことを実測検証する(perf-H1)。
+    ///
+    /// # Background
+    ///
+    /// 旧実装の `evict_to_cap` は `conn.query_row(COUNT_SQL, [], ...)` を呼び、
+    /// 内部で prepare → step → finalize を毎回繰り返していた。Phase 3 IBus engine では
+    /// `record_choice` が打鍵毎に呼ばれるため、~1.4 µs/op の compile cost が打鍵数に
+    /// 比例して累積する(`record_choice` latency の約 11%)。
+    /// 新実装は `prepare_cached(COUNT_SQL)` により初回のみ compile し、以降は
+    /// statement cache から同一 `sqlite3_stmt*` を再利用する。
+    ///
+    /// # Detection mechanism
+    ///
+    /// SQLite の `sqlite3_trace_v2(db, SQLITE_TRACE_STMT, cb, ctx)` は、prepared
+    /// statement が **実行開始** する瞬間に第 3 引数で当該 `sqlite3_stmt*` を渡す。
+    /// `prepare_cached` で再利用された場合は同一 pointer 値が観測され、毎回 prepare
+    /// される場合は異なる pointer 値が観測される。callback で `sqlite3_sql(stmt)` を
+    /// 呼んで SQL text を取得し、`COUNT_SQL` で filter した上で **unique pointer count** を
+    /// 数えれば「何個の prepared statement instance が compile されたか」が分かる。
+    ///
+    /// # Assertions
+    ///
+    /// - 4 回の `record_choice` 呼び出しで `COUNT_SQL` の trace event が **4 回以上** 発火する
+    ///   (実行回数の sanity check、現状は厳密に 4 回)
+    /// - `COUNT_SQL` を実行している prepared statement の **unique pointer count = 1**
+    ///   (prepare_cached が cache hit している証拠)
+    ///
+    /// 旧 `query_row` 実装ではこの test は unique pointer count = 4 となり FAIL する。
+    #[test]
+    fn evict_to_cap_uses_prepare_cached_for_count_sql() {
+        let _serialize = TRACE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _cap_lock = CapOverrideGuard::lock_only();
+        let store = fresh_store_b();
+
+        // capture 用 static を初期化する(他 test の leftover 防止)。
+        COUNT_SQL_STMT_PTRS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+        COUNT_SQL_STMT_EVENTS.store(0, std::sync::atomic::Ordering::SeqCst);
+
+        // 4 回 record_choice を呼ぶ。各 call の `evict_to_cap` で COUNT_SQL が走る。
+        // `with_trace` は attach / detach を panic-safe に巻き取る(panic でも detach)。
+        with_trace(&store, || {
+            for (reading, kanji) in [("あ", "亜"), ("い", "以"), ("う", "宇"), ("え", "江")]
+            {
+                store.record_choice(reading, kanji).expect("record ok");
+            }
+        });
+
+        let unique_ptr_count = COUNT_SQL_STMT_PTRS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .len();
+        let event_count = COUNT_SQL_STMT_EVENTS.load(std::sync::atomic::Ordering::SeqCst);
+
+        // sanity: COUNT_SQL は record_choice 毎に少なくとも 1 回実行される(現状は 4 回)。
+        // 厳密に 4 を要求すると将来 evict_to_cap が追加で COUNT_SQL を呼ぶ refactor で
+        // false-FAIL するため、`>= 4` で plumbing の正常性を確認するに留める。
+        assert!(
+            event_count >= 4,
+            "COUNT_SQL trace fired fewer times than record_choice calls (got {event_count}, unique_ptrs={unique_ptr_count}); plumbing is broken"
+        );
+
+        // perf-H1 assertion: prepare_cached により COUNT_SQL の prepared statement
+        // は 1 個しか作られない。旧 `query_row` 実装では unique_ptr_count = 4 となる。
+        assert_eq!(
+            unique_ptr_count, 1,
+            "evict_to_cap must reuse a single cached prepared statement for COUNT_SQL across multiple record_choice calls (got {unique_ptr_count} distinct sqlite3_stmt* over {event_count} executions); old `conn.query_row(COUNT_SQL, ...)` regression would yield {event_count} distinct pointers"
         );
     }
 
