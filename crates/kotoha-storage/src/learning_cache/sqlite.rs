@@ -307,4 +307,86 @@ mod tests {
         let err = store.record_choice("abc", "川").unwrap_err();
         assert!(matches!(err, StorageError::InvalidField { .. }));
     }
+
+    // --- eviction tests (B7 red phase) ---
+
+    /// cap 未満の行数では record_choice 後に削除が発生しない。
+    /// (B7) TDD red: B5 実装は eviction を含まないので本 test は PASS する(eviction なし ⇒ 行数保持)。
+    /// B8 実装後も PASS を維持することを確認する。
+    #[test]
+    fn eviction_does_not_occur_when_below_cap() {
+        let _guard = CapOverrideGuard::new(5);
+        let store = fresh_store_b();
+        // cap=5 に対して 3 件 insert する。
+        for kanji in ["愛", "哀", "藍"] {
+            store.record_choice("あい", kanji).expect("ok");
+        }
+        let result = store.lookup("あい", 10).expect("ok");
+        assert_eq!(result.len(), 3);
+    }
+
+    /// cap を 1 件超過した場合、LRU の 1 件が削除されて行数が cap に収まる。
+    /// (B7) TDD red: B5 実装は eviction を含まないので insert 後に cap+1 件が残り FAIL する。
+    #[test]
+    fn eviction_removes_one_lru_entry_when_cap_exceeded_by_one() {
+        let _guard = CapOverrideGuard::new(3);
+        let store = fresh_store_b();
+        // 3 件 insert して cap ぴったりにする。
+        store.record_choice("あ", "亜").expect("ok");
+        store.record_choice("い", "以").expect("ok");
+        store.record_choice("う", "宇").expect("ok");
+        // 4 件目で cap を 1 超過する。最も ancient な "あ/亜" が evict されるべき。
+        store.record_choice("え", "江").expect("ok");
+        // 総行数が cap=3 以内に収まっていることを確認する。
+        let conn = store.db.lock_conn();
+        let total: i64 = conn
+            .query_row("SELECT count(*) FROM learning_cache", [], |r| r.get(0))
+            .unwrap();
+        assert!(total <= 3, "total={total} must be <= cap 3");
+    }
+
+    /// burst insert で行数が cap を超えない。
+    /// (B7) TDD red: B5 実装は eviction を含まないので cap を超えた行数が残り FAIL する。
+    #[test]
+    fn eviction_keeps_row_count_bounded_on_burst_insert() {
+        let _guard = CapOverrideGuard::new(4);
+        let store = fresh_store_b();
+        // cap=4 に対して 10 件 insert する。
+        let kanjis = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
+        for (i, kanji) in kanjis.iter().enumerate() {
+            let reading = char::from_u32(0x3041 + i as u32)
+                .expect("valid hiragana")
+                .to_string();
+            store.record_choice(&reading, kanji).expect("ok");
+        }
+        let conn = store.db.lock_conn();
+        let total: i64 = conn
+            .query_row("SELECT count(*) FROM learning_cache", [], |r| r.get(0))
+            .unwrap();
+        assert!(total <= 4, "total={total} must be <= cap 4 after burst");
+    }
+
+    /// LRU 保護: record_choice で update された entry は eviction 対象から外れる。
+    /// (B7) TDD red: B5 実装は eviction を含まないので挙動を検証できず行数超過で FAIL する。
+    #[test]
+    fn eviction_protects_recently_updated_entry_from_lru() {
+        let _guard = CapOverrideGuard::new(2);
+        let store = fresh_store_b();
+        // "亜" を先に insert する(古い entry)。
+        store.record_choice("あ", "亜").expect("ok");
+        // "以" を後で insert する(新しい entry)。
+        store.record_choice("い", "以").expect("ok");
+        // "亜" を再度 record_choice して last_used_at を更新する。
+        store.record_choice("あ", "亜").expect("ok");
+        // 3 件目 insert で cap=2 を超える。"以" のほうが古いので evict される。
+        store.record_choice("う", "宇").expect("ok");
+        // "亜" は残っており、"以" は evict されている。
+        let result_a = store.lookup("あ", 10).expect("ok");
+        assert!(
+            !result_a.is_empty(),
+            "亜 must survive because it was recently updated"
+        );
+        let result_i = store.lookup("い", 10).expect("ok");
+        assert!(result_i.is_empty(), "以 must be evicted as the LRU entry");
+    }
 }
