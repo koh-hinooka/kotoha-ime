@@ -3,7 +3,7 @@
 use std::sync::Mutex;
 
 use crate::error::StorageError;
-use crate::user_vocab::store::{UserVocabRecord, UserVocabStore};
+use crate::user_vocab::store::{UserVocabReader, UserVocabRecord, UserVocabWriter};
 use crate::validation::{validate_pos, validate_reading, validate_score, validate_surface};
 
 pub struct MockUserVocabStore {
@@ -26,7 +26,7 @@ impl MockUserVocabStore {
     }
 }
 
-impl UserVocabStore for MockUserVocabStore {
+impl UserVocabReader for MockUserVocabStore {
     fn find_by_reading(
         &self,
         reading: &str,
@@ -48,9 +48,9 @@ impl UserVocabStore for MockUserVocabStore {
         Ok(filtered)
     }
 
-    fn list_all(&self, limit: usize, offset: usize) -> Result<Vec<UserVocabRecord>, StorageError> {
+    fn find_by_id(&self, id: i64) -> Result<Option<UserVocabRecord>, StorageError> {
         let records = self.records.lock().unwrap();
-        Ok(records.iter().skip(offset).take(limit).cloned().collect())
+        Ok(records.iter().find(|r| r.id == Some(id)).cloned())
     }
 
     fn find_by_prefix(
@@ -76,6 +76,13 @@ impl UserVocabStore for MockUserVocabStore {
         Ok(filtered)
     }
 
+    fn list_all(&self, limit: usize, offset: usize) -> Result<Vec<UserVocabRecord>, StorageError> {
+        let records = self.records.lock().unwrap();
+        Ok(records.iter().skip(offset).take(limit).cloned().collect())
+    }
+}
+
+impl UserVocabWriter for MockUserVocabStore {
     fn insert(&self, mut record: UserVocabRecord) -> Result<i64, StorageError> {
         validate_surface(&record.surface)?;
         validate_reading(&record.reading)?;
@@ -129,11 +136,6 @@ impl UserVocabStore for MockUserVocabStore {
             return Err(StorageError::NotFound);
         }
         Ok(())
-    }
-
-    fn find_by_id(&self, id: i64) -> Result<Option<UserVocabRecord>, StorageError> {
-        let records = self.records.lock().unwrap();
-        Ok(records.iter().find(|r| r.id == Some(id)).cloned())
     }
 }
 
