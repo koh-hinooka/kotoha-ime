@@ -1,7 +1,7 @@
 //! `Database` 構造体: Mutex<Connection> + Arc 共有 ownership(spec §6.4)。
 
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rusqlite::Connection;
 
@@ -74,11 +74,17 @@ impl Database {
     /// `UserVocabReader/Writer` / `LearningCacheReader/Writer` 抽象境界を
     /// 通すことを強制する(review A-H2)。
     ///
-    /// # Panics
+    /// # Postconditions
     ///
-    /// poison された場合 panic する(other thread が panic 中に lock を保持していた場合)。
+    /// - 戻り値は使用可能な `MutexGuard<Connection>` で、本関数自体は panic を伝播しない
+    /// - 他 thread の panic で `Mutex` が poisoned 状態になっていた場合も、
+    ///   `PoisonError::into_inner` で guard を回収して continuation する
+    ///   (Phase 3 IBus engine の thread cascade death 防止 / sec-F4)
+    /// - 各 SQL 文は SQLite の auto-commit により atomic に確定するため、recovery 時点で
+    ///   partial-statement state が観測されることはない(本 crate は現時点で明示
+    ///   transaction を使用していない)
     pub(crate) fn lock_conn(&self) -> MutexGuard<'_, Connection> {
-        self.conn.lock().expect("Database mutex poisoned")
+        self.conn.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// `Arc<Database>` を `Box<dyn UserVocabReader>` として公開する(arch-M-2 ISP split)。
@@ -350,5 +356,50 @@ mod tests {
         let reader = db.user_vocab_reader();
         let result = reader.list_all(100, 0).unwrap();
         assert_eq!(result.len(), 8);
+    }
+
+    /// `lock_conn` が poisoned `Mutex` から recovery することを実測検証する。
+    ///
+    /// # シナリオ
+    ///
+    /// Phase 3 IBus engine は input dispatch / auto-eviction / UI thread を併走させる
+    /// multi-threaded 構成である。いずれかの thread が `Mutex<Connection>` を保持中に
+    /// panic すると、`Mutex` は poisoned となり、後続の `Mutex::lock()` は `Err(PoisonError)`
+    /// を返す。修正前の `.expect("Database mutex poisoned")` は その `Err` を panic に
+    /// 変換していたため、1 件の panic が他 thread にも cascade death を誘発していた。
+    ///
+    /// # 実測検証
+    ///
+    /// 本 test は旧実装(`.expect`)上では「2 回目の `lock_conn()` が panic」によって
+    /// FAIL する性質を持ち、修正後の `unwrap_or_else(PoisonError::into_inner)` でのみ
+    /// PASS する。`PRAGMA user_version` の round-trip が、recovery 後の Connection が
+    /// 引き続き使用可能であることの smoke check として機能する。
+    #[test]
+    fn lock_conn_recovers_from_poisoned_mutex() {
+        let db = Database::open_in_memory().expect("memory open");
+
+        let db_clone = Arc::clone(&db);
+        let handle = std::thread::spawn(move || {
+            let guard = db_clone.lock_conn();
+            // SQL を 1 回 round-trip させ、guard が optimizer に elide されないようにする。
+            let _: i32 = guard
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .expect("query within poisoning thread must succeed");
+            // guard を保持したまま panic することで、unwind 時に Mutex が poisoned になる。
+            panic!("intentional panic to poison the mutex");
+        });
+        let join_result = handle.join();
+        assert!(
+            join_result.is_err(),
+            "spawned thread must have panicked to poison the mutex"
+        );
+
+        // 修正後の `lock_conn` は poisoned `Mutex` から recovery し、panic を伝播しない。
+        // 旧実装(`.expect`)では本行で 2 段目の panic が発生し、test は FAIL する。
+        let conn = db.lock_conn();
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .expect("recovered connection must remain usable");
+        assert_eq!(version, crate::migrations::LATEST_VERSION);
     }
 }
