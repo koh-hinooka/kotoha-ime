@@ -319,6 +319,52 @@
 - **対応する identifier**: `kotoha_storage::learning_cache::sqlite::evict_to_cap`(`crates/kotoha-storage/src/learning_cache/sqlite.rs`)
 - **備考**: `record_choice` の自動 eviction(commit `fd124b7`)と `evict_lru` の明示 eviction(commit `3c8391d`)で共通化された helper。tie-breaker `id ASC` を併用することで `last_used_at` が同値の場合でも決定論的な削除順序を保証する。
 
+### Phase 3 IBus engine 用語 (P3-A 以降)
+
+以下は Phase 3-A spec(`docs/superpowers/specs/2026-05-02-p3-a-ibus-engine-design.md`、ISSUE #116)で初出するドメイン用語である。Phase 3-A 本番実装段階での crate / type identifier は同 spec §4 で凍結する。
+
+### Hexagonal Architecture (Ports and Adapters)
+
+- **定義**: domain core が外部世界(IME host / DB / UI 等)と「port」と呼ばれる trait 経由でのみ会話するアーキテクチャ pattern。core の依存方向は内向き(adapter → core)で、IBus / fcitx5 / 将来の input-method protocol 等は adapter crate の追加 / 差し替えだけで吸収できる。Driving port(host → core を呼ぶ側、`IMEEngine`)と Driven port(core → host を呼ぶ側、`IMEHostBridge`)の 2 方向を分離する。
+- **初出**: Phase 3-A spec §3.2(2026-05-02、ISSUE #116)
+- **対応する identifier**: `kotoha-engine-core` crate(domain)+ `kotoha-engine-ibus` crate(adapter)+ `kotoha-bin` crate(entry / DI)
+- **備考**: Dependency Injection(DI)と orthogonal だが補完的に組み合わさる。Phase 3-A は `Box<dyn IMEHostBridge>` / `Box<dyn Ranker>` を `KotohaEngine::new` の引数で注入する構造的 DI を採用する。Phase 4 fcitx5 adapter は `kotoha-engine-fcitx5` 新 crate として追加される予定で、`kotoha-engine-core` は無変更で extend される。
+
+### IMEEngine / IMEHostBridge (Phase 3 trait pair)
+
+- **定義**: Phase 3-A で導入する Hexagonal port 2 trait。`IMEEngine` は driving port(IME host adapter が engine の `process_key_event` / `focus_in` / `focus_out` / `enable` / `disable` / `reset` を呼び出す側)、`IMEHostBridge` は driven port(engine が host adapter の `update_preedit` / `commit_text` / `update_candidates` / `show_candidate_window` / `hide_candidate_window` を呼び出す側)である。両 trait の組み合わせで IBus / fcitx5 / 将来の host との会話 layer を完全に adapter 側に局所化する。
+- **初出**: Phase 3-A spec §4.1 / §4.2(2026-05-02)
+- **対応する identifier**: `kotoha_engine_core::IMEEngine` trait + `kotoha_engine_core::IMEHostBridge` trait
+- **備考**: `IMEEngine` は単一 thread から呼ばれる前提で `Send + !Sync`、`IMEHostBridge` は engine 主 thread と RankerWorker thread の双方から呼ばれるため `Send + Sync` を要求する。
+
+### Live 変換 (Live conversion mode)
+
+- **定義**: typing 中の毎 keystroke で Ranker を invoke し、preedit kana に対する候補を逐次表示する変換 mode。Phase 3-A から first-class で実装する設計判断は、Live 変換が IME 全体で最も処理負荷が高いため後付け実装を避け、初期から budget を測定可能にすること、および backspace 時の romaji-level 同期 reset などの周辺 logic を最初から扱うため。
+- **初出**: Phase 3-A spec §5.2 / §6.1(2026-05-02、Q5 (a) 採択)
+- **対応する identifier**: `kotoha_engine_core::ConversionMode::Live`(`crates/kotoha-engine-core/src/lib.rs`、Phase 3-A 本番実装で確定)
+- **備考**: Live 変換時の Ranker latency budget は dict only fast path で keystroke あたり < 10ms。LLM backend は best-effort で投げる(typing 中は cancel propagation を頻発する想定、§13 Open Q 7)。Phase 5 custom model の partial-input + beam search が来ると Live 変換が本格高度化する。
+
+### Commit 変換 (Commit conversion mode)
+
+- **定義**: space 確定後の `CommitConverting` 状態で行う候補確定変換 mode。Live 変換と同じ Ranker trait を共有するが、coalescing window が拡張(30ms)され LLM 結果まで待機する。p99 100ms 以内に候補ウィンドウ表示完了を targeted。
+- **初出**: Phase 3-A spec §5.2 / §6.1(2026-05-02)
+- **対応する identifier**: `kotoha_engine_core::ConversionMode::Commit`
+- **備考**: 日野岡さんの最重視要件「短い単語 + space + 文脈認識変換」は Commit 変換 path で実現される。`ConversionContext::commit_history` 経由で直前 200 chars(暫定値、§13 Open Q 1)の context を Ranker に渡す。
+
+### Coalescing window (候補 update 統合時間窓)
+
+- **定義**: RankerWorker が複数 backend(SudachiDict / UserVocab / LearningCache / LLM)からの partial 候補を bundling し、1 回の `IMEHostBridge::update_candidates` 呼び出しに統合するための時間窓。Live 変換時 5-10ms、Commit 変換時 30ms と動的に切り替える。
+- **初出**: Phase 3-A spec §7.3(2026-05-02)
+- **対応する identifier**: `kotoha_engine_core::RankerWorker` 内部 logic(Phase 3-A 本番実装で確定)
+- **備考**: window 値の最適値は §13 Open Q 2 で empirical 確定する。IBus `update_lookup_table` は仕様上全置換のため、coalescing で呼び出し回数を減らすことで描画 flicker を最小化する。
+
+### ConversionContext (Ranker 入力 context)
+
+- **定義**: Ranker `rank()` の引数として渡される struct。`commit_history: Vec<String>`(focus session 内の直前 N 文字 commit 履歴)、`time_since_last_commit: Duration`、`mode: ConversionMode`(Live / Commit)を含む。Phase 5 で `partial_input: Option<String>` / `typo_distance: u32` field が non-breaking で追加される予定。
+- **初出**: Phase 3-A spec §4.3(2026-05-02)
+- **対応する identifier**: `kotoha_engine_core::ConversionContext`
+- **備考**: KotohaEngine 内部 state の `commit_history: VecDeque<String>` の snapshot を `Vec<String>` として clone して context に詰める設計(VecDeque は engine 内 pop_front 効率性、Vec は context 不変性と clone の単純さ)。
+
 ## 5. LLM 推論とプロンプト
 
 ### PromptTemplate
