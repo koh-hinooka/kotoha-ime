@@ -164,6 +164,20 @@ pub(crate) const RULES: &[(&str, &str)] = &[
     ("ju", "じゅ"),
     ("je", "じぇ"),
     ("jo", "じょ"),
+    // waapuro hybrid (j + y*): supported by MS-IME / Google IME / Mozc.
+    // Bridges Hepburn-`j` and kunrei-`y` conventions for typists who mix them.
+    ("jya", "じゃ"),
+    ("jyi", "じぃ"),
+    ("jyu", "じゅ"),
+    ("jye", "じぇ"),
+    ("jyo", "じょ"),
+    // waapuro c-row yoon (alternative to t-row 拗音 chi-glide):
+    // accepted by Google IME / Mozc as a parallel form to cha/chu/cho.
+    ("cya", "ちゃ"),
+    ("cyi", "ちぃ"),
+    ("cyu", "ちゅ"),
+    ("cye", "ちぇ"),
+    ("cyo", "ちょ"),
     ("dya", "ぢゃ"),
     ("dyi", "ぢぃ"),
     ("dyu", "ぢゅ"),
@@ -184,6 +198,23 @@ pub(crate) const RULES: &[(&str, &str)] = &[
     ("fi", "ふぃ"),
     ("fe", "ふぇ"),
     ("fo", "ふぉ"),
+    // Hepburn-extended f-row yoon (loanword 拡張): フュージョン etc.
+    ("fya", "ふゃ"),
+    ("fyu", "ふゅ"),
+    ("fyo", "ふょ"),
+    // Loanword "th-" (English) → て + small-vowel: ティーチ / テューバ etc.
+    // Convention adopted by MS-IME / Google IME / Mozc.
+    ("tha", "てぁ"),
+    ("thi", "てぃ"),
+    ("thu", "てゅ"),
+    ("the", "てぇ"),
+    ("tho", "てょ"),
+    // Loanword "dh-" (English voiced) → で + small-vowel: ディスク etc.
+    ("dha", "でぁ"),
+    ("dhi", "でぃ"),
+    ("dhu", "でゅ"),
+    ("dhe", "でぇ"),
+    ("dho", "でょ"),
     ("va", "ゔぁ"),
     ("vi", "ゔぃ"),
     ("vu", "ゔ"),

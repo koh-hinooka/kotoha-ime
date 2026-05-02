@@ -329,3 +329,39 @@ xwa	ゎ
 xtsu	っ	
 lwa	ゎ	
 ltsu	っ	
+
+# --- 3-way yoon waapuro hybrid (jy*: hybrid of Hepburn-j + kunrei-y) ---
+# ISSUE #119: complete kunrei / Hepburn / waapuro coverage for typists who
+# mix conventions (e.g. "ji" + "ya" → "jya"). MS-IME / Google IME / Mozc all
+# accept these.
+jya	じゃ	
+jyi	じぃ	
+jyu	じゅ	
+jye	じぇ	
+jyo	じょ	
+
+# --- 3-way yoon waapuro c-row (parallel form to cha/chu/cho) ---
+cya	ちゃ	
+cyi	ちぃ	
+cyu	ちゅ	
+cye	ちぇ	
+cyo	ちょ	
+
+# --- Hepburn-extended f-row yoon (loanword フャ/フュ/フョ) ---
+fya	ふゃ	
+fyu	ふゅ	
+fyo	ふょ	
+
+# --- loanword th-row (English "th-" → て + small-vowel) ---
+tha	てぁ	
+thi	てぃ	
+thu	てゅ	
+the	てぇ	
+tho	てょ	
+
+# --- loanword dh-row (English voiced "dh-" → で + small-vowel) ---
+dha	でぁ	
+dhi	でぃ	
+dhu	でゅ	
+dhe	でぇ	
+dho	でょ	
