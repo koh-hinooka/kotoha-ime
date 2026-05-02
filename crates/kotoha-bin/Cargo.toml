@@ -1,0 +1,22 @@
+[package]
+name = "kotoha-bin"
+description = "Kotoha IME entry binary (Phase 3-A spec §3.1)"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "kotoha"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+kotoha-engine-core = { path = "../kotoha-engine-core" }
+kotoha-engine-ibus = { path = "../kotoha-engine-ibus" }
+kotoha-storage = { path = "../kotoha-storage" }
+kotoha-core = { path = "../kotoha-core" }

@@ -379,6 +379,36 @@
 - **対応する identifier**: `kotoha_engine_core::ranker::HybridRanker`(`crates/kotoha-engine-core/src/ranker/hybrid.rs`)
 - **備考**: LLM backend は `Option<Arc<dyn KanjiBackend>>` で None なら dict-only で動作。Live mode は best-effort、Commit mode は LLM 完了まで待機する設計だが、token-level cancel propagation(spec §13 Open Q 4)は Phase 3-A 本番実装で対応する。
 
+### KotohaEngine
+
+- **定義**: Phase 3-A spec §5 で凍結された core engine 状態機械。`IMEEngine` driving port を impl し、`Idle` / `LiveConverting` / `CommitConverting` / `CandidatesShown` 4 状態を遷移する。`RankerWorker` 背景 thread + cancel propagation 5 trigger を内部で扱い、`IMEHostBridge` driven port 経由で host 層に preedit / 候補 / commit を出力する。
+- **初出**: P3-A Milestone 2(2026-05-02、ISSUE #128 / branch `feature/128-p3a-m2-state-machine`)
+- **対応する identifier**: `kotoha_engine_core::engine::KotohaEngine`(`crates/kotoha-engine-core/src/engine/mod.rs`)
+
+### IMEEngine
+
+- **定義**: Phase 3-A spec §4.1 で凍結された driving port trait。host adapter(IBus / fcitx5)が engine に対して呼び出す API surface(`process_key_event` / `focus_in/out` / `enable/disable` / `reset`)。`Send` のみ要求、`Sync` は不要(event loop 単一 thread 前提)。
+- **初出**: P3-A Milestone 1(2026-05-02、ISSUE #128 / branch `feature/128-p3a-m1-traits-and-mocks`)
+- **対応する identifier**: `kotoha_engine_core::ime_engine::IMEEngine`(`crates/kotoha-engine-core/src/ime_engine.rs`)
+
+### IMEHostBridge
+
+- **定義**: Phase 3-A spec §4.2 で凍結された driven port trait。engine が host adapter に対して呼び出す API surface(`update_preedit` / `commit_text` / `update_candidates` / `show_candidate_window` / `hide_candidate_window`)。`Send + Sync` を要求(engine 主 thread + `RankerWorker` thread の双方から呼ばれる)。
+- **初出**: P3-A Milestone 1(2026-05-02、ISSUE #128 / branch `feature/128-p3a-m1-traits-and-mocks`)
+- **対応する identifier**: `kotoha_engine_core::host_bridge::IMEHostBridge`(`crates/kotoha-engine-core/src/host_bridge.rs`)
+
+### RankerWorker
+
+- **定義**: Phase 3-A spec §7 の dedicated background thread。engine 主 thread から `RankRequest` を mpsc channel で受領し、`Ranker::rank` を呼び出して coalescing window(Live 7ms / Commit 30ms + second 150ms)で候補を集約後、`EngineEvent::Candidates` で engine 主 thread に push する。spec §7.5 request_id mismatch discard で stale response を除去する。
+- **初出**: P3-A Milestone 3(2026-05-02、ISSUE #128 / branch `feature/128-p3a-m3-ranker-worker`)
+- **対応する identifier**: `kotoha_engine_core::engine::worker`(`crates/kotoha-engine-core/src/engine/worker.rs`)
+
+### Coalescing window
+
+- **定義**: Phase 3-A spec §7.3 の動的 buffer 集約 window。Live mode は typing 応答性優先で 5-10ms、Commit mode は LLM 結果待機で 30ms + second 150ms。spec §13 Open Q 2 で実装段階に IBus host 描画 frame rate 計測と合わせて empirical 確定する。
+- **初出**: P3-A Milestone 3(2026-05-02、ISSUE #128 / branch `feature/128-p3a-m3-ranker-worker`)
+- **対応する identifier**: `LIVE_WINDOW` / `COMMIT_WINDOW` / `COMMIT_SECOND_WINDOW` constants(`crates/kotoha-engine-core/src/engine/worker.rs`)
+
 ## 5. LLM 推論とプロンプト
 
 ### PromptTemplate
