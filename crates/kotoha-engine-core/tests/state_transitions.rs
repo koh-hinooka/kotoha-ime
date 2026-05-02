@@ -161,6 +161,30 @@ fn idle_backspace_is_forwarded() {
     assert_eq!(eng.state_for_test(), EngineState::Idle);
 }
 
+/// Phase 3-B B4: RELEASE flag 付き event は engine 不処理 (Forwarded、状態変化なし)
+#[test]
+fn release_event_is_forwarded_without_state_change() {
+    let (mut eng, host, _w) = build_engine(vec![Candidate::new("か", -1.0)]);
+    // 通常 press で「か」を入れる
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+    let state_before = eng.state_for_test();
+    let preedit_before = eng.preedit_for_test();
+    host.clear();
+    // RELEASE event を投入
+    let release = KeyEvent {
+        keysym: 'a' as u32,
+        keycode: 0,
+        modifiers: KeyModifiers::RELEASE,
+    };
+    let r = eng.process_key_event(release);
+    assert_eq!(r, KeyEventResult::Forwarded);
+    assert_eq!(eng.state_for_test(), state_before);
+    assert_eq!(eng.preedit_for_test(), preedit_before);
+    // host にも何も呼ばれていない
+    assert!(host.operations().is_empty());
+}
+
 /// spec §5.2: CandidatesShown + ↓ → highlight_idx 移動 (Ranker 再起動なし)
 #[test]
 fn candidates_navigation_moves_highlight() {

@@ -251,6 +251,14 @@ impl IMEEngine for KotohaEngine {
         if !self.enabled || !self.focused {
             return KeyEventResult::Forwarded;
         }
+        // RELEASE event は engine が処理しない(IBus は press/release 双方を渡すため、
+        // press path のみで状態遷移を駆動する。Phase 3-B B4)。
+        if key
+            .modifiers
+            .contains(crate::key_event::KeyModifiers::RELEASE)
+        {
+            return KeyEventResult::Forwarded;
+        }
         // Commit mode second window などで遅延到着した event を最初に取り込む。
         self.drain_pending_events();
         transitions::dispatch_key(self, key)
