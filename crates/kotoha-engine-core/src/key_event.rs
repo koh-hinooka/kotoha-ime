@@ -26,14 +26,26 @@ pub struct KeyEvent {
 }
 
 bitflags! {
-    /// Keystroke 同伴 modifier。Phase 3-A 初期は IBus IBusModifierType の
-    /// 主要 4 種のみ(spec §13 Open Q 8 で残余は実装段階対応)。
+    /// Keystroke 同伴 modifier。IBus `IBusModifierType` の主要 flag を網羅する
+    /// (Phase 3-B B4、ISSUE #136、spec §13 Open Q 8 解決)。bit 位置は IBus 由来
+    /// ではなく自前序数で持ち、IBus → 本 enum mapping は host adapter 層で行う。
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct KeyModifiers: u32 {
-        const SHIFT = 1 << 0;
-        const CTRL  = 1 << 1;
-        const ALT   = 1 << 2;
-        const SUPER = 1 << 3;
+        const SHIFT   = 1 << 0;
+        const LOCK    = 1 << 1;  // Caps Lock
+        const CTRL    = 1 << 2;
+        const ALT     = 1 << 3;  // Mod1 (Alt)
+        const MOD2    = 1 << 4;  // Num Lock(典型)
+        const MOD3    = 1 << 5;
+        const MOD4    = 1 << 6;
+        const MOD5    = 1 << 7;
+        const SUPER   = 1 << 8;
+        const HYPER   = 1 << 9;
+        const META    = 1 << 10;
+        /// IBus `IBUS_RELEASE_MASK` 相当。`process_key_event` 受領側は本 flag が
+        /// 立っている event を **release event** として識別し、典型的には
+        /// `KeyEventResult::Forwarded` に短絡する。
+        const RELEASE = 1 << 11;
     }
 }
 
