@@ -372,6 +372,13 @@
 - **対応する identifier**: `kotoha_engine_core::cancel::StdCancellationToken`(`crates/kotoha-engine-core/src/cancel/std_token.rs`)
 - **備考**: tokio runtime 導入は Phase 5 / 6 で再評価。それまで Phase 3-A は std::sync ベースで運用。同期 thread block-wait API は現状未提供、将来追加時に Condvar 復活と `wait_blocking()` method を同時導入する。
 
+### HybridRanker
+
+- **定義**: Phase 3-A spec §4.3 で凍結された `Ranker` trait の concrete impl。SudachiDict + UserVocab + LearningCache + LLM の 4 backend を統合し、`mpsc::Sender<RankerOutput>` 経由で逐次候補を engine に push する。Phase 2 spec §3.3 で凍結された初期重み(dict 0.95 / LLM 1.0 / cache hit bonus +0.5)で merge / dedupe / scoring を行う。
+- **初出**: P2-D Milestone 2(2026-05-02、ISSUE #120 / branch `feature/120-p2d-hybrid-ranker-dict`)
+- **対応する identifier**: `kotoha_engine_core::ranker::HybridRanker`(`crates/kotoha-engine-core/src/ranker/hybrid.rs`)
+- **備考**: LLM backend は `Option<Arc<dyn KanjiBackend>>` で None なら dict-only で動作。Live mode は best-effort、Commit mode は LLM 完了まで待機する設計だが、token-level cancel propagation(spec §13 Open Q 4)は Phase 3-A 本番実装で対応する。
+
 ## 5. LLM 推論とプロンプト
 
 ### PromptTemplate

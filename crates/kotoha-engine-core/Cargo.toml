@@ -26,6 +26,10 @@ kotoha-storage = { path = "../kotoha-storage" }
 # `MockLearningCacheStore` を直接構築して使う。両者は kotoha-storage の
 # `default features` で公開されており、test-helpers feature は不要。
 kotoha-storage = { path = "../kotoha-storage" }
+# `tests/proptest_invariants.rs` で merge_candidates の不変条件
+# (top_k respect / sorted descending / dedupe by surface) を property test
+# する。M4 で再導入(M1 review fix で一旦削除した dev-dep)。
+proptest = { workspace = true }
 
 [features]
 default = []
