@@ -9,11 +9,23 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-# M1 では trait + types 定義のみ。`kotoha-core`(Candidate type 参照)+ `thiserror`
-# (RankerError derive)のみを使う。`tracing` / `kotoha-storage` / `proptest` /
-# `serial_test` は M2 以降で実需が surface した PR で追加する(YAGNI)。
+# M1 で skeleton 確定後、M2 で `HybridRanker` 本実装が surface した依存を追加:
+# - `tracing`: backend 個別エラー(`UserVocab` / `LearningCache`)の `tracing::warn!`
+#   と sink drop 時の `tracing::trace!` で利用(M1 で YAGNI 削除した依存を再導入)。
+# - `kotoha-storage`: `UserVocabReader` / `LearningCacheReader` trait + `MockXxxStore`
+#   を `HybridRanker` が DI で受けるため再導入(同じく M1 で YAGNI 削除した依存)。
+# - `kotoha-core` の `dict` feature: `MorphologicalEngine` trait を pull する
+#   (`HybridRanker` の sudachi backend port)。
 thiserror = { workspace = true }
-kotoha-core = { path = "../kotoha-core" }
+tracing = { workspace = true }
+kotoha-core = { path = "../kotoha-core", features = ["dict"] }
+kotoha-storage = { path = "../kotoha-storage" }
+
+[dev-dependencies]
+# Integration tests (`tests/hybrid_ranker_dict.rs`) は `MockUserVocabStore` /
+# `MockLearningCacheStore` を直接構築して使う。両者は kotoha-storage の
+# `default features` で公開されており、test-helpers feature は不要。
+kotoha-storage = { path = "../kotoha-storage" }
 
 [features]
 default = []

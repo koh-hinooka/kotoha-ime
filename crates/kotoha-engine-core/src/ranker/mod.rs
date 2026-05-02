@@ -5,9 +5,12 @@
 //! (P2-D Milestone 2 以降で追加される)。
 
 mod context;
+pub mod hybrid;
+pub mod merge;
 mod update;
 
 pub use context::{ConversionContext, ConversionMode};
+pub use hybrid::HybridRanker;
 pub use update::CandidateUpdate;
 
 use std::sync::mpsc;
