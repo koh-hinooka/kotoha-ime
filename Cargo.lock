@@ -577,6 +577,7 @@ dependencies = [
 name = "kotoha-engine-core"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "kotoha-core",
  "kotoha-storage",
  "proptest",
