@@ -76,7 +76,7 @@ fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<E
             ConversionMode::Commit => COMMIT_WINDOW,
         };
         let mut buffer: Vec<Candidate> = Vec::new();
-        drain_window(&rx_ranker, &cancel, window, request_id, &mut buffer);
+        drain_window(&rx_ranker, &cancel, window, &mut buffer);
 
         if !cancel.is_cancelled() && !buffer.is_empty() {
             let _ = tx_event.send(EngineEvent::Candidates {
@@ -92,7 +92,6 @@ fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<E
                 &rx_ranker,
                 &cancel,
                 COMMIT_SECOND_WINDOW,
-                request_id,
                 &mut second_buffer,
             );
             if !cancel.is_cancelled() && !second_buffer.is_empty() {
@@ -108,11 +107,17 @@ fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<E
 
 /// 指定 window 内に Ranker から届いた `RankerOutput` を `buffer` に集約する。
 /// cancel detect で即時 break。
+///
+/// `RankerOutput.request_id` は Ranker impl 側の内部 counter であって engine の
+/// `request_id` と一致する保証はない(`Ranker::rank` の trait signature は engine
+/// の id を受け取らない)。従って本 `rx_ranker` channel は **request 毎に新規作成**
+/// される(worker_loop 参照)前提で、ここに来る output はすべて current request の
+/// ものとして受け入れる。stale response の discard は engine 主 thread 側の
+/// `request_id` 照合(spec §7.5)で実施する。
 fn drain_window(
     rx_ranker: &mpsc::Receiver<RankerOutput>,
     cancel: &Arc<dyn CancellationToken>,
     window: Duration,
-    request_id: u64,
     buffer: &mut Vec<Candidate>,
 ) {
     let deadline = Instant::now() + window;
@@ -122,9 +127,6 @@ fn drain_window(
             Ok(out) => {
                 if cancel.is_cancelled() {
                     break;
-                }
-                if out.request_id != request_id && out.request_id != 0 {
-                    continue;
                 }
                 apply_to_buffer(buffer, out.update);
             }
