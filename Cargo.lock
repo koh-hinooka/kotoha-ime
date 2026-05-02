@@ -574,6 +574,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kotoha-engine-core"
+version = "0.1.0"
+dependencies = [
+ "kotoha-core",
+ "kotoha-storage",
+ "proptest",
+ "serial_test",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "kotoha-storage"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,24 @@
+[package]
+name = "kotoha-engine-core"
+description = "Kotoha IME engine domain core (host-agnostic, Phase 3-A spec §3.1)"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+kotoha-core = { path = "../kotoha-core" }
+kotoha-storage = { path = "../kotoha-storage" }
+
+[dev-dependencies]
+proptest = { workspace = true }
+serial_test = { workspace = true }
+
+[features]
+default = []
+# Mock backends / fixtures for cross-crate test injection.
+test-helpers = []
