@@ -1,0 +1,21 @@
+[package]
+name = "kotoha-engine-core"
+description = "Kotoha IME engine domain core (host-agnostic, Phase 3-A spec §3.1)"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# M1 では trait + types 定義のみ。`kotoha-core`(Candidate type 参照)+ `thiserror`
+# (RankerError derive)のみを使う。`tracing` / `kotoha-storage` / `proptest` /
+# `serial_test` は M2 以降で実需が surface した PR で追加する(YAGNI)。
+thiserror = { workspace = true }
+kotoha-core = { path = "../kotoha-core" }
+
+[features]
+default = []
+# Mock backends / fixtures for cross-crate test injection. M2 以降で需要 surface。
+test-helpers = []

@@ -365,6 +365,13 @@
 - **対応する identifier**: `kotoha_engine_core::ConversionContext`
 - **備考**: KotohaEngine 内部 state の `commit_history: VecDeque<String>` の snapshot を `Vec<String>` として clone して context に詰める設計(VecDeque は engine 内 pop_front 効率性、Vec は context 不変性と clone の単純さ)。
 
+### StdCancellationToken (std::sync ベース cancel token impl)
+
+- **定義**: Phase 3-A spec §4.4 で凍結された `CancellationToken` trait の Phase 3-A 初期 impl。`Arc<AtomicBool>` + `Mutex<Vec<Waker>>` で cancel signal の永続化と async future 待機を実装する。`Mutex` poison は `unwrap_or_else(PoisonError::into_inner)` で recover する(PR #111 規約と整合)。
+- **初出**: P2-D Milestone 1(2026-05-02、ISSUE #120 / branch `feature/120-p2d-trait-skeleton`)
+- **対応する identifier**: `kotoha_engine_core::cancel::StdCancellationToken`(`crates/kotoha-engine-core/src/cancel/std_token.rs`)
+- **備考**: tokio runtime 導入は Phase 5 / 6 で再評価。それまで Phase 3-A は std::sync ベースで運用。同期 thread block-wait API は現状未提供、将来追加時に Condvar 復活と `wait_blocking()` method を同時導入する。
+
 ## 5. LLM 推論とプロンプト
 
 ### PromptTemplate
