@@ -152,6 +152,27 @@ impl RomajiConverter {
         self.machine.reset();
     }
 
+    /// pending romaji buffer を空にする。
+    ///
+    /// 例: 「sh」を typing 後 backspace で「し」を削除する場合、engine が
+    /// preedit kana から「し」を pop した後、本 method で「sh」も clear する。
+    /// 既に空なら no-op。
+    ///
+    /// 参照: spec `2026-05-02-p3-a-ibus-engine-design.md` §12.1。
+    /// engine 側は kana buffer (current_preedit) の責務、本 converter 側は
+    /// romaji buffer の責務という Single Responsibility 分離を前提とした
+    /// 同期 API(ISSUE #118)。
+    ///
+    /// 名前について: 既存 [`Self::reset`] と機能的に等価だが、engine 統合
+    /// 側で `preedit.pop()` と並ぶ「pending を reset する」semantic を明示
+    /// するために別名で公開する。後方互換のため [`Self::reset`] は残す。
+    ///
+    /// # Postconditions
+    /// - The pending buffer is empty.
+    pub fn reset_pending(&mut self) {
+        self.machine.reset();
+    }
+
     /// Normalizes the pending buffer into a stable form and returns any
     /// salvaged kana as an owned `String`.
     ///
@@ -376,6 +397,45 @@ mod tests {
         c.reset();
         // After reset, pushing 'a' commits 'あ' not 'か'.
         assert_eq!(c.push('a'), ConvertStep::Committed(Cow::Borrowed("あ")));
+    }
+
+    #[test]
+    fn reset_pending_clears_sh_buffer() {
+        // ISSUE #118 / Phase 3-A spec §12.1 acceptance case 1:
+        // 「sh」pending 中の reset_pending() で buffer が空になり、
+        // 後続 char が独立判定される(本来 "shi" で「し」になるはずが、
+        // reset 後の 'i' は単独で「い」として commit される)。
+        let mut c = RomajiConverter::new();
+        assert_eq!(c.push('s'), ConvertStep::Pending);
+        assert_eq!(c.push('h'), ConvertStep::Pending);
+        c.reset_pending();
+        assert_eq!(c.push('i'), ConvertStep::Committed(Cow::Borrowed("い")));
+    }
+
+    #[test]
+    fn reset_pending_on_empty_buffer_is_noop() {
+        // ISSUE #118 acceptance case 2: 空 buffer に対する reset_pending は
+        // no-op で、その後の通常 push が影響を受けない。
+        let mut c = RomajiConverter::new();
+        c.reset_pending();
+        c.reset_pending(); // 連続呼び出しでも無害
+        assert_eq!(c.push('a'), ConvertStep::Committed(Cow::Borrowed("あ")));
+        assert_eq!(c.flush(), "");
+    }
+
+    #[test]
+    fn reset_pending_makes_next_char_independent() {
+        // ISSUE #118 acceptance case 3: reset_pending() 後の新 char 入力は
+        // 独立判定される。「sh」pending → reset → 'a' を push したとき、
+        // 「sha」期待(=「しゃ」)ではなく単独「あ」として commit されること
+        // を確認する。
+        let mut c = RomajiConverter::new();
+        let _ = c.push('s');
+        let _ = c.push('h');
+        c.reset_pending();
+        assert_eq!(c.push('a'), ConvertStep::Committed(Cow::Borrowed("あ")));
+        // pending も残っていないこと(flush で残骸が出ない)
+        assert_eq!(c.flush(), "");
     }
 
     #[test]
