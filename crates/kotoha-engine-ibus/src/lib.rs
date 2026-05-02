@@ -18,8 +18,12 @@
 //! は host 非依存のため、core 側に IBus 識別子を漏らさない(spec §3.1 / Adaptive
 //! boundary-first 原則)。
 
+pub mod dispatcher;
 pub mod host_bridge;
+pub mod keysym;
 pub mod lookup_table;
+pub mod proxy;
 
+pub use dispatcher::IBusEventDispatcher;
 pub use host_bridge::IBusHostBridge;
 pub use lookup_table::LookupTable;
