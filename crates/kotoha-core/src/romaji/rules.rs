@@ -204,13 +204,13 @@ pub(crate) const RULES: &[(&str, &str)] = &[
     ("fyo", "ふょ"),
     // Loanword "th-" (English) → て + small-vowel: ティーチ / テューバ etc.
     // Convention adopted by MS-IME / Google IME / Mozc.
-    ("tha", "てぁ"),
+    ("tha", "てゃ"),
     ("thi", "てぃ"),
     ("thu", "てゅ"),
     ("the", "てぇ"),
     ("tho", "てょ"),
     // Loanword "dh-" (English voiced) → で + small-vowel: ディスク etc.
-    ("dha", "でぁ"),
+    ("dha", "でゃ"),
     ("dhi", "でぃ"),
     ("dhu", "でゅ"),
     ("dhe", "でぇ"),
