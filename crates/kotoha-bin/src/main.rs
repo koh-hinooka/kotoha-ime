@@ -7,17 +7,19 @@
 //! 3. DB 配置 path 解決(`kotoha-storage::path::resolve_data_dir`)
 //! 4. `Database::open` で SQLite 接続
 //! 5. `SqliteUserVocabStore` / `SqliteLearningCacheStore` 構築
-//! 6. `MorphologicalEngine` / LLM backend 構築(本 PR は Stub で wiring 確立)
-//! 7. `HybridRanker::new(...).with_llm(llm)`
+//! 6. `MorphologicalEngine` を SudachiDict-core から構築
+//!    (env var `KOTOHA_SYSTEM_DICT_PATH`、未設定時は `StubRanker` fallback)
+//! 7. `HybridRanker::new(sudachi, user_vocab, learning)` を構築
+//!    (LLM 統合は Phase 3-B B2+ で詳細化、現段階では dict-only)
 //! 8. `IBusHostBridge::new(object_path)` で session bus 接続
+//!    (失敗時は `StubHostBridge` fallback)
 //! 9. `KotohaEngine::new(host, ranker, learning_writer)`
 //! 10. `IBusEventDispatcher::new(engine)` で event loop 起動 stub
 //!
 //! 実 D-Bus event loop(`zbus::blocking::MessageStream` 経由の signal
-//! receive + dispatch)は spec §13 Open Q 9 通り Phase 3-A 実装段階で
-//! empirical に詳細化する。本 binary は **DI sequence + tracing log で
-//! 起動確認可能な状態** を成果物とする。
+//! receive + dispatch)は Phase 3-B B3 / spec §13 Open Q 9 で詳細化する。
 
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -28,6 +30,7 @@ mod host_detect;
 
 const ENGINE_OBJECT_PATH: &str = "/org/freedesktop/IBus/Engine/Kotoha";
 const KOTOHA_LOG_ENV: &str = "KOTOHA_LOG";
+const KOTOHA_SYSTEM_DICT_PATH_ENV: &str = "KOTOHA_SYSTEM_DICT_PATH";
 
 fn main() -> anyhow::Result<()> {
     init_tracing();
@@ -54,16 +57,28 @@ fn run_ibus() -> anyhow::Result<()> {
     let db = kotoha_storage::database::Database::open(&db_path).context("open kotoha.db")?;
 
     // 5. stores
-    let _user_vocab_store = Arc::new(kotoha_storage::user_vocab::SqliteUserVocabStore::new(
+    let user_vocab_store = Arc::new(kotoha_storage::user_vocab::SqliteUserVocabStore::new(
         db.clone(),
     ));
     let learning_store =
         Arc::new(kotoha_storage::learning_cache::SqliteLearningCacheStore::new(db.clone()));
 
-    // 6 + 7. Ranker (P3-A M6 では DI sequence 確立に focus、
-    // production の MorphologicalEngine / LLM 統合は L3 manual smoke 段階で
-    // 詰める。本段階では `StubRanker` を暫定で構築)。
-    let ranker: Arc<dyn kotoha_engine_core::Ranker> = Arc::new(StubRanker);
+    // 6 + 7. Ranker: SudachiDict-core を env var 経由で読み、HybridRanker を構築する。
+    // dict path 未設定 / load 失敗 / その他事故では StubRanker fallback で起動を続行
+    // (development / CI 環境での起動可能性を担保、production は env var 設定必須)。
+    let ranker: Arc<dyn kotoha_engine_core::Ranker> = match build_hybrid_ranker(
+        user_vocab_store.clone(),
+        learning_store.clone(),
+    ) {
+        Ok(r) => {
+            tracing::info!("HybridRanker constructed (dict-only path; LLM is Phase 3-B B2+)");
+            r
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to construct HybridRanker; falling back to StubRanker");
+            Arc::new(StubRanker)
+        }
+    };
 
     // 8. host bridge: session bus 接続。失敗時は stub に fallback して engine
     // 自体は起動可能にする(L3 manual smoke 段階で実 IBus 接続を検証)。
@@ -82,14 +97,31 @@ fn run_ibus() -> anyhow::Result<()> {
     // 10. dispatcher (event loop stub)
     let _dispatcher = kotoha_engine_ibus::IBusEventDispatcher::new(engine);
 
-    tracing::info!("kotoha engine wired up; event loop deferred to Phase 3-A L3 manual smoke");
+    tracing::info!("kotoha engine wired up; event loop deferred to Phase 3-B B3");
     Ok(())
 }
 
-/// 暫定 stub ranker(P3-A M6 段階)。
+/// `HybridRanker` を構築する production helper。
 ///
-/// Phase 3-A 実装段階で実 `HybridRanker::new(SudachiAdapter, ...)` に置換される。
-/// 本 stub は `rank()` 内で何も送らず、空候補で完結する Ranker として動く。
+/// SudachiDict-core を env var `KOTOHA_SYSTEM_DICT_PATH` から読み込み、
+/// 失敗時は `Err` で fallback path に return する。LLM backend は Phase 3-B
+/// B2+ で feature gate 付きで追加する。
+fn build_hybrid_ranker(
+    user_vocab: Arc<kotoha_storage::user_vocab::SqliteUserVocabStore>,
+    learning_cache: Arc<kotoha_storage::learning_cache::SqliteLearningCacheStore>,
+) -> anyhow::Result<Arc<dyn kotoha_engine_core::Ranker>> {
+    let dict_path: PathBuf = std::env::var(KOTOHA_SYSTEM_DICT_PATH_ENV)
+        .map(PathBuf::from)
+        .with_context(|| {
+            format!("env var {KOTOHA_SYSTEM_DICT_PATH_ENV} is required for HybridRanker")
+        })?;
+    let sudachi = kotoha_core::dict::load_morphological_engine(&dict_path)
+        .with_context(|| format!("load SudachiDict from {}", dict_path.display()))?;
+    let ranker = kotoha_engine_core::HybridRanker::new(sudachi, user_vocab, learning_cache);
+    Ok(Arc::new(ranker))
+}
+
+/// 暫定 stub ranker(env var 未設定 / Sudachi load 失敗時の fallback)。
 struct StubRanker;
 
 impl kotoha_engine_core::Ranker for StubRanker {
