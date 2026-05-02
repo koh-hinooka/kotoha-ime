@@ -21,8 +21,10 @@ use crate::key_event::{KeyEvent, KeyEventResult};
 use crate::ranker::{CandidateUpdate, ConversionContext, ConversionMode, Ranker};
 
 mod commit_history;
+mod event;
 #[doc(hidden)]
 pub mod transitions;
+mod worker;
 
 pub use commit_history::CommitHistory;
 
@@ -41,11 +43,10 @@ pub enum EngineState {
 
 /// In-flight RankRequest の handle(`active_request` field 用、spec §7.1)。
 ///
-/// `id` field は M3 で `RankerWorker` の `request_id` mismatch discard
-/// (spec §7.5)に使う。M2 段階では同期 Ranker のため引数 path 上で
-/// 検査済みだが、API 互換のため field を確保する。
+/// `id` field は `RankerWorker` の `request_id` mismatch discard(spec §7.5)で
+/// engine 主 thread side の safety net として `EngineEvent::Candidates` の
+/// `request_id` と照合する。
 pub(crate) struct RequestHandle {
-    #[allow(dead_code)]
     pub(crate) id: u64,
     pub(crate) cancel_token: Arc<StdCancellationToken>,
 }
@@ -77,6 +78,12 @@ pub struct KotohaEngine {
     pub(crate) last_commit_at: Instant,
     pub(crate) enabled: bool,
     pub(crate) focused: bool,
+    /// `RankerWorker` 主 thread への request 送信 channel。
+    pub(crate) tx_request: mpsc::Sender<event::RankRequest>,
+    /// `RankerWorker` から engine 主 thread への event 受信 channel。
+    pub(crate) rx_event: mpsc::Receiver<event::EngineEvent>,
+    /// Worker thread join handle(`Drop` impl で best-effort 終了)。
+    pub(crate) worker_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl KotohaEngine {
@@ -92,6 +99,7 @@ impl KotohaEngine {
         ranker: Arc<dyn Ranker>,
         learning_writer: Arc<dyn kotoha_storage::learning_cache::LearningCacheWriter>,
     ) -> Self {
+        let (tx_request, rx_event, worker_handle) = worker::spawn_worker();
         Self {
             state: EngineState::Idle,
             host,
@@ -107,6 +115,9 @@ impl KotohaEngine {
             last_commit_at: Instant::now(),
             enabled: false,
             focused: false,
+            tx_request,
+            rx_event,
+            worker_handle: Some(worker_handle),
         }
     }
 
@@ -123,9 +134,14 @@ impl KotohaEngine {
         }
     }
 
-    /// Live or Commit mode の RankRequest を発行し、active_request を更新する。
-    /// M2 段階では同期的に Ranker を呼び、即時受信した `RankerOutput` を
-    /// engine の `candidates` に反映する(M3 で background thread 化する)。
+    /// Live or Commit mode の RankRequest を発行し、`active_request` を更新する。
+    ///
+    /// 本 method は M3 段階で `RankerWorker` 背景 thread に dispatch し、
+    /// 第 1 候補 batch が `coalescing window + safety` 以内に到着するまで
+    /// blocking で待機する。Commit mode の second window(LLM 後続結果)は
+    /// 後続 `process_key_event` 呼び出しの先頭で `drain_pending_events()`
+    /// が拾う設計で、本 method 内では待機しない(M3 簡略化、Phase 3-A
+    /// 実装段階で擾乱検出して再評価)。
     pub(crate) fn dispatch_rank_request(&mut self, mode: ConversionMode) {
         let request_id = self.next_request_id();
         let cancel_token = Arc::new(StdCancellationToken::new());
@@ -139,22 +155,67 @@ impl KotohaEngine {
             cancel_token: cancel_token.clone(),
         });
 
-        let (tx, rx) = mpsc::channel();
-        let cancel_dyn: Arc<dyn CancellationToken> = cancel_token;
-        let _ = self
-            .ranker
-            .rank(&self.current_preedit, &ctx, cancel_dyn, tx);
+        let req = event::RankRequest {
+            request_id,
+            kana: self.current_preedit.clone(),
+            ctx,
+            cancel_token,
+            ranker: self.ranker.clone(),
+        };
+        if self.tx_request.send(req).is_err() {
+            tracing::error!("ranker worker channel closed; engine will degrade");
+            return;
+        }
 
-        // sink から候補を drain し engine の candidates を更新。
-        // M2 では MockRanker の同期 send + drop を前提とするため、最初の
-        // recv_timeout で Ok 受信、第 2 回で Disconnected で抜ける。
-        // 50ms timeout は MockRanker での通常 path では発火せず、安全網として残す。
+        // 第 1 候補 batch を待つ。
+        // safety margin: thread 起動 + Ranker.rank 同期 path + worker 処理。
+        let max_wait = match mode {
+            ConversionMode::Live => worker::LIVE_WINDOW + Duration::from_millis(5),
+            ConversionMode::Commit => worker::COMMIT_WINDOW + Duration::from_millis(5),
+        };
         self.candidates.clear();
-        while let Ok(out) = rx.recv_timeout(Duration::from_millis(50)) {
-            if out.request_id != 0 && out.request_id != request_id {
-                continue;
+        self.drain_events_blocking(max_wait, request_id);
+    }
+
+    /// `rx_event` から最大 `max_wait` まで待ち、第 1 Candidates(target_id 一致)を
+    /// engine state に反映して return する。WorkerError は `tracing::error!` を
+    /// 残し loop 継続。recv 失敗 / mismatch は無視 + skip。
+    pub(crate) fn drain_events_blocking(&mut self, max_wait: Duration, target_id: u64) {
+        let deadline = Instant::now() + max_wait;
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match self.rx_event.recv_timeout(remaining) {
+                Ok(event::EngineEvent::Candidates { request_id, update }) => {
+                    if request_id != target_id {
+                        continue;
+                    }
+                    self.apply_candidate_update(update);
+                    return;
+                }
+                Ok(event::EngineEvent::WorkerError { request_id, error }) => {
+                    tracing::error!(request_id, error, "ranker worker error");
+                }
+                Err(_) => return,
             }
-            self.apply_candidate_update(out.update);
+        }
+    }
+
+    /// `rx_event` に蓄積されている event を非 blocking で全 drain する
+    /// (`process_key_event` 先頭で呼び出し、Commit mode second window で
+    /// 到着した LLM 結果等を反映する)。
+    pub(crate) fn drain_pending_events(&mut self) {
+        let active_id = self.active_request.as_ref().map(|h| h.id);
+        while let Ok(ev) = self.rx_event.try_recv() {
+            match ev {
+                event::EngineEvent::Candidates { request_id, update } => {
+                    if active_id != Some(request_id) {
+                        continue; // mismatch discard
+                    }
+                    self.apply_candidate_update(update);
+                }
+                event::EngineEvent::WorkerError { request_id, error } => {
+                    tracing::error!(request_id, error, "ranker worker error");
+                }
+            }
         }
     }
 
@@ -190,6 +251,8 @@ impl IMEEngine for KotohaEngine {
         if !self.enabled || !self.focused {
             return KeyEventResult::Forwarded;
         }
+        // Commit mode second window などで遅延到着した event を最初に取り込む。
+        self.drain_pending_events();
         transitions::dispatch_key(self, key)
     }
 
@@ -239,6 +302,22 @@ impl IMEEngine for KotohaEngine {
         self.host.update_preedit("", 0, false);
         self.state = EngineState::Idle;
         self.enabled = false;
+    }
+}
+
+impl Drop for KotohaEngine {
+    /// `tx_request` を drop することで worker thread が `recv() == Err` を
+    /// 検出して loop を抜ける。worker は best-effort で join する(blocking
+    /// したくないため、separate thread で待機し、main thread は即時 return)。
+    fn drop(&mut self) {
+        if let Some(h) = self.worker_handle.take() {
+            std::thread::Builder::new()
+                .name("kotoha-ranker-worker-joiner".into())
+                .spawn(move || {
+                    let _ = h.join();
+                })
+                .ok();
+        }
     }
 }
 
