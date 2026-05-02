@@ -31,3 +31,14 @@ kotoha-storage = { path = "../kotoha-storage" }
 default = []
 # Mock backends / fixtures for cross-crate test injection. M2 以降で需要 surface。
 test-helpers = []
+# `mock-backend` は kotoha-core::kanji::MockBackend を pull する pass-through。
+# M3 で `tests/hybrid_ranker_llm.rs` が `Arc<dyn KanjiBackend + Send + Sync>`
+# 経由で MockBackend を `with_llm()` builder に注入するため必要。
+mock-backend = ["kotoha-core/mock-backend"]
+# `llama-cpp` は kotoha-core::kanji::llama_cpp::LlamaCppBackend を pull する
+# pass-through。lefthook pre-push の default features では feature off のため、
+# llama.cpp C++ build は走らない。
+llama-cpp = ["kotoha-core/llama-cpp"]
+# `llama-cpp-smoke` は Layer 3 live-inference smoke test の opt-in gate。
+# `regression_phase1.rs` の `mod smoke` は本 feature 有効時のみ compile される。
+llama-cpp-smoke = ["kotoha-core/llama-cpp-smoke"]
