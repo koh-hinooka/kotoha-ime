@@ -22,5 +22,6 @@ pub mod ranker;
 
 pub use cancel::{CancellationToken, StdCancellationToken};
 pub use ranker::{
-    CandidateUpdate, ConversionContext, ConversionMode, Ranker, RankerError, RankerOutput,
+    CandidateUpdate, ConversionContext, ConversionMode, HybridRanker, Ranker, RankerError,
+    RankerOutput,
 };

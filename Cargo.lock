@@ -578,7 +578,9 @@ name = "kotoha-engine-core"
 version = "0.1.0"
 dependencies = [
  "kotoha-core",
+ "kotoha-storage",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
