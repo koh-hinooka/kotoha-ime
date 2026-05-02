@@ -9,9 +9,36 @@
 //! 抽象化する(Clean Architecture DIP、spec §4.2)。
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub use self::backend::DictionaryBackend;
 pub use self::engine::{EngineCandidate, MorphologicalEngine};
+
+/// Production Send+Sync `MorphologicalEngine` を SudachiDict-core から構築する。
+///
+/// Phase 3-B B1(2026-05-03、ISSUE #136)で追加。kotoha-bin が `HybridRanker`
+/// を構築する際の sudachi backend を生成する単一 entry point。
+///
+/// # Preconditions
+///
+/// - `system_dict_path` は SudachiDict-core の `system_core.dic` を指す
+/// - 拡張子は `.dic`、size は SYSTEM_DICT_MAX_BYTES 以下(P2-A hardening 規約)
+///
+/// # Postconditions
+///
+/// - 戻り値は `Arc<dyn MorphologicalEngine + Send + Sync>`
+///   (`HybridRanker::new` の sudachi backend 引数として直接利用可能)
+///
+/// # Errors
+///
+/// - [`KanjiError::ModelNotFound`] / [`KanjiError::Backend`] /
+///   [`KanjiError::ModelLoadFailed`] — `SudachiAdapter::load` と同じ条件で発生する
+pub fn load_morphological_engine(
+    system_dict_path: &Path,
+) -> Result<Arc<dyn MorphologicalEngine + Send + Sync>, crate::kanji::KanjiError> {
+    let adapter = sudachi_adapter::SudachiAdapter::load(system_dict_path)?;
+    Ok(Arc::new(adapter))
+}
 #[cfg(feature = "dict-persist")]
 pub use self::user_vocab::UserVocab;
 pub use self::vocab::{VocabEntry, VocabularyLookup};
