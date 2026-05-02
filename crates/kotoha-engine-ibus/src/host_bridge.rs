@@ -1,61 +1,75 @@
-//! `IBusHostBridge` — `IMEHostBridge` の IBus 1.x 実装。
+//! `IBusHostBridge` — `IMEHostBridge` の IBus 1.x 実装(zbus binding 版)。
 //!
 //! Phase 3-A spec §4.2 / §3.3 全体図に対応する driven port adapter。
-//! 本 PR (M4) では D-Bus call は `tracing::trace!` で stub し、
-//! `Mutex<Vec<Candidate>>` 内部 buffer の coalesce logic を確定させる。
-//! M5 で zbus `Proxy` 経由で IBus engine interface に結線する。
+//! M5 で zbus `Connection` 経由で IBus engine interface に接続する。
+//! signal body 詳細は spec §13 Open Q 9 通り Phase 3-A 実装段階で
+//! empirical に詰める。
 
 use kotoha_engine_core::{CandidateUpdate, IMEHostBridge};
 
 use crate::lookup_table::LookupTable;
+use crate::proxy::IBusEngineSignals;
 
 /// IBus 1.x host(`org.freedesktop.IBus.Engine` interface)への呼び出し adapter。
 ///
 /// # Construction
 ///
-/// M4 段階では `LookupTable` + `tracing::trace!` stub のみ。
-/// M5 で zbus `Connection` / object path を field 追加する。
+/// [`Self::new`] で session bus 接続 + engine object path を保持する。
 ///
 /// # Thread safety
 ///
 /// `Send + Sync`(spec §4.2)。`LookupTable` 内部 `Mutex` で coalesce、
-/// `tracing` macro は thread-safe。
-#[derive(Debug, Default)]
+/// zbus `Connection` は内部で `Arc` 共有のため複数 thread から呼び出し可能。
 pub struct IBusHostBridge {
     lookup_table: LookupTable,
+    signals: IBusEngineSignals,
 }
 
 impl IBusHostBridge {
-    pub fn new() -> Self {
-        Self {
+    /// session bus + engine object path で adapter を構築する。
+    ///
+    /// # Errors
+    ///
+    /// - zbus connection 確立失敗(`DBUS_SESSION_BUS_ADDRESS` 不設定等)
+    /// - object_path 不正(D-Bus path syntax 違反)
+    pub fn new(object_path: &str) -> zbus::Result<Self> {
+        Ok(Self {
             lookup_table: LookupTable::new(),
-        }
+            signals: IBusEngineSignals::new(object_path)?,
+        })
     }
 }
 
 impl IMEHostBridge for IBusHostBridge {
     fn update_preedit(&self, text: &str, cursor: usize, visible: bool) {
-        // M5 で zbus.Proxy::call("UpdatePreeditText", ...) に置換。
-        tracing::trace!(text, cursor, visible, "IBus update_preedit (stub)");
+        if let Err(e) = self.signals.update_preedit(text, cursor as u32, visible) {
+            tracing::warn!(error = %e, "IBus update_preedit failed");
+        }
     }
 
     fn commit_text(&self, text: &str) {
-        tracing::trace!(text, "IBus commit_text (stub)");
+        if let Err(e) = self.signals.commit_text(text) {
+            tracing::warn!(error = %e, "IBus commit_text failed");
+        }
     }
 
     fn update_candidates(&self, update: CandidateUpdate) {
         let merged = self.lookup_table.apply(update);
-        tracing::trace!(
-            count = merged.len(),
-            "IBus update_lookup_table (stub, coalesced)"
-        );
+        let visible = !merged.is_empty();
+        if let Err(e) = self.signals.update_lookup_table(&merged, visible) {
+            tracing::warn!(error = %e, "IBus update_lookup_table failed");
+        }
     }
 
     fn show_candidate_window(&self) {
-        tracing::trace!("IBus show_lookup_table (stub)");
+        if let Err(e) = self.signals.show_lookup_table() {
+            tracing::warn!(error = %e, "IBus show_lookup_table failed");
+        }
     }
 
     fn hide_candidate_window(&self) {
-        tracing::trace!("IBus hide_lookup_table (stub)");
+        if let Err(e) = self.signals.hide_lookup_table() {
+            tracing::warn!(error = %e, "IBus hide_lookup_table failed");
+        }
     }
 }
