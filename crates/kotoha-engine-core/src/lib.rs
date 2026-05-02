@@ -20,6 +20,7 @@
 //! Milestone 2 / 3 で追加する。
 
 pub mod cancel;
+pub mod engine;
 pub mod host_bridge;
 pub mod ime_engine;
 pub mod key_event;
@@ -29,6 +30,7 @@ pub mod ranker;
 pub mod testing;
 
 pub use cancel::{CancellationToken, StdCancellationToken};
+pub use engine::{CommitHistory, EngineState, KotohaEngine};
 pub use host_bridge::IMEHostBridge;
 pub use ime_engine::IMEEngine;
 pub use key_event::{KeyEvent, KeyEventResult, KeyModifiers};
