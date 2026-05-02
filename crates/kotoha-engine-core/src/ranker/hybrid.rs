@@ -105,13 +105,16 @@ impl HybridRanker {
 
 impl Ranker for HybridRanker {
     /// 並列 backend 呼び出しは `std::thread::spawn` で行い、`rank()` は同期 return する
-    /// (Phase 3-A spec §4.3 contract)。`cancel.is_cancelled()` を以下の **4 phase** で
-    /// 観測し、true ならば以降の sink push を停止する:
+    /// (Phase 3-A spec §4.3 contract)。`cancel.is_cancelled()` を以下の **5 観測点** で
+    /// check し、true ならば以降の sink push を停止する。spec §4.3 で要求される 4 phase
+    /// (entry / dict 完了後 / LLM 前 / LLM 後)に加え、M2 既存の dict-stage send 直前
+    /// guard を保持しているため計 5 観測点となる:
     ///
-    /// 1. entry — thread 起動直後
-    /// 2. dict backends 完了直後
-    /// 3. LLM convert 呼び出し直前
-    /// 4. LLM convert 完了直後
+    /// 1. **entry** — thread 起動直後(spec phase 1)
+    /// 2. **dict 完了後** — SudachiDict / UserVocab / LearningCache の並列実行完了直後(spec phase 2)
+    /// 3. **dict-stage send 直前**(M2 互換 guard、redundant だが 1 段目 send の最終 gate)
+    /// 4. **LLM 前** — `KanjiBackend::convert` 呼び出し直前(spec phase 3)
+    /// 5. **LLM 後** — `convert()` 完了直後の send 前 gate(spec phase 4)
     ///
     /// SudachiDict / UserVocab / LearningCache は μs オーダーで完結するため backend
     /// 個別の token 確認は行わない(spec §4.3 動作モデル)。LLM convert の token-level

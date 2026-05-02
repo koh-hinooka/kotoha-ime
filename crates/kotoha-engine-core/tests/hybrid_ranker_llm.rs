@@ -24,6 +24,7 @@
 
 #![cfg(feature = "mock-backend")]
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -62,7 +63,25 @@ impl MorphologicalEngine for StubEngine {
 /// 側に追加する案も検討したが、production surface(`pub use mock::MockBackend`)
 /// に test-only API を漏らすコストが大きいため、本 test ファイルに局所 impl を
 /// 置く方を採用した(`FailingBackend` は本ファイル外に export しない)。
-struct FailingBackend;
+///
+/// `convert()` の呼び出し回数を `Arc<AtomicUsize>` で公開し、test 側で「実際に
+/// 呼ばれた事実」を直接観測する(theater pattern 防止、Kotoha
+/// `feedback_test_theater_pattern.md` 準拠)。
+struct FailingBackend {
+    call_count: Arc<AtomicUsize>,
+}
+
+impl FailingBackend {
+    fn new() -> (Self, Arc<AtomicUsize>) {
+        let count = Arc::new(AtomicUsize::new(0));
+        (
+            Self {
+                call_count: count.clone(),
+            },
+            count,
+        )
+    }
+}
 
 impl KanjiBackend for FailingBackend {
     fn model_id(&self) -> &str {
@@ -74,9 +93,44 @@ impl KanjiBackend for FailingBackend {
         _input: &str,
         _options: &ConvertOptions,
     ) -> Result<Vec<Candidate>, KanjiError> {
+        self.call_count.fetch_add(1, Ordering::SeqCst);
         Err(KanjiError::Backend {
             reason: "FailingBackend always fails (test stub)".into(),
         })
+    }
+}
+
+/// 呼び出し回数を観測可能な MockBackend wrapper。cancel test で「LLM が呼ばれて
+/// いない」事実を直接観測するため(theater pattern 防止)。
+///
+/// MockBackend が public API として返すのと同じ deterministic fixture を委譲で
+/// 通しつつ、call_count を内部 `Arc<AtomicUsize>` で expose する。
+struct CountingMockBackend {
+    inner: MockBackend,
+    call_count: Arc<AtomicUsize>,
+}
+
+impl CountingMockBackend {
+    fn new() -> (Self, Arc<AtomicUsize>) {
+        let count = Arc::new(AtomicUsize::new(0));
+        (
+            Self {
+                inner: MockBackend::new(),
+                call_count: count.clone(),
+            },
+            count,
+        )
+    }
+}
+
+impl KanjiBackend for CountingMockBackend {
+    fn model_id(&self) -> &str {
+        self.inner.model_id()
+    }
+
+    fn convert(&self, input: &str, options: &ConvertOptions) -> Result<Vec<Candidate>, KanjiError> {
+        self.call_count.fetch_add(1, Ordering::SeqCst);
+        self.inner.convert(input, options)
     }
 }
 
@@ -180,10 +234,12 @@ fn hybrid_ranker_with_llm_returns_combined_candidates_in_two_stages() {
 }
 
 /// 即時 cancel:`rank()` 起動前に cancel すると dict 段すら send されない
-/// (Phase 1: entry cancel check が effective)。
+/// (Phase 1: entry cancel check が effective)。LLM が **呼ばれていない事実**
+/// を call counter で直接観測する(theater pattern 防止)。
 #[test]
 fn hybrid_ranker_with_llm_respects_cancel_before_invocation() {
-    let llm: Arc<dyn KanjiBackend + Send + Sync> = Arc::new(MockBackend::new());
+    let (counting_llm, llm_call_count) = CountingMockBackend::new();
+    let llm: Arc<dyn KanjiBackend + Send + Sync> = Arc::new(counting_llm);
     let ranker = build_ranker_with_backend(nihongo_dict_candidates(), llm);
     let cancel = Arc::new(StdCancellationToken::new());
     let (tx, rx) = mpsc::channel();
@@ -201,13 +257,24 @@ fn hybrid_ranker_with_llm_respects_cancel_before_invocation() {
         res.is_err(),
         "expected timeout (no send after pre-cancel), got {res:?}"
     );
+
+    // theater pattern 防止:LLM convert が **一度も呼ばれていない** 事を直接観測
+    // (entry cancel check が pre-LLM phase より前に effective であることを担保)
+    assert_eq!(
+        llm_call_count.load(Ordering::SeqCst),
+        0,
+        "LLM convert must NOT have been invoked when cancel fires before rank()"
+    );
 }
 
 /// LLM 失敗 fallback:`KanjiBackend::convert` が `Err` を返した場合、
 /// dict 段(1 段目)のみ push し、2 段目は **送らない**(graceful degradation)。
+/// FailingBackend が **実際に呼ばれた事実** を call counter で直接観測する
+/// (theater pattern 防止)。
 #[test]
 fn hybrid_ranker_llm_failure_falls_back_to_dict_only() {
-    let llm: Arc<dyn KanjiBackend + Send + Sync> = Arc::new(FailingBackend);
+    let (failing, llm_call_count) = FailingBackend::new();
+    let llm: Arc<dyn KanjiBackend + Send + Sync> = Arc::new(failing);
     let ranker = build_ranker_with_backend(nihongo_dict_candidates(), llm);
     let cancel = Arc::new(StdCancellationToken::new());
     let (tx, rx) = mpsc::channel();
@@ -236,5 +303,13 @@ fn hybrid_ranker_llm_failure_falls_back_to_dict_only() {
     assert!(
         res.is_err(),
         "expected no second send after LLM failure, got {res:?}"
+    );
+
+    // theater pattern 防止:FailingBackend が **実際に 1 回呼ばれた事実** を
+    // 直接観測(LLM path に到達せず fallback したケースと区別する)
+    assert_eq!(
+        llm_call_count.load(Ordering::SeqCst),
+        1,
+        "FailingBackend.convert() must have been invoked exactly once before fallback"
     );
 }
