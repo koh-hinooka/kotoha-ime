@@ -9,16 +9,13 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# M1 では trait + types 定義のみ。`kotoha-core`(Candidate type 参照)+ `thiserror`
+# (RankerError derive)のみを使う。`tracing` / `kotoha-storage` / `proptest` /
+# `serial_test` は M2 以降で実需が surface した PR で追加する(YAGNI)。
 thiserror = { workspace = true }
-tracing = { workspace = true }
 kotoha-core = { path = "../kotoha-core" }
-kotoha-storage = { path = "../kotoha-storage" }
-
-[dev-dependencies]
-proptest = { workspace = true }
-serial_test = { workspace = true }
 
 [features]
 default = []
-# Mock backends / fixtures for cross-crate test injection.
+# Mock backends / fixtures for cross-crate test injection. M2 以降で需要 surface。
 test-helpers = []

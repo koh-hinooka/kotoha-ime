@@ -1,14 +1,18 @@
 //! `StdCancellationToken` — std::sync ベースの `CancellationToken` impl。
 //!
 //! Phase 3-A spec §4.4 で凍結された自作 trait の Phase 3-A 初期 impl。
-//! `Arc<AtomicBool>` + `(Mutex, Condvar)` ペアで cancel signal の永続化と
+//! `Arc<AtomicBool>` + `Mutex<Vec<Waker>>` で cancel signal の永続化と async
 //! future 待機を実装する。`Mutex` poison は kotoha-storage で確立した規約
 //! (PR #111、`unwrap_or_else(PoisonError::into_inner)`)を流用する。
+//!
+//! 同期 thread block-wait は現状 trait に含まれない(`cancelled() -> Future` のみ)
+//! ため `Condvar` は配置しない。将来 sync wait API を追加する場合に Condvar 復活と
+//! `wait_blocking()` method を同時導入する。
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll, Waker};
 
 use super::CancellationToken;
@@ -22,7 +26,6 @@ pub struct StdCancellationToken {
 struct Inner {
     flag: AtomicBool,
     notify: Mutex<Vec<Waker>>,
-    condvar: Condvar,
 }
 
 impl StdCancellationToken {
@@ -32,7 +35,6 @@ impl StdCancellationToken {
             inner: Arc::new(Inner {
                 flag: AtomicBool::new(false),
                 notify: Mutex::new(Vec::new()),
-                condvar: Condvar::new(),
             }),
         }
     }
@@ -56,8 +58,6 @@ impl CancellationToken for StdCancellationToken {
         for waker in wakers.drain(..) {
             waker.wake();
         }
-        // sync 経由(`Condvar::wait`)で待機しているスレッドを起こす
-        self.inner.condvar.notify_all();
     }
 
     fn is_cancelled(&self) -> bool {
