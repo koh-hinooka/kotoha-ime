@@ -57,9 +57,10 @@ pub fn weight_for(source: CandidateSource) -> f32 {
 ///
 /// # Phase 2 spec §3.3 ref
 ///
-/// 「同一 surface が両方で hit した場合は User 側の score を優先する」を実現するため、
-/// UserVocab 由来の候補は `Dict` source として扱い、SudachiDict 由来より先に挿入されると
-/// max-score 採用で勝つ前提で順序を制御する。
+/// 「同一 surface が両方で hit した場合は User 側の score を優先する」を実現する設計だが、
+/// 本関数の dedupe は max-score 採用(`BTreeMap::and_modify` + `.max()`)で commutative であり、
+/// **挿入順は結果に影響しない**。User 側の score が SudachiDict 由来より高ければ自然に勝つ。
+/// caller は UserVocab 由来 entry の score を意図的に高く付けて呼ぶ前提とする。
 ///
 /// # Preconditions
 ///
@@ -131,7 +132,8 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].surface, "琴葉");
         // weighted: dict=-2.0+0.95=-1.05, llm=-1.0+1.0=0.0 → llm 勝ち
-        assert!((merged[0].score - 0.0).abs() < 1e-5);
+        // 厳密比較(plan template の f32::EPSILON 採用、score 加算 1 段で誤差は最小)
+        assert!((merged[0].score - 0.0).abs() < f32::EPSILON);
     }
 
     /// spec §3.3: CacheHit bonus が該当 surface に加算される

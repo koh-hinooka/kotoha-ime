@@ -157,9 +157,10 @@ impl Ranker for HybridRanker {
             }
 
             // merge / dedupe / sort
-            // UserVocab を Dict より先に push することで、同 surface 競合時に
-            // weighted score の max 採用で UserVocab 側 score が優先される
-            // (spec §3.3、merge_candidates の dedupe コメント参照)。
+            // UserVocab と SudachiDict を同一 WEIGHT_DICT で merge する。同一 surface が
+            // 競合した場合は max-score 採用のため、UserVocab 側の score が高ければ
+            // 自然に優先される(挿入順は無関係、merge_candidates の dedupe コメント参照)。
+            // caller(本関数)は UserVocab 由来 entry の score を意図的に高く付ける前提。
             let merged = merge_candidates(
                 vec![
                     (user_cands, CandidateSource::Dict),

@@ -93,8 +93,15 @@ fn build_ranker(
     (ranker, user_vocab, learning_cache)
 }
 
+/// **Stub-engine pass-through test, NOT a SudachiDict end-to-end test.**
+///
+/// 本 test は `HybridRanker::rank()` が stub engine から受け取った candidates を
+/// merge layer 経由で正しく sink まで pass-through することのみを検証する。
+/// SudachiDict 自体の lexicographic 正しさ(「ことは」→「言葉」「琴葉」収録)は
+/// 本 test では検証されず、`KOTOHA_SYSTEM_DICT_PATH` 経由の dict-smoke gated test
+/// (M3 / Phase 3-A 本番で追加予定、follow-up ISSUE 候補)で別途扱う。
 #[test]
-fn hybrid_ranker_returns_dict_candidates_for_known_kana() {
+fn hybrid_ranker_propagates_stub_engine_candidates_to_sink() {
     let (ranker, _uv, _lc) = build_ranker(kotoha_dict_candidates());
     let cancel = Arc::new(StdCancellationToken::new());
     let (tx, rx) = mpsc::channel();
@@ -112,9 +119,10 @@ fn hybrid_ranker_returns_dict_candidates_for_known_kana() {
         CandidateUpdate::Replace(cands) => {
             assert!(
                 !cands.is_empty(),
-                "expected at least 1 candidate from sudachi"
+                "expected at least 1 candidate from stub engine"
             );
-            // 「ことは」→ 「言葉」「琴葉」を含むこと(SudachiDict-equivalent stub)
+            // stub engine が返した「葉」を含む candidates が sink まで pass-through
+            // されることを確認(merge layer の transparent 動作の確認)。
             assert!(
                 cands.iter().any(|c| c.surface.contains("葉")),
                 "expected candidate containing 葉, got {cands:?}"
@@ -189,47 +197,68 @@ fn hybrid_ranker_reflects_user_vocab_priority() {
 
 #[test]
 fn hybrid_ranker_reflects_learning_cache_bonus() {
-    let (ranker, _uv, learning_cache) = build_ranker(kotoha_dict_candidates());
+    // Theater pattern 回避(spec compliance reviewer Issue 4 対応):
+    // 「上位 N 件に出る」だけだと alphabetical / 安定 sort の偶然で pass する可能性が
+    // あるため、本 test は **cache 有り / 無しの 2 回 rank を実行し、bonus 加算で
+    // 「琴葉」の score が +BONUS_CACHE_HIT 程度上がること** を直接観測する。
+    //
+    // raw score(stub):「言葉」=-1.5,「琴葉」=-2.0、両者とも WEIGHT_DICT(+0.95)
+    // - cache 無し:「言葉」=-0.55、「琴葉」=-1.05 → 「言葉」上位
+    // - cache 有り:「琴葉」=-1.05+0.5=-0.55、「言葉」=-0.55 → 同 score だが
+    //   「琴葉」は cache bonus を受けたことが score 値で確認可能
+    use kotoha_engine_core::ranker::merge::BONUS_CACHE_HIT;
 
-    // learning cache に「ことは → 琴葉」を 10 回 record する
-    // (frequency=10、最終 last_used_at=now)。merge 時は dict 由来「琴葉」候補
-    // (raw score=-2.0)に WEIGHT_DICT(+0.95)+ BONUS_CACHE_HIT(+0.5)で
-    // weighted=-0.55 となり、「言葉」(-1.5+0.95=-0.55)と tie だが、tie は
-    // dedupe key の BTreeMap insertion 順で安定する。明確な順位逆転を出すには
-    // record 回数を増やすが、本 test の主旨は「cache 由来 surface が top 3 に
-    // 含まれる」ことの担保なので 10 回で十分。
+    let (ranker_no_cache, _uv1, _lc1) = build_ranker(kotoha_dict_candidates());
+    let cancel1 = Arc::new(StdCancellationToken::new());
+    let (tx1, rx1) = mpsc::channel();
+    let ctx1 = ConversionContext::empty(ConversionMode::Commit);
+    ranker_no_cache
+        .rank("ことは", &ctx1, cancel1.clone(), tx1)
+        .expect("rank baseline");
+    let baseline = rx1
+        .recv_timeout(Duration::from_secs(5))
+        .expect("baseline response");
+
+    let baseline_kotoha_score = match baseline.update {
+        CandidateUpdate::Replace(ref cands) => cands
+            .iter()
+            .find(|c| c.surface == "琴葉")
+            .map(|c| c.score)
+            .expect("琴葉 in baseline"),
+        ref other => panic!("expected Replace, got {other:?}"),
+    };
+
+    // 第 2 ranker: learning_cache に「ことは → 琴葉」を 10 回 record
+    let (ranker_with_cache, _uv2, learning_cache) = build_ranker(kotoha_dict_candidates());
     for _ in 0..10 {
         learning_cache
             .record_choice("ことは", "琴葉")
             .expect("record cache hit");
     }
 
-    let cancel = Arc::new(StdCancellationToken::new());
-    let (tx, rx) = mpsc::channel();
-    let ctx = ConversionContext::empty(ConversionMode::Commit);
-    ranker
-        .rank("ことは", &ctx, cancel.clone(), tx)
-        .expect("rank should accept request");
-
-    let output = rx
+    let cancel2 = Arc::new(StdCancellationToken::new());
+    let (tx2, rx2) = mpsc::channel();
+    let ctx2 = ConversionContext::empty(ConversionMode::Commit);
+    ranker_with_cache
+        .rank("ことは", &ctx2, cancel2.clone(), tx2)
+        .expect("rank with cache");
+    let with_cache = rx2
         .recv_timeout(Duration::from_secs(5))
-        .expect("ranker should respond within 5s");
+        .expect("with-cache response");
 
-    match output.update {
-        CandidateUpdate::Replace(cands) => {
-            // 「琴葉」が cache hit bonus で top 3 に来ることを担保する
-            // (precise ordering は spec §11.4 Q5 で再評価予定のため緩く検証)。
-            let kotoha_idx = cands.iter().position(|c| c.surface == "琴葉");
-            assert!(
-                kotoha_idx.is_some(),
-                "expected 琴葉 in candidates, got {cands:?}"
-            );
-            let idx = kotoha_idx.unwrap();
-            assert!(
-                idx < 3,
-                "expected 琴葉 in top 3 due to cache bonus, got idx={idx}, cands={cands:?}"
-            );
-        }
-        other => panic!("expected Replace, got {other:?}"),
-    }
+    let with_cache_kotoha_score = match with_cache.update {
+        CandidateUpdate::Replace(ref cands) => cands
+            .iter()
+            .find(|c| c.surface == "琴葉")
+            .map(|c| c.score)
+            .expect("琴葉 in with-cache result"),
+        ref other => panic!("expected Replace, got {other:?}"),
+    };
+
+    // 直接観測:bonus 加算分の差が score 値に出ること
+    let delta = with_cache_kotoha_score - baseline_kotoha_score;
+    assert!(
+        (delta - BONUS_CACHE_HIT).abs() < 1e-5,
+        "expected cache bonus delta = {BONUS_CACHE_HIT}, got delta={delta} (baseline={baseline_kotoha_score}, with_cache={with_cache_kotoha_score})"
+    );
 }
