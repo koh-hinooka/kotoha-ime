@@ -12,6 +12,22 @@
 use crate::input::mode::{InputMode, ModeOrigin};
 use crate::romaji::{ConvertStep, RomajiConverter};
 
+/// Direct-mode buffer の memory cap(byte 単位)。本値を超える `input_char`
+/// 呼び出しは `InputStep::BufferFull` を返して reject される(spec §8 補足、
+/// ISSUE #39)。
+///
+/// # 値の根拠
+///
+/// 16 KiB は ASCII で約 16384 chars、4-byte UTF-8 で約 4096 chars に相当する。
+/// ISSUE #39 の suggestion「4096 chars」を memory-bounded 形に翻訳した値で、
+/// `String::len()` 経由 O(1) check が可能(`chars().count()` は O(n))。
+///
+/// # 解放契機
+///
+/// `commit()` / `cancel()` / `reset()` / 任意 transient → sticky 切替時に
+/// `direct_buffer` が clear され、本 cap も再リセットされる。
+pub const MAX_DIRECT_BUFFER_BYTES: usize = 16 * 1024;
+
 /// Per-char outcome of [`InputContext::input_char`].
 ///
 /// Marked `#[non_exhaustive]` so additional variants may be introduced in
@@ -27,6 +43,12 @@ pub enum InputStep {
     Committed(String),
     /// The char is outside the supported alphabet here and was discarded.
     Invalid(char),
+    /// The Direct-mode buffer has reached [`MAX_DIRECT_BUFFER_BYTES`] and the
+    /// supplied char was rejected (not pushed). The caller may call
+    /// [`InputContext::commit`] to drain the buffer and then retry the char.
+    /// Introduced for ISSUE #39 (defense in depth against unbounded buffer
+    /// growth from sustained `input_char` calls in Direct mode).
+    BufferFull(char),
 }
 
 /// Input mode state machine.
@@ -147,6 +169,9 @@ impl InputContext {
                 }
             }
             InputMode::Direct => {
+                if self.direct_buffer.len() + ch.len_utf8() > MAX_DIRECT_BUFFER_BYTES {
+                    return InputStep::BufferFull(ch);
+                }
                 self.direct_buffer.push(ch);
                 InputStep::Preedit
             }
@@ -488,5 +513,60 @@ mod tests {
         let b = InputContext::new();
         assert_eq!(a.mode(), b.mode());
         assert_eq!(a.preedit(), b.preedit());
+    }
+
+    // --- direct buffer cap (ISSUE #39) ---
+
+    #[test]
+    fn direct_buffer_accepts_chars_up_to_cap() {
+        let mut c = InputContext::new();
+        c.set_mode(InputMode::Direct);
+        // Push exactly MAX_DIRECT_BUFFER_BYTES ASCII chars (1 byte each).
+        for _ in 0..MAX_DIRECT_BUFFER_BYTES {
+            assert_eq!(c.input_char('x'), InputStep::Preedit);
+        }
+        assert_eq!(c.preedit().len(), MAX_DIRECT_BUFFER_BYTES);
+    }
+
+    #[test]
+    fn direct_buffer_rejects_char_at_cap_with_buffer_full() {
+        let mut c = InputContext::new();
+        c.set_mode(InputMode::Direct);
+        for _ in 0..MAX_DIRECT_BUFFER_BYTES {
+            let _ = c.input_char('a');
+        }
+        // Buffer is now full; the next char must be rejected verbatim.
+        assert_eq!(c.input_char('z'), InputStep::BufferFull('z'));
+        // Buffer length unchanged after the rejection.
+        assert_eq!(c.preedit().len(), MAX_DIRECT_BUFFER_BYTES);
+    }
+
+    #[test]
+    fn direct_buffer_rejects_multibyte_char_when_remaining_space_too_small() {
+        let mut c = InputContext::new();
+        c.set_mode(InputMode::Direct);
+        // Fill to MAX-1 bytes so a 2+ byte char would overflow.
+        for _ in 0..(MAX_DIRECT_BUFFER_BYTES - 1) {
+            let _ = c.input_char('a');
+        }
+        // 'あ' is 3-byte UTF-8 — does not fit in the remaining 1 byte slot.
+        assert_eq!(c.input_char('あ'), InputStep::BufferFull('あ'));
+        assert_eq!(c.preedit().len(), MAX_DIRECT_BUFFER_BYTES - 1);
+    }
+
+    #[test]
+    fn direct_buffer_recovers_after_commit_clears_buffer() {
+        let mut c = InputContext::new();
+        c.set_mode(InputMode::Direct);
+        for _ in 0..MAX_DIRECT_BUFFER_BYTES {
+            let _ = c.input_char('a');
+        }
+        assert_eq!(c.input_char('z'), InputStep::BufferFull('z'));
+        // Drain the buffer via commit.
+        let drained = c.commit();
+        assert_eq!(drained.len(), MAX_DIRECT_BUFFER_BYTES);
+        // After commit the cap is reset; the previously rejected char now fits.
+        assert_eq!(c.input_char('z'), InputStep::Preedit);
+        assert_eq!(c.preedit(), "z");
     }
 }

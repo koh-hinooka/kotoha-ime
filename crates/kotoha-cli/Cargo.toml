@@ -12,6 +12,7 @@ description = "Kotoha: command-line frontend for manual verification of the Koto
 kotoha-core = { path = "../kotoha-core" }
 clap = { workspace = true }
 kotoha-storage = { path = "../kotoha-storage", optional = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

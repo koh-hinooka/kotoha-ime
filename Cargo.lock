@@ -815,6 +815,7 @@ dependencies = [
  "kotoha-storage",
  "serial_test",
  "tempfile",
+ "tracing",
 ]
 
 [[package]]
