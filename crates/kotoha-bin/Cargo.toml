@@ -12,6 +12,15 @@ authors.workspace = true
 name = "kotoha"
 path = "src/main.rs"
 
+[features]
+default = []
+# `dev-stubs` は開発時のみ有効化する fallback ranker / host bridge を gate する
+# feature。OFF(default)では `StubRanker` / `StubHostBridge` の struct + impl が
+# compile されず、release binary に含まれない。`KOTOHA_ALLOW_STUB=1` env var も
+# 本 feature OFF 時は常に効果無しとして扱う(spec §11)。
+# B0h-e (ISSUE #149 / #159) で導入。
+dev-stubs = []
+
 [dependencies]
 anyhow = { workspace = true }
 tracing = { workspace = true }

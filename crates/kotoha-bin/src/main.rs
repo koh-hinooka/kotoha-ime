@@ -29,6 +29,7 @@
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::ExitCode;
+#[cfg(feature = "dev-stubs")]
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -163,11 +164,23 @@ fn init_tracing() {
 /// `KOTOHA_ALLOW_STUB` env var が `1` / `true` / `yes` のいずれかを指す場合 true。
 /// それ以外(未設定 / `0` 等)は false で、production 起動時は stub fallback を
 /// 拒否(spec §9.3「空候補返却で終わる」を防ぐ)。
+///
+/// B0h-e (#149 / #159):`dev-stubs` feature が OFF の場合(release default)は
+/// 常に `false` を返す。env var が誤設定されても fallback path は compile されず、
+/// production binary は stub に到達不能となる(spec §11 凍結)。
+#[cfg(feature = "dev-stubs")]
 fn stub_fallback_allowed() -> bool {
     matches!(
         std::env::var(KOTOHA_ALLOW_STUB_ENV).as_deref(),
         Ok("1" | "true" | "yes")
     )
+}
+
+#[cfg(not(feature = "dev-stubs"))]
+fn stub_fallback_allowed() -> bool {
+    // production / release default: stub fallback path は compile されない。
+    // `KOTOHA_ALLOW_STUB` 環境変数の値は無視される。
+    false
 }
 
 fn run_ibus() -> anyhow::Result<()> {
@@ -193,12 +206,19 @@ fn run_ibus() -> anyhow::Result<()> {
     let (learning_recorder, learning_lookup) =
         kotoha_engine_adapter::arc_sqlite_learning_cache(learning_store.clone());
     let allow_stub = stub_fallback_allowed();
+    // `dev-stubs` OFF では下記 `Err(e) if allow_stub =>` arm 自体が cfg で
+    // strip され、guard expression も含めて消えるため `allow_stub` は未参照
+    // 変数となる。`stub_fallback_allowed()` の env-var 読み(将来の logging
+    // hook 余地を含む)は production / dev で同 path を保持したいので変数自体
+    // は維持し、`let _` で discard して `-D warnings` clippy を黙らせる。
+    let _ = allow_stub;
     let (ranker, ranker_backend): (Arc<dyn kotoha_engine_core::Ranker>, &'static str) =
         match build_hybrid_ranker(user_vocab_port.clone(), learning_lookup.clone()) {
             Ok(r) => {
                 tracing::info!("HybridRanker constructed (dict-only path; LLM is Phase 3-B B2+)");
                 (r, "HybridRanker")
             }
+            #[cfg(feature = "dev-stubs")]
             Err(e) if allow_stub => {
                 tracing::error!(
                     error = ?e,
@@ -222,6 +242,7 @@ fn run_ibus() -> anyhow::Result<()> {
         &'static str,
     ) = match kotoha_engine_ibus::IBusHostBridge::new(ENGINE_OBJECT_PATH) {
         Ok(b) => (Box::new(b), "IBusHostBridge"),
+        #[cfg(feature = "dev-stubs")]
         Err(e) if allow_stub => {
             tracing::error!(
                 error = ?e,
@@ -289,8 +310,13 @@ fn build_hybrid_ranker(
 }
 
 /// 暫定 stub ranker(`KOTOHA_ALLOW_STUB=1` 時のみ fallback として利用)。
+///
+/// B0h-e (#149 / #159):`dev-stubs` feature が OFF(default / release)では
+/// 本 struct と impl が compile されず、release binary には link されない。
+#[cfg(feature = "dev-stubs")]
 struct StubRanker;
 
+#[cfg(feature = "dev-stubs")]
 impl kotoha_engine_core::Ranker for StubRanker {
     fn rank(
         &self,
@@ -309,8 +335,12 @@ impl kotoha_engine_core::Ranker for StubRanker {
 /// に流すと `KOTOHA_LOG=trace` 設定時に systemd journal / log aggregator へ
 /// 平文流出する。dev fallback path とはいえ user の手元で trace を有効化する
 /// ケース(debug session 中の log tail 等)を考慮し、`text_len` のみ記録する。
+///
+/// B0h-e (#149 / #159):`dev-stubs` feature gate を追加。`StubRanker` と同方針。
+#[cfg(feature = "dev-stubs")]
 struct StubHostBridge;
 
+#[cfg(feature = "dev-stubs")]
 impl kotoha_engine_core::IMEHostBridge for StubHostBridge {
     fn update_preedit(&self, text: &str, cursor: usize, visible: bool) {
         tracing::trace!(
