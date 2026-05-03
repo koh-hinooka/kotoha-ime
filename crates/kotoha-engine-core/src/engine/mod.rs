@@ -309,13 +309,25 @@ impl KotohaEngine {
     }
 
     /// `CandidateUpdate` を `self.candidates` に適用する(spec §4.2)。
+    ///
+    /// B0g-b #148 / 第 2 回 review I8: `Replace` / `Append` 経由で流入する
+    /// candidate は ranker 内部の SudachiDict / UserVocab / LearningCache /
+    /// LLM 由来。改ざん辞書 / 悪意ある LLM 出力 / Phase 5 custom model 等から
+    /// ANSI escape / NUL byte / RTL override が混入しないよう engine 境界で
+    /// reject filter する(`crate::sanitize::is_safe_for_host`)。filter 結果
+    /// が空 Vec になる場合は **空 Replace を engine 内に保持** することで
+    /// spec §9.3「変換失敗で前回候補が画面に残る」防止規約と整合する。
     pub(crate) fn apply_candidate_update(&mut self, update: CandidateUpdate) {
         match update {
             CandidateUpdate::Replace(c) => {
-                self.candidates = c;
+                let filtered = filter_safe_candidates(c);
+                self.candidates = filtered;
                 self.highlight_idx = 0;
             }
-            CandidateUpdate::Append(c) => self.candidates.extend(c),
+            CandidateUpdate::Append(c) => {
+                let filtered = filter_safe_candidates(c);
+                self.candidates.extend(filtered);
+            }
             CandidateUpdate::Remove(r) => {
                 let len = self.candidates.len();
                 let start = r.start.min(len);
@@ -333,6 +345,28 @@ impl KotohaEngine {
             }
         }
     }
+}
+
+/// candidate Vec から `surface` が unsafe な要素を除去する filter。
+///
+/// 1 つでも reject した場合は `tracing::error!` で件数を観測する(silent
+/// failure 禁止 / spec §9.3)。
+fn filter_safe_candidates(input: Vec<kotoha_core::Candidate>) -> Vec<kotoha_core::Candidate> {
+    let original_len = input.len();
+    let filtered: Vec<_> = input
+        .into_iter()
+        .filter(|c| crate::sanitize::is_safe_for_host(&c.surface))
+        .collect();
+    let dropped = original_len - filtered.len();
+    if dropped > 0 {
+        tracing::error!(
+            dropped,
+            kept = filtered.len(),
+            "dropped candidates with unsafe control/bidi/escape characters at engine boundary; \
+             check ranker source (dict / LLM / user vocab) for tainted input"
+        );
+    }
+    filtered
 }
 
 impl IMEEngine for KotohaEngine {
@@ -442,5 +476,66 @@ impl KotohaEngine {
     /// を assert するための accessor。
     pub fn enabled_for_test(&self) -> bool {
         self.enabled
+    }
+    /// Test-only inspector: 現在 candidate Vec の clone を返す。
+    ///
+    /// B0g-b #148 / I8 sanitization filter が正しく Candidate を drop している
+    /// か観測するための accessor。
+    pub fn candidates_for_test(&self) -> Vec<kotoha_core::Candidate> {
+        self.candidates.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Phase 3-B B0g-b (ISSUE #148 / I8): apply_candidate_update が unsafe な
+    //! candidate を engine 境界で filter することを確認する unit test。
+    //! engine 全体の lifecycle は要らないので filter_safe_candidates を直接呼ぶ。
+
+    use super::*;
+    use kotoha_core::Candidate;
+
+    #[test]
+    fn filter_drops_candidate_with_control_char() {
+        let input = vec![
+            Candidate::new("clean", 0.0),
+            Candidate::new("contains\u{001B}escape", 0.0),
+            Candidate::new("\u{0000}null", 0.0),
+        ];
+        let kept = filter_safe_candidates(input);
+        assert_eq!(kept.len(), 1, "only clean candidate should survive");
+        assert_eq!(kept[0].surface, "clean");
+    }
+
+    #[test]
+    fn filter_drops_candidate_with_bidi_override() {
+        let input = vec![
+            Candidate::new("safe", 0.0),
+            Candidate::new("ab\u{202E}cd", 0.0), // RTL override
+        ];
+        let kept = filter_safe_candidates(input);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].surface, "safe");
+    }
+
+    #[test]
+    fn filter_keeps_all_when_clean() {
+        let input = vec![
+            Candidate::new("hello", 0.0),
+            Candidate::new("こんにちは", 0.0),
+            Candidate::new("漢字 + emoji 🦀", 0.0),
+        ];
+        let kept = filter_safe_candidates(input);
+        assert_eq!(kept.len(), 3);
+    }
+
+    #[test]
+    fn filter_returns_empty_when_all_dirty() {
+        let input = vec![
+            Candidate::new("\u{001B}[2J", 0.0),
+            Candidate::new("\u{0000}", 0.0),
+        ];
+        let kept = filter_safe_candidates(input);
+        assert!(kept.is_empty());
     }
 }

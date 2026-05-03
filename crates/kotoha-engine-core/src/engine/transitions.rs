@@ -195,6 +195,19 @@ fn handle_return(engine: &mut KotohaEngine) -> KeyEventResult {
     let selected: Candidate = engine.candidates[engine.highlight_idx].clone();
     let kana_at_request = engine.current_preedit.clone();
 
+    // B0g-b #148 / 第 2 回 review I8: host 出力の trust boundary で sanitization。
+    // 改ざん辞書 / 悪意ある LLM 出力 / Phase 5 custom model から来た候補が ANSI
+    // escape / NUL byte / RTL override 等を含む場合、application 側(terminal /
+    // chat client / git editor 等)に注入されないよう commit を skip する。
+    if !crate::sanitize::is_safe_for_host(&selected.surface) {
+        tracing::error!(
+            surface_len = selected.surface.chars().count(),
+            "candidate surface contains unsafe control / bidi / escape characters; \
+             skipping commit_text to avoid injection into the host application"
+        );
+        return KeyEventResult::Consumed;
+    }
+
     engine.host.commit_text(&selected.surface);
     if let Err(e) = engine
         .learning_writer
