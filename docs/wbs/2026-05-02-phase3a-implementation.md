@@ -104,6 +104,7 @@ ISSUE #140(P3-B B0)で第 1 回レビューの Critical 4 + Important 9 を消�
 | B0h-b | I4 `HybridRanker` を `kotoha-ranker-hybrid` 別 crate へ切り出し | #156 | `feature/155-b0h-b-...` |
 | B0h-d | I2 `IBusEventDispatcher` を `Arc<Mutex<dyn IMEEngine>>` 化 | #158 | `feature/157-b0h-d-...` |
 | B0h-e | I5 stub fallback `dev-stubs` feature gate | #160 | `feature/159-b0h-e-...` |
+| B0h-c-i | I1 SRP 分割 sub-PR 1/3:`PreeditBuffer` + `CandidateBuffer` 抽出 | #162 | `feature/161-b0h-c-i-...` |
 
 ## Test count(実測)
 
@@ -120,7 +121,8 @@ ISSUE #140(P3-B B0)で第 1 回レビューの Critical 4 + Important 9 を消�
 | P3-B B0h-b 完了時(2026-05-03、PR #156) | 504 | 515(default +40: workspace feature unification で engine_wrap_hybrid.rs が default にも参加、test-helpers は変動なし) |
 | P3-B B0h-d 完了時(2026-05-03、PR #158) | 504 | 515(test 改変ゼロ) |
 | P3-B B0h-e 完了時(2026-05-04、PR #160) | 504 | 515(test 改変ゼロ) |
-| **P3-B B0h-c-i 完了時(2026-05-04、本 PR)** | **504** | **515**(test 改変ゼロ、SRP 内部 refactor のみ) |
+| P3-B B0h-c-i 完了時(2026-05-04、PR #162) | 504 | 515(test 改変ゼロ、SRP 内部 refactor のみ) |
+| **P3-B B0h-c-ii 完了時(2026-05-04、本 PR)** | **504** | **515**(test 改変ゼロ、`WorkerChannel` 抽出 + Drop 移管のみ) |
 
 註:`cargo test --workspace` (default features) と `cargo test --workspace --features kotoha-storage/test-helpers,kotoha-engine-core/test-helpers` で結果が異なる。lefthook pre-push は default features を回す。第 1 回包括 review (B0a-B0e) では test-helpers feature 経由の合計値 (416 → 473) を baseline として参照する。過去の commit message で `446` / `448` / `454` と記載した数値はいずれも不正確で、上表が正規値。
 
@@ -159,8 +161,8 @@ GNOME Wayland session 上で `cargo run --bin kotoha` 起動 + 以下 applicatio
 | ~~B0h-b (#155)~~ | I4 `HybridRanker` を `kotoha-ranker-hybrid` 別 crate へ切り出し(engine-core から concrete adapter を分離、LLM features を ranker-hybrid 側に移送) | **完了**(PR #156 squash `3cc36a9`、test 504 / 515) |
 | ~~B0h-d (#157)~~ | I2 `IBusEventDispatcher` を `Arc<Mutex<dyn IMEEngine>>` 化(B3 event loop の前提整備) | **完了**(PR #158 squash `ba7dc6d`、test 504 / 515) |
 | ~~B0h-e (#159)~~ | I5 stub fallback feature gate(`StubRanker` / `StubHostBridge` を `dev-stubs` feature で gate、release default で stub symbol 0 link) | **完了**(PR #160 squash `7b58cbc`、test 504 / 515) |
-| **B0h-c-i (#161)** | I1 SRP 分割 sub-PR 1/3:`PreeditBuffer` + `CandidateBuffer` 抽出(`current_preedit` + `romaji` / `candidates` + `highlight_idx` を 2 sub-struct に集約) | **進行中**(本 PR、test 504 / 515) |
-| B0h-c-ii | I1 SRP 分割 sub-PR 2/3:`WorkerChannel` 抽出(`tx_request` / `rx_event` / `worker_handle` / `request_id_seed` を 1 sub-struct に集約) | OSS 公開前必修 |
+| ~~B0h-c-i (#161)~~ | I1 SRP 分割 sub-PR 1/3:`PreeditBuffer` + `CandidateBuffer` 抽出(`current_preedit` + `romaji` / `candidates` + `highlight_idx` を 2 sub-struct に集約) | **完了**(PR #162 squash `9c3bd0e`、test 504 / 515) |
+| **B0h-c-ii (#163)** | I1 SRP 分割 sub-PR 2/3:`WorkerChannel` 抽出(`tx_request` / `rx_event` / `worker_handle` を 1 sub-struct に集約、`KotohaEngine::Drop` を `WorkerChannel::Drop` に移管。`request_id_seed` は engine 側に残置) | **進行中**(本 PR、test 504 / 515) |
 | B0h-c-iii | I1 SRP 分割 sub-PR 3/3:`LearningSink` 抽出 + `transitions.rs` 全 free function を sub-struct method 経由に書き換え | OSS 公開前必修 |
 | B0g 後追加検討(B0h 候補) | self-review#1〜#9: `non_exhaustive` trade-off ADR、flaky panic sliding-window metrics ADR、`IMEEngine::enable` Result 化、F4-F9 系 ADR | OSS 公開前 |
 | B0h-f (#149) | I3 async dispatch(`drain_events_blocking` 撤去 + wakeup channel) | OSS 公開前必修 |

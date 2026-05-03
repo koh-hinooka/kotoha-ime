@@ -25,9 +25,11 @@ mod preedit;
 #[doc(hidden)]
 pub mod transitions;
 mod worker;
+mod worker_channel;
 
 use candidates::CandidateBuffer;
 use preedit::PreeditBuffer;
+use worker_channel::WorkerChannel;
 
 pub use commit_history::CommitHistory;
 pub use worker::panic_message_from;
@@ -68,19 +70,23 @@ pub(crate) struct RequestHandle {
 /// - `active_request.is_some()` ⇒ `cancel_token` が一意に存在
 /// - `commit_history.total_chars() <= 200`([`CommitHistory::push`] で維持)
 ///
-/// # Phase 3-B B0h-c-i (ISSUE #149 / #161) field 整理
+/// # Phase 3-B B0h-c-i (ISSUE #149 / #161) / B0h-c-ii (#163) field 整理
 ///
-/// 旧 4 field を 2 sub-struct に集約:
+/// 旧 7 field を 3 sub-struct に集約:
 /// - `current_preedit: String` + `romaji: RomajiConverter` →
 ///   [`preedit::PreeditBuffer`] (`engine.preedit.current` / `engine.preedit.romaji`)
 /// - `candidates: Vec<Candidate>` + `highlight_idx: usize` →
 ///   [`candidates::CandidateBuffer`] (`engine.candidates.items` /
 ///   `engine.candidates.highlight`)
+/// - `tx_request` + `rx_event` + `worker_handle` →
+///   [`worker_channel::WorkerChannel`] (`engine.worker.tx_request` /
+///   `engine.worker.rx_event`)。本 sub-struct が `Drop` impl を持つため
+///   `KotohaEngine::Drop` は撤去された。
 ///
-/// 残 11 field (`state` / `host` / `ranker` / `learning_writer` /
+/// 残 8 field (`state` / `host` / `ranker` / `learning_writer` /
 /// `commit_history` / `active_request` / `request_id_seed` / `last_commit_at` /
-/// `enabled` / `focused` / channel 群) は B0h-c-ii (`WorkerChannel`) と
-/// B0h-c-iii (`LearningSink` + transitions.rs method 化) で順次抽出する。
+/// `enabled` / `focused`) は B0h-c-iii (`LearningSink` +
+/// transitions.rs method 化) で順次抽出する。
 pub struct KotohaEngine {
     pub(crate) state: EngineState,
     pub(crate) host: Box<dyn IMEHostBridge>,
@@ -94,12 +100,10 @@ pub struct KotohaEngine {
     pub(crate) last_commit_at: Instant,
     pub(crate) enabled: bool,
     pub(crate) focused: bool,
-    /// `RankerWorker` 主 thread への request 送信 channel。
-    pub(crate) tx_request: mpsc::Sender<event::RankRequest>,
-    /// `RankerWorker` から engine 主 thread への event 受信 channel。
-    pub(crate) rx_event: mpsc::Receiver<event::EngineEvent>,
-    /// Worker thread join handle(`Drop` impl で best-effort 終了)。
-    pub(crate) worker_handle: Option<std::thread::JoinHandle<()>>,
+    /// `RankerWorker` 主 thread と engine 主 thread を結ぶ channel pair および
+    /// worker thread join handle。本 sub-struct の `Drop` impl が `tx_request`
+    /// drop → worker exit → 別 thread で join の順で safe shutdown を行う。
+    pub(crate) worker: WorkerChannel,
 }
 
 impl KotohaEngine {
@@ -123,7 +127,7 @@ impl KotohaEngine {
         ranker: Arc<dyn Ranker>,
         learning_writer: Arc<dyn crate::learning_port::LearningRecorder>,
     ) -> io::Result<Self> {
-        let (tx_request, rx_event, worker_handle) = worker::spawn_worker()?;
+        let worker = WorkerChannel::new()?;
         Ok(Self {
             state: EngineState::Idle,
             host,
@@ -137,9 +141,7 @@ impl KotohaEngine {
             last_commit_at: Instant::now(),
             enabled: false,
             focused: false,
-            tx_request,
-            rx_event,
-            worker_handle: Some(worker_handle),
+            worker,
         })
     }
 
@@ -184,7 +186,7 @@ impl KotohaEngine {
             cancel_token,
             ranker: self.ranker.clone(),
         };
-        if self.tx_request.send(req).is_err() {
+        if self.worker.tx_request.send(req).is_err() {
             // worker thread が死亡している。spec §9.1 row 2 に従い、
             // engine 状態を Idle に戻して候補ウィンドウを閉じ、stale な
             // active_request を残さない(後続 keystroke の cancel_active が
@@ -269,7 +271,7 @@ impl KotohaEngine {
     pub(crate) fn drain_events_blocking(&mut self, max_wait: Duration, target_id: u64) {
         let deadline = Instant::now() + max_wait;
         while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-            match self.rx_event.recv_timeout(remaining) {
+            match self.worker.rx_event.recv_timeout(remaining) {
                 Ok(event::EngineEvent::Candidates { request_id, update }) => {
                     if request_id != target_id {
                         continue;
@@ -309,7 +311,7 @@ impl KotohaEngine {
     pub(crate) fn drain_pending_events(&mut self) {
         let active_id = self.active_request.as_ref().map(|h| h.id);
         loop {
-            match self.rx_event.try_recv() {
+            match self.worker.rx_event.try_recv() {
                 Ok(event::EngineEvent::Candidates { request_id, update }) => {
                     if active_id != Some(request_id) {
                         continue; // mismatch discard
@@ -482,21 +484,8 @@ impl IMEEngine for KotohaEngine {
     }
 }
 
-impl Drop for KotohaEngine {
-    /// `tx_request` を drop することで worker thread が `recv() == Err` を
-    /// 検出して loop を抜ける。worker は best-effort で join する(blocking
-    /// したくないため、separate thread で待機し、main thread は即時 return)。
-    fn drop(&mut self) {
-        if let Some(h) = self.worker_handle.take() {
-            std::thread::Builder::new()
-                .name("kotoha-ranker-worker-joiner".into())
-                .spawn(move || {
-                    let _ = h.join();
-                })
-                .ok();
-        }
-    }
-}
+// worker thread の shutdown は `worker: WorkerChannel` の `Drop` impl が担う
+// (B0h-c-ii #163 で `KotohaEngine::Drop` から移管)。
 
 #[cfg(feature = "test-helpers")]
 impl KotohaEngine {
