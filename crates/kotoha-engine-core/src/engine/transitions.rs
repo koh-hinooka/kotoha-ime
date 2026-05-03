@@ -225,13 +225,17 @@ fn handle_return(engine: &mut KotohaEngine) -> KeyEventResult {
 
     engine.host.commit_text(&selected.surface);
     if let Err(e) = engine
-        .learning_writer
+        .learning
+        .recorder
         .record_choice(&kana_at_request, &selected.surface)
     {
         tracing::warn!(error = %e, "learning_cache record_choice failed; commit succeeded");
     }
-    engine.commit_history.push(selected.surface.clone());
-    engine.last_commit_at = std::time::Instant::now();
+    engine
+        .learning
+        .commit_history
+        .push(selected.surface.clone());
+    engine.learning.last_commit_at = std::time::Instant::now();
 
     engine.host.hide_candidate_window();
     engine.host.update_preedit("", 0, false);
