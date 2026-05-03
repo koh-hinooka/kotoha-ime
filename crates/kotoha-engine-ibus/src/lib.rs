@@ -22,7 +22,15 @@ pub mod dispatcher;
 pub mod host_bridge;
 pub mod keysym;
 pub mod lookup_table;
-pub mod proxy;
+pub(crate) mod proxy;
+pub(crate) mod types;
+
+/// `crates/kotoha-engine-ibus/src/types.rs` の wire-format type を doc test
+/// から参照するための test-only export。production binary には影響しない。
+#[doc(hidden)]
+pub mod types_test_export {
+    pub use crate::types::{IBusAttrList, IBusAttribute, IBusLookupTable, IBusText};
+}
 
 pub use dispatcher::IBusEventDispatcher;
 pub use host_bridge::IBusHostBridge;

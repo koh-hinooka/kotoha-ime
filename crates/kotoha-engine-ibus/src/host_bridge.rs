@@ -53,6 +53,13 @@ impl IMEHostBridge for IBusHostBridge {
         }
     }
 
+    /// IBus 1.x では候補 window の表示・非表示は `update_lookup_table` の
+    /// `visible` 引数で制御する設計のため、`hide_lookup_table` を別途呼ばない。
+    /// 内部 buffer が空になったときも `visible = false` を載せた
+    /// `update_lookup_table` で 1 回の D-Bus signal に集約する。`Show/HideLookupTable`
+    /// は engine の state transition(`hide_candidate_window` 等)が独立に呼ぶ。
+    /// 将来 refactor で `visible` 制御を分離する場合は `LookupTable` の coalesce
+    /// 設計と合わせて見直すこと。
     fn update_candidates(&self, update: CandidateUpdate) {
         let merged = self.lookup_table.apply(update);
         let visible = !merged.is_empty();
