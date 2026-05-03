@@ -80,7 +80,8 @@ fn build_engine_with_real_hybrid_ranker(
         user_vocab,
         learning_cache.clone(),
     ));
-    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, learning_cache.clone());
+    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, learning_cache.clone())
+        .expect("engine spawn");
     eng.enable();
     eng.focus_in();
     (eng, host, learning_cache)

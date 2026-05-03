@@ -89,7 +89,7 @@ fn consecutive_typing_cancels_previous_rank_request() {
     });
     let host = Box::new(MockHostBridge::new());
     let writer = Arc::new(StubWriter);
-    let mut eng = KotohaEngine::new(host, ranker, writer);
+    let mut eng = KotohaEngine::new(host, ranker, writer).expect("engine spawn");
     eng.enable();
     eng.focus_in();
 
@@ -106,6 +106,69 @@ fn consecutive_typing_cancels_previous_rank_request() {
     );
 }
 
+/// spec §9.1 row 2: `Ranker::rank` が panic しても worker thread は生存し、
+/// engine は次 keystroke を引き続き処理できる(catch_unwind による recovery)。
+#[test]
+fn worker_recovers_after_ranker_panic() {
+    use std::sync::atomic::{AtomicBool, AtomicU64};
+
+    /// 第 1 回 rank で panic、第 2 回以降は正常 send する Ranker。
+    struct FlakyRanker {
+        first_call: AtomicBool,
+        second_calls: Arc<AtomicU64>,
+    }
+    impl Ranker for FlakyRanker {
+        fn rank(
+            &self,
+            _kana: &str,
+            _ctx: &ConversionContext,
+            _cancel: Arc<dyn CancellationToken>,
+            sink: std::sync::mpsc::Sender<RankerOutput>,
+        ) -> Result<(), RankerError> {
+            if self
+                .first_call
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                panic!("intentional ranker panic for catch_unwind regression");
+            }
+            self.second_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let _ = sink.send(RankerOutput {
+                request_id: 0,
+                update: CandidateUpdate::Replace(vec![Candidate::new("あ", -1.0)]),
+            });
+            Ok(())
+        }
+    }
+
+    let second_calls = Arc::new(AtomicU64::new(0));
+    let ranker = Arc::new(FlakyRanker {
+        first_call: AtomicBool::new(true),
+        second_calls: second_calls.clone(),
+    });
+    let host = Box::new(MockHostBridge::new());
+    let writer = Arc::new(StubWriter);
+    let mut eng = KotohaEngine::new(host, ranker, writer).expect("engine spawn");
+    eng.enable();
+    eng.focus_in();
+
+    // 第 1 回 keystroke:Ranker が panic するが、worker は WorkerError を engine に
+    // 送って継続。engine 主 thread はそれを観測して Idle 復帰する(spec §9.1 row 2)。
+    eng.process_key_event(key('a'));
+
+    // 第 2 回 keystroke:worker が生存していれば 2 度目の rank が走り
+    // second_calls がインクリメントされる。
+    eng.process_key_event(key('i'));
+
+    // worker thread の処理を待つ。
+    sleep(Duration::from_millis(50));
+    assert!(
+        second_calls.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        "worker should have survived first-call panic and serviced second key, got {}",
+        second_calls.load(std::sync::atomic::Ordering::SeqCst)
+    );
+}
+
 /// spec §5.2: `focus_out` で `active_request` の cancel_token が fire される。
 #[test]
 fn focus_out_cancels_active_request() {
@@ -116,7 +179,7 @@ fn focus_out_cancels_active_request() {
     });
     let host = Box::new(MockHostBridge::new());
     let writer = Arc::new(StubWriter);
-    let mut eng = KotohaEngine::new(host, ranker, writer);
+    let mut eng = KotohaEngine::new(host, ranker, writer).expect("engine spawn");
     eng.enable();
     eng.focus_in();
 
