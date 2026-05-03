@@ -198,6 +198,27 @@ impl KotohaEngine {
         self.drain_events_blocking(max_wait, request_id);
     }
 
+    /// spec §5.2 row 7 (CommitConverting + RankerOutput → CandidatesShown) の
+    /// 反映 helper。`Candidates` event を apply_candidate_update した直後に
+    /// 呼び、CommitConverting 中で候補非空なら CandidatesShown へ遷移して
+    /// `update_candidates` を host に発行する。
+    fn maybe_promote_commit_to_candidates_shown(&mut self) {
+        if self.state == EngineState::CommitConverting && !self.candidates.is_empty() {
+            self.host
+                .update_candidates(CandidateUpdate::Replace(self.candidates.clone()));
+            self.state = EngineState::CandidatesShown;
+        }
+    }
+
+    /// worker 死亡 / WorkerError 発生時の共通 Idle 復帰処理。
+    fn degrade_to_idle(&mut self) {
+        self.active_request = None;
+        self.candidates.clear();
+        self.highlight_idx = 0;
+        self.host.hide_candidate_window();
+        self.state = EngineState::Idle;
+    }
+
     /// `rx_event` から最大 `max_wait` まで待ち、第 1 Candidates(target_id 一致)を
     /// engine state に反映して return する。
     ///
@@ -207,6 +228,8 @@ impl KotohaEngine {
     /// - `RecvTimeoutError::Timeout` は normal path で return。
     /// - `RecvTimeoutError::Disconnected` は worker thread 死亡を意味し、spec §9.1 row 2
     ///   に従い engine 状態を Idle に戻し host を閉じて return。
+    /// - `Candidates` で CommitConverting 中なら `CandidatesShown` 遷移を併発する
+    ///   (spec §5.2 row 7、Phase 3-B B0d Critical 4 async path 修正)。
     pub(crate) fn drain_events_blocking(&mut self, max_wait: Duration, target_id: u64) {
         let deadline = Instant::now() + max_wait;
         while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
@@ -216,16 +239,13 @@ impl KotohaEngine {
                         continue;
                     }
                     self.apply_candidate_update(update);
+                    self.maybe_promote_commit_to_candidates_shown();
                     return;
                 }
                 Ok(event::EngineEvent::WorkerError { request_id, error }) => {
                     tracing::error!(request_id, error, "ranker worker error");
                     if request_id == target_id {
-                        self.active_request = None;
-                        self.candidates.clear();
-                        self.highlight_idx = 0;
-                        self.host.hide_candidate_window();
-                        self.state = EngineState::Idle;
+                        self.degrade_to_idle();
                         return;
                     }
                 }
@@ -235,11 +255,7 @@ impl KotohaEngine {
                         target_id,
                         "ranker worker channel disconnected; engine degrading to Idle"
                     );
-                    self.active_request = None;
-                    self.candidates.clear();
-                    self.highlight_idx = 0;
-                    self.host.hide_candidate_window();
-                    self.state = EngineState::Idle;
+                    self.degrade_to_idle();
                     return;
                 }
             }
@@ -248,10 +264,12 @@ impl KotohaEngine {
 
     /// `rx_event` に蓄積されている event を非 blocking で全 drain する
     /// (`process_key_event` 先頭で呼び出し、Commit mode second window で
-    /// 到着した LLM 結果等を反映する)。
+    /// 到着した LLM 結果等 + 遅延 dict 候補を反映する)。
     ///
     /// `try_recv` が `Disconnected` を返した場合は worker 死亡で、
     /// `drain_events_blocking` と同等の Idle 復帰処理を行う。
+    /// `Candidates` で CommitConverting 中なら `CandidatesShown` へ遷移する
+    /// (spec §5.2 row 7)。
     pub(crate) fn drain_pending_events(&mut self) {
         let active_id = self.active_request.as_ref().map(|h| h.id);
         loop {
@@ -261,15 +279,12 @@ impl KotohaEngine {
                         continue; // mismatch discard
                     }
                     self.apply_candidate_update(update);
+                    self.maybe_promote_commit_to_candidates_shown();
                 }
                 Ok(event::EngineEvent::WorkerError { request_id, error }) => {
                     tracing::error!(request_id, error, "ranker worker error");
                     if active_id == Some(request_id) {
-                        self.active_request = None;
-                        self.candidates.clear();
-                        self.highlight_idx = 0;
-                        self.host.hide_candidate_window();
-                        self.state = EngineState::Idle;
+                        self.degrade_to_idle();
                     }
                 }
                 Err(mpsc::TryRecvError::Empty) => return,
@@ -278,11 +293,7 @@ impl KotohaEngine {
                         ?active_id,
                         "ranker worker channel disconnected; engine degrading to Idle"
                     );
-                    self.active_request = None;
-                    self.candidates.clear();
-                    self.highlight_idx = 0;
-                    self.host.hide_candidate_window();
-                    self.state = EngineState::Idle;
+                    self.degrade_to_idle();
                     return;
                 }
             }

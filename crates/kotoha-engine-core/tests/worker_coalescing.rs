@@ -295,3 +295,51 @@ fn key_special_for_cancel(keysym: u32) -> KeyEvent {
         modifiers: KeyModifiers::empty(),
     }
 }
+
+// ------------------------------------------------------------------
+// Phase 3-B B0d (Important 8): worker 空 buffer 時の Replace 送信
+// ------------------------------------------------------------------
+
+/// `Ranker::rank` が 1 回も `sink.send` せず Ok 復帰する場合、worker は空 Replace を
+/// engine に送る(spec §9.3「変換失敗で前回候補が画面に残る」を防ぐ)。本 test は
+/// 「typing で候補表示」→「next typing で別 reading の SilentRanker が走り
+/// 候補が clear される」end-to-end shape で verify する。
+#[test]
+fn silent_ranker_clears_engine_candidates_via_empty_replace() {
+    use kotoha_engine_core::engine::KotohaEngine;
+    use kotoha_engine_core::ime_engine::IMEEngine;
+
+    /// `rank` で何も送らずに Ok 復帰する Ranker。
+    struct SilentRanker;
+    impl Ranker for SilentRanker {
+        fn rank(
+            &self,
+            _kana: &str,
+            _ctx: &ConversionContext,
+            _cancel: Arc<dyn CancellationToken>,
+            _sink: std::sync::mpsc::Sender<RankerOutput>,
+        ) -> Result<(), RankerError> {
+            Ok(())
+        }
+    }
+
+    let host = Box::new(MockHostBridge::new());
+    let writer = Arc::new(StubWriter);
+    let mut eng = KotohaEngine::new(host, Arc::new(SilentRanker), writer).expect("engine spawn");
+    eng.enable();
+    eng.focus_in();
+
+    // 'a' typing で SilentRanker が走る → worker から空 Replace が来て engine の
+    // candidates は空のまま、state は LiveConverting(preedit 「あ」)で安定する。
+    eng.process_key_event(key('a'));
+    assert_eq!(eng.candidate_count_for_test(), 0);
+    assert_eq!(eng.preedit_for_test(), "あ");
+
+    // 待機して worker の処理を確実に消化する。
+    sleep(Duration::from_millis(20));
+    eng.process_key_event(key('i'));
+    // 第 2 keystroke 入口の drain_pending_events で前 request の空 Replace が
+    // 適用済み(engine 側の candidates は既に空)。新 SilentRanker request も
+    // 同じ Empty Replace を返す → candidates 空のまま。
+    assert_eq!(eng.candidate_count_for_test(), 0);
+}
