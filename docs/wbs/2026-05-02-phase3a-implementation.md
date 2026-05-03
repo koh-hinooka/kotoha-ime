@@ -147,8 +147,8 @@ GNOME Wayland session 上で `cargo run --bin kotoha` 起動 + 以下 applicatio
 | 4 | LLM cancel 10 token check | metrics 観測 | TBD |
 | 7 | typing 中 LLM invocation | empirical 観測 | TBD |
 | 8 | KeyModifiers full mapping | IBus IBusModifierType 全列挙 | **解決(P3-B B4 / PR #138)** |
-| 9 | adapter Mutex<Vec<Candidate>> 競合 | multi-thread 化必要時に再評価 | TBD |
-| 9 (D-Bus body) | `IBusText` / `IBusLookupTable` marshalling | L3 manual smoke で `connection.send_signal` body 確定 | TBD |
+| 9 | adapter Mutex<Vec<Candidate>> 競合 | B0h-d で `Arc<Mutex<dyn IMEEngine>>` 化済 | **解決(B0h-d / B2、spec §13 r2 で closure)** |
+| 9 (D-Bus body) | `IBusText` / `IBusLookupTable` marshalling | IBus 1.5.x signature 準拠で実装、`Value::Structure(...)` 経由(spec §4.2 r2) | **進行中(B2 / #170)** |
 
 ## P3-B 後続予定
 
@@ -168,6 +168,6 @@ GNOME Wayland session 上で `cargo run --bin kotoha` 起動 + 以下 applicatio
 | **B0h-c-iii (#165)** | I1 SRP 分割 sub-PR 3/3:`LearningSink` 抽出(`learning_writer` + `commit_history` + `last_commit_at` を 1 sub-struct に集約)。transitions.rs の free-function method 化は API ergonomics 課題で SRP とは独立、本 PR 範囲外(B0h-c-iv で別途扱うか判断) | **進行中**(本 PR、test 504 / 515) |
 | B0g 後追加検討(B0h 候補) | self-review#1〜#9: `non_exhaustive` trade-off ADR、flaky panic sliding-window metrics ADR、`IMEEngine::enable` Result 化、F4-F9 系 ADR | OSS 公開前 |
 | B0h-f (#149) | I3 async dispatch(`drain_events_blocking` 撤去 + wakeup channel) | OSS 公開前必修 |
-| B2 | IBus signal body marshalling | B0f 後着手 |
+| **B2 (#170)** | IBus signal body marshalling(`proxy.rs` 5 method を実 D-Bus signal emit に置換、`IBusText` / `IBusLookupTable` wire format 確定:`(sa{sv}sv)` / `(sa{sv}uubbiavav)`、IBus 1.5.x source 準拠) | **進行中**(本 PR、test 520 / 531、release stub symbol 0、`KOTOHA_ALLOW_STUB=1` exit 1) |
 | B3 | IBus signal listener loop + event loop | B0f / B2 後着手 |
 | B6 | L3 manual smoke | B2 / B3 後着手 |
