@@ -136,20 +136,38 @@ fn handle_backspace(engine: &mut KotohaEngine) -> KeyEventResult {
     }
 }
 
-/// Space path — commit-mode 開始(spec §5.2)。
+/// Space path — commit-mode 開始(spec §5.2 row 4 + row 7)。
+///
+/// spec §5.2 strict: `LiveConverting + space → CommitConverting`(候補未到着の中間状態)、
+/// `CommitConverting + RankerOutput → CandidatesShown`(候補到着で遷移)の 2 段。
+///
+/// Phase 3-B B0d (ISSUE #140 / Critical 4 async path 修正):
+/// 1. state を即 `CommitConverting` に遷移し、`show_candidate_window` で
+///    user に「変換中」フィードバックを出す(内容は到着待ち)。
+/// 2. `dispatch_rank_request` 内 blocking で第 1 batch を待つ(同期 Mock 経路 + 速い
+///    実 Ranker は ここで populate される)。
+/// 3. 候補が間に合えば即 `CandidatesShown` に追加遷移。間に合わない場合は
+///    `CommitConverting` で抜け、後続 `process_key_event` 先頭の
+///    [`KotohaEngine::drain_pending_events`] が候補到着時に `CandidatesShown` 遷移を行う。
 fn handle_space(engine: &mut KotohaEngine) -> KeyEventResult {
     match engine.state {
         EngineState::Idle => KeyEventResult::Forwarded,
         EngineState::LiveConverting | EngineState::CommitConverting => {
             engine.cancel_active();
+            // spec §5.2 row 4: 即 CommitConverting + show_candidate_window
+            engine.candidates.clear();
+            engine.highlight_idx = 0;
+            engine.state = EngineState::CommitConverting;
+            engine.host.show_candidate_window();
+
             engine.dispatch_rank_request(ConversionMode::Commit);
-            if engine.candidates.is_empty() {
-                engine.state = EngineState::CommitConverting;
-            } else {
+
+            // 候補が dispatch 内 drain で間に合っていれば row 7 遷移を即適用。
+            // 間に合っていなければ後続 keystroke の drain_pending_events で対応。
+            if !engine.candidates.is_empty() {
                 engine
                     .host
                     .update_candidates(CandidateUpdate::Replace(engine.candidates.clone()));
-                engine.host.show_candidate_window();
                 engine.state = EngineState::CandidatesShown;
             }
             KeyEventResult::Consumed

@@ -119,8 +119,10 @@ fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<E
         let mut buffer: Vec<Candidate> = Vec::new();
         drain_window(&rx_ranker, &cancel, window, &mut buffer);
 
+        // Phase 3-B B0d (Important 8): cancel されていなければ buffer が空でも
+        // Replace を送る。engine 側は前回 dispatch の stale 候補を本 Replace で
+        // 確実に clear できる。spec §9.3「変換失敗で前回候補が画面に残る」を防ぐ。
         if !cancel.is_cancelled()
-            && !buffer.is_empty()
             && try_send_event(
                 &tx_event,
                 EngineEvent::Candidates {
