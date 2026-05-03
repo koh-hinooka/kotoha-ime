@@ -62,7 +62,8 @@ bitflags = "2.6"
 # 持ち込まない方針で async-io(smol-based)を選択し、blocking-api を併用して
 # Phase 3-A M3 (std::sync) と同期 path を保つ。
 zbus = "5"
-# serde pinned via P3-B B2 (2026-05-04). zbus zvariant Type derive と組み合わせて
-# IBus 1.x wire-format types を Rust 側に表現するために使用。
-# Adopted reason: defacto standard, zbus が transitively 依存しており version 整合済。
-serde = { version = "1", features = ["derive"] }
+# serde は zbus 5 が transitively 依存。P3-B B2 では `Value::Structure(...)` の
+# 直接構築方式を採用し `#[derive(Serialize)]` は不要になったため、kotoha 各 crate
+# は workspace dep として参照しない。将来 derive を再導入する場合は本 entry の
+# 再有効化と関連 crate の `serde = { workspace = true }` 復活を行う。
+# serde = { version = "1", features = ["derive"] }

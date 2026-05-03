@@ -12,6 +12,5 @@ authors.workspace = true
 thiserror = { workspace = true }
 tracing = { workspace = true }
 zbus = { workspace = true }
-serde = { workspace = true }
 kotoha-engine-core = { path = "../kotoha-engine-core" }
 kotoha-core = { path = "../kotoha-core" }

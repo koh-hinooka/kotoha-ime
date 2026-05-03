@@ -43,13 +43,13 @@ impl IBusHostBridge {
 impl IMEHostBridge for IBusHostBridge {
     fn update_preedit(&self, text: &str, cursor: usize, visible: bool) {
         if let Err(e) = self.signals.update_preedit(text, cursor as u32, visible) {
-            tracing::warn!(error = ?e, "IBus update_preedit failed");
+            tracing::warn!(error = %e, "IBus update_preedit failed");
         }
     }
 
     fn commit_text(&self, text: &str) {
         if let Err(e) = self.signals.commit_text(text) {
-            tracing::warn!(error = ?e, "IBus commit_text failed");
+            tracing::warn!(error = %e, "IBus commit_text failed");
         }
     }
 
@@ -64,19 +64,19 @@ impl IMEHostBridge for IBusHostBridge {
         let merged = self.lookup_table.apply(update);
         let visible = !merged.is_empty();
         if let Err(e) = self.signals.update_lookup_table(&merged, visible) {
-            tracing::warn!(error = ?e, "IBus update_lookup_table failed");
+            tracing::warn!(error = %e, "IBus update_lookup_table failed");
         }
     }
 
     fn show_candidate_window(&self) {
         if let Err(e) = self.signals.show_lookup_table() {
-            tracing::warn!(error = ?e, "IBus show_lookup_table failed");
+            tracing::warn!(error = %e, "IBus show_lookup_table failed");
         }
     }
 
     fn hide_candidate_window(&self) {
         if let Err(e) = self.signals.hide_lookup_table() {
-            tracing::warn!(error = ?e, "IBus hide_lookup_table failed");
+            tracing::warn!(error = %e, "IBus hide_lookup_table failed");
         }
     }
 }

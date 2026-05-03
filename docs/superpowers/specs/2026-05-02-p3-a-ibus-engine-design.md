@@ -269,15 +269,23 @@ IBus 1.x の `update_lookup_table` は全置換のみであるため、adapter �
 
 adapter は internal buffer を `Mutex<Vec<Candidate>>` で保持し、`update_candidates` 呼び出しごとに mutate + IBus call を発行する。
 
-#### Phase 3-B B2 での wire format 実装方針
+#### Phase 3-B B2 での wire format 実装方針(r3)
 
 Phase 3-A は `IBusEngineSignals`(`crates/kotoha-engine-ibus/src/proxy.rs`)の 5 method を `Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED))` の fail-loud stub で残置していた(B0f, ISSUE #146 review で silent no-op stub から fail-loud に再分類)。Phase 3-B B2 では本 stub を実 D-Bus signal emit に置換し、IBus 1.x 仕様の wire format 確定を以下の方針で実装する。
 
-- IBus 1.x の `IBusText` / `IBusAttribute` / `IBusLookupTable` を `crates/kotoha-engine-ibus/src/types.rs`(新設)に Rust struct + `#[derive(zbus::zvariant::Type, serde::Serialize)]` で定義する。`IBusSerializable` 由来の `(sv)` variant ラッピングは `zbus::zvariant::Value` で表現する。
-- `IBusEngineSignals` の 5 method(`update_preedit` / `commit_text` / `update_lookup_table` / `show_lookup_table` / `hide_lookup_table`)は `connection.send_signal(...)` で実 D-Bus signal を session bus に発信する。signal interface name は `org.freedesktop.IBus.Engine`。
-- 失敗時は `Result<(), zbus::Error>` を caller(`host_bridge.rs`)へ propagate、host_bridge は `tracing::warn!(error = ?e, ...)` で集約観測する。engine state には影響を与えない(spec §9.3「silent_failure 禁止」と「signal failure を engine state に伝播させない non-propagating」の両立)。
-- L1 unit test は wire format round-trip(`zvariant::to_bytes` → `deserialize`)を `proxy.rs` 内部 `#[cfg(test)]` で検証する。Connection mock は CI 不安定要因(D-Bus daemon 依存)のため避け、実 D-Bus daemon 検証は B6 L3 manual smoke で実施する。
-- proxy 内 method 入口の `tracing::warn!("not yet wired ...")` は実装後に削除し、`tracing::debug!` で per-signal trace に降格する。`KOTOHA_LOG=debug` 起動時のみ観測される。
+- IBus 1.x の `IBusText` / `IBusAttribute` / `IBusAttrList` / `IBusLookupTable` を `crates/kotoha-engine-ibus/src/types.rs`(新設)に **plain data struct** として定義し、`into_variant() -> Value<'static>` method で `Value::Structure(...)` を手で組む方針を採る。`#[derive(zbus::zvariant::Type, serde::Serialize)]` は zbus 5 の `OwnedValue::try_from(Value)` が variant signature `v` のみ受ける制約と衝突するため不採用(types.rs 冒頭の §設計判断 に詳細)。内部表現は `attrs: IBusAttrList` / `candidates: Vec<IBusText>` のように **型情報を保持** し、wire 化は `into_variant()` で 1 段だけ行う。
+- `IBusEngineSignals` の 5 method(`update_preedit` / `commit_text` / `update_lookup_table` / `show_lookup_table` / `hide_lookup_table`)は `Message::signal(path, interface, member)?.build(&body)?` + `connection.send(&signal)` で実 D-Bus signal を session bus に発信する。signal interface 名は `org.freedesktop.IBus.Engine`、各 member 名と signature は IBus 1.5.x `bus/inputcontext.c` 仕様に準拠。
+- 各 production method は内部で **pure factory function** `build_*_signal(object_path, ...)` を呼び、L1 unit test は本 factory を direct exercise する。これにより member literal(`"UpdatePreeditText"` 等)が theater pattern なく test path に乗る。
+- 失敗時は `Result<(), zbus::Error>` を caller(`host_bridge.rs`)へ propagate、host_bridge は `tracing::warn!(error = %e, ...)` で集約観測する。`Display` format を採用するのは zbus の `Error::Debug` が将来 message body bytes を含めて拡張された場合の preedit / commit text leak を予防するため。engine state には影響を与えない(spec §9.3「silent_failure 禁止」と「signal failure を engine state に伝播させない non-propagating」の両立)。
+- L1 unit test は **structural assertion**(`Value::Structure` から field を取り出して順序・型・値を厳密に assert)で検証する。`zvariant::to_bytes` → `deserialize` の round-trip は zbus 5 の `Value` decode が signature 制約上機能しないため不採用。Connection mock は CI 不安定要因(D-Bus daemon 依存)のため避け、実 D-Bus daemon 検証は B6 L3 manual smoke で実施する。
+- types.rs / proxy.rs visibility は `pub(crate)` で crate 外部からは到達不可。production 経路は `IBusHostBridge::IMEHostBridge` impl 1 点のみで、入力は `kotoha_engine_core::sanitize` を通過した text のみが流入する設計。adapter 内部の defense-in-depth は visibility 降格で satisfy する。
+- proxy 内 method 入口の `tracing::warn!("not yet wired ...")` は実装後に削除し、`tracing::debug!` で per-signal trace に降格する。`KOTOHA_LOG=debug` 起動時のみ観測される。`text_byte_len = text.len()`(O(1))で hot path 観測コストを抑える。
+
+#### §4.2.1 Threat model — D-Bus session bus exposure
+
+D-Bus session bus 上の signal はすべて **同 UID で動作する全プロセス** に配信される(IBus protocol の根本前提)。`org.freedesktop.IBus.Engine` の `UpdatePreeditText` / `CommitText` を subscribe する任意 process(browser extension subprocess、malicious npm postinstall、Electron app 等)が user の打鍵内容を取得可能。
+
+Kotoha は **「user session = 同 UID プロセスは信頼可能」** を threat model assumption として採用する。multi-user kiosk / shared user account のような前提が成立しないユースケースは out of scope。`crates/kotoha-engine-ibus/src/proxy.rs` の `IBusEngineSignals` rustdoc にも同 note を記載する(Phase 5 / Phase 6 の review 時に再評価)。
 
 ### §4.3 `Ranker`(P2-D で実装される consumed contract)
 
@@ -862,3 +870,4 @@ Task A と Task B は実装規模が小さく(各 1 PR)、統合 PR にしても
 |------|----------|------|
 | 2026-05-02 | r1 | 初版 draft、ISSUE #116 |
 | 2026-05-04 | r2 | Phase 3-B B2 wire format 実装方針を §4.2 に追記、§13 Open Q 9 を B0h-d 結果で closure |
+| 2026-05-04 | r3 | §4.2 wire format 方針を実装後形に refresh(plain data struct + `into_variant`、structural assertion による test、`Display` 形式 error log)、§4.2.1 D-Bus session bus threat model 追加。Phase 3-B B2 PR #171 の review 統合反映 |
