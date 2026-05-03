@@ -141,7 +141,8 @@ GNOME Wayland session 上で `cargo run --bin kotoha` 起動 + 以下 applicatio
 |---|---|---|
 | ~~B0 (#140)~~ | 第 1 回包括レビュー Critical 4 + Important 9 消化 | **完了**(PR #141-#145、test 416 → 473) |
 | ~~B0f (#146)~~ | 機能完成宣言取り下げ + proxy / event loop fail-loud 化 | **完了**(PR #147 squash `9602dff`) |
-| **B0g-a (#148)** | C4 panic_message + C5 lookup_table + I9/I16 worker circuit breaker + I15 hybrid empty-fallback + I17 dispatcher panic catch | **進行中**(本 PR) |
+| **B0g-a (#148)** | C4 panic_message + C5 lookup_table + I9/I16 worker circuit breaker + I15 hybrid empty-fallback + I17 dispatcher panic catch | **進行中**(本 PR、self-review #5/#4 fix 済) |
+| B0g-b (#148) で追加検討 | self-review #2 ADR(`non_exhaustive` trade-off)、#3 ADR(flaky panic sliding-window metrics)、#7 `IMEEngine::enable` Result 化 で worker 死亡時 IBus daemon の re-enable loop 抑制 | B0g-a 後着手 |
 | B0g-b (#148) | I6 log credential leak redact + I7 HybridRanker child thread catch + I8 output sanitization | B0g-a 後着手 |
 | B0g-c (#148) | I10 theater fix + I11 spec §5.2 row 8 + I12 polling helper + I13 half-dead engine + I14 mock arg verify | B0g-b 後着手 |
 | B0h (#149) | hexagonal port 反転(C3) + SRP 分割(I1) + dispatcher Arc<Mutex>(I2) + dispatch async 化(I3) + Hybrid 切出し(I4) + stub feature gate(I5) | OSS 公開前必修 |

@@ -168,6 +168,8 @@ impl Ranker for HybridRanker {
                 Err(e) => {
                     tracing::warn!(
                         error = ?e,
+                        // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
+                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
                         kana = %kana_owned,
                         "sudachi tokenize failed; using empty dict candidates"
                     );
@@ -187,7 +189,9 @@ impl Ranker for HybridRanker {
                     Err(e) => {
                         tracing::warn!(
                             error = ?e,
-                            kana = %kana_owned,
+                            // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
+                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
+                        kana = %kana_owned,
                             "user_vocab find_by_prefix failed; using empty user candidates"
                         );
                         Vec::new()
@@ -200,6 +204,8 @@ impl Ranker for HybridRanker {
                 Err(e) => {
                     tracing::warn!(
                         error = ?e,
+                        // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
+                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
                         kana = %kana_owned,
                         "learning_cache lookup failed; using empty cache hits"
                     );
@@ -312,6 +318,8 @@ impl Ranker for HybridRanker {
                     // graceful degradation: dict-only fallback、第 2 段 push なし。
                     tracing::warn!(
                         error = ?e,
+                        // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
+                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
                         kana = %kana_owned,
                         "LLM backend failed, dict candidates only"
                     );

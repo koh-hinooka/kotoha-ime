@@ -43,6 +43,14 @@ pub const COMMIT_SECOND_WINDOW: Duration = Duration::from_millis(150);
 /// exit させる。exit 後は engine 主 thread が `tx_request.send` の Err を
 /// 観測し、enabled = false に degrade(spec §9.3「IME-disabled mode を
 /// user に通知」)。
+///
+/// # Flaky panic は scope 外
+///
+/// 本 counter は `IterationOutcome::Clean` で 0 リセットする。よって 1 keystroke
+/// 毎 panic / 次成功 / 次 panic / ... のような **flaky panic は永久に発火しない**。
+/// flaky 系の検出は本 const の責務外で、別途 sliding-window panic frequency
+/// metrics(B0g 後続 ADR 候補)で扱う。spec §9.1 row 2 の「worker thread 自体は
+/// loop continue で生存」と整合。
 const MAX_CONSECUTIVE_PANICS: u32 = 5;
 
 /// `RankerWorker` を spawn する。

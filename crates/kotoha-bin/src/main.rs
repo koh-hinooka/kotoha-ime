@@ -113,7 +113,15 @@ fn install_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // tracing への構造化転送(systemd journal / log aggregator 想定)
+        //
+        // self-review #1:同一 panic に対して本 hook と `catch_unwind` 経路の
+        // 両方で `tracing::error!` が出る(unwind 開始前 / 後で 2 回)。後段
+        // 集計で重複扱いするため `source = "panic_hook"` で識別子を付与する。
+        // catch_unwind 経路側は別 message なので grep で区別可能だが、本 field
+        // を併用すると alert duplication 抑制が容易。
         tracing::error!(
+            source = "panic_hook",
+            thread = ?std::thread::current().name(),
             location = ?info.location(),
             payload = %info,
             "panic hook captured panic"

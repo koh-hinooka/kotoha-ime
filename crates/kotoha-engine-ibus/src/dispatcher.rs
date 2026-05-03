@@ -68,11 +68,20 @@ impl<E: IMEEngine> IBusEventDispatcher<E> {
                     panic_type = ?(*payload).type_id(),
                     "engine.process_key_event panicked; resetting engine state"
                 );
-                // reset() 自体の二重 panic は session 全死亡を意味するので
-                // 静かに諦める(catch_unwind で flatten、`tracing::error!` のみ残す)。
-                let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+                // reset() 自体の二重 panic は session 全死亡相当で recovery 不能
+                // だが、**reset 失敗の事実** は ERROR log に必ず残す(self-review #5
+                // 指摘:payload 中身は捨てても fact は残さないと後続 keystroke で
+                // 再 panic ループが起きた時に root cause traceability が失われる)。
+                let reset_result = panic::catch_unwind(AssertUnwindSafe(|| {
                     self.engine.reset();
                 }));
+                if let Err(reset_payload) = reset_result {
+                    tracing::error!(
+                        panic_type = ?(*reset_payload).type_id(),
+                        "engine.reset() panicked during dispatch_key recovery; \
+                         engine state corruption likely; subsequent keystrokes may panic again"
+                    );
+                }
                 false
             }
         }
