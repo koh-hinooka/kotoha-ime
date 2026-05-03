@@ -21,6 +21,7 @@ use crate::ranker::{CandidateUpdate, ConversionContext, ConversionMode, Ranker};
 mod candidates;
 mod commit_history;
 mod event;
+mod learning;
 mod preedit;
 #[doc(hidden)]
 pub mod transitions;
@@ -28,6 +29,7 @@ mod worker;
 mod worker_channel;
 
 use candidates::CandidateBuffer;
+use learning::LearningSink;
 use preedit::PreeditBuffer;
 use worker_channel::WorkerChannel;
 
@@ -70,40 +72,45 @@ pub(crate) struct RequestHandle {
 /// - `active_request.is_some()` ⇒ `cancel_token` が一意に存在
 /// - `commit_history.total_chars() <= 200`([`CommitHistory::push`] で維持)
 ///
-/// # Phase 3-B B0h-c-i (ISSUE #149 / #161) / B0h-c-ii (#163) field 整理
+/// # Phase 3-B B0h-c (ISSUE #149) field 整理(sub-PR i / ii / iii で完了)
 ///
-/// 旧 7 field を 3 sub-struct に集約:
+/// 旧 10 raw field を 4 sub-struct に集約:
 /// - `current_preedit: String` + `romaji: RomajiConverter` →
 ///   [`preedit::PreeditBuffer`] (`engine.preedit.current` / `engine.preedit.romaji`)
+///   — B0h-c-i (#161 / PR #162)
 /// - `candidates: Vec<Candidate>` + `highlight_idx: usize` →
 ///   [`candidates::CandidateBuffer`] (`engine.candidates.items` /
-///   `engine.candidates.highlight`)
+///   `engine.candidates.highlight`)— B0h-c-i
 /// - `tx_request` + `rx_event` + `worker_handle` →
 ///   [`worker_channel::WorkerChannel`] (`engine.worker.tx_request` /
 ///   `engine.worker.rx_event`)。本 sub-struct が `Drop` impl を持つため
-///   `KotohaEngine::Drop` は撤去された。
+///   `KotohaEngine::Drop` は撤去された — B0h-c-ii (#163 / PR #164)
+/// - `learning_writer` + `commit_history` + `last_commit_at` →
+///   [`learning::LearningSink`] (`engine.learning.recorder` /
+///   `engine.learning.commit_history` / `engine.learning.last_commit_at`)
+///   — B0h-c-iii (#165、本 PR)
 ///
-/// 残 8 field (`state` / `host` / `ranker` / `learning_writer` /
-/// `commit_history` / `active_request` / `request_id_seed` / `last_commit_at` /
-/// `enabled` / `focused`) は B0h-c-iii (`LearningSink` +
-/// transitions.rs method 化) で順次抽出する。
+/// 残 7 field (`state` / `host` / `ranker` / `active_request` /
+/// `request_id_seed` / `enabled` / `focused`)は state machine 駆動 + 外部 DI +
+/// flag のみで cohesive、追加分割は不要。
 pub struct KotohaEngine {
     pub(crate) state: EngineState,
     pub(crate) host: Box<dyn IMEHostBridge>,
     pub(crate) ranker: Arc<dyn Ranker>,
-    pub(crate) learning_writer: Arc<dyn crate::learning_port::LearningRecorder>,
     pub(crate) preedit: PreeditBuffer,
-    pub(crate) commit_history: CommitHistory,
     pub(crate) candidates: CandidateBuffer,
     pub(crate) active_request: Option<RequestHandle>,
     pub(crate) request_id_seed: u64,
-    pub(crate) last_commit_at: Instant,
     pub(crate) enabled: bool,
     pub(crate) focused: bool,
     /// `RankerWorker` 主 thread と engine 主 thread を結ぶ channel pair および
     /// worker thread join handle。本 sub-struct の `Drop` impl が `tx_request`
     /// drop → worker exit → 別 thread で join の順で safe shutdown を行う。
     pub(crate) worker: WorkerChannel,
+    /// commit lifecycle に紐付く 3 リソース(学習 sink / 直近 commit 文字列 /
+    /// 最終 commit 時刻)。`handle_return` で lock-step 更新され、
+    /// `dispatch_rank_request` で `ConversionContext` に snapshot される。
+    pub(crate) learning: LearningSink,
 }
 
 impl KotohaEngine {
@@ -132,16 +139,14 @@ impl KotohaEngine {
             state: EngineState::Idle,
             host,
             ranker,
-            learning_writer,
             preedit: PreeditBuffer::new(),
-            commit_history: CommitHistory::new(),
             candidates: CandidateBuffer::new(),
             active_request: None,
             request_id_seed: 0,
-            last_commit_at: Instant::now(),
             enabled: false,
             focused: false,
             worker,
+            learning: LearningSink::new(learning_writer),
         })
     }
 
@@ -170,8 +175,8 @@ impl KotohaEngine {
         let request_id = self.next_request_id();
         let cancel_token = Arc::new(StdCancellationToken::new());
         let ctx = ConversionContext {
-            commit_history: self.commit_history.snapshot(),
-            time_since_last_commit: self.last_commit_at.elapsed(),
+            commit_history: self.learning.commit_history.snapshot(),
+            time_since_last_commit: self.learning.last_commit_at.elapsed(),
             mode,
         };
         self.active_request = Some(RequestHandle {
@@ -450,7 +455,7 @@ impl IMEEngine for KotohaEngine {
         // spec §5.2: focus_out は cancel + clear + Idle
         self.cancel_active();
         self.preedit.clear();
-        self.commit_history.clear();
+        self.learning.clear_history();
         self.candidates.clear();
         self.host.hide_candidate_window();
         self.host.update_preedit("", 0, false);
@@ -462,7 +467,7 @@ impl IMEEngine for KotohaEngine {
         // spec §5.2: reset は focus_out と同等処理
         self.cancel_active();
         self.preedit.clear();
-        self.commit_history.clear();
+        self.learning.clear_history();
         self.candidates.clear();
         self.host.hide_candidate_window();
         self.host.update_preedit("", 0, false);
