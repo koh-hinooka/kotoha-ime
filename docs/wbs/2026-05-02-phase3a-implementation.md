@@ -148,9 +148,10 @@ GNOME Wayland session 上で `cargo run --bin kotoha` 起動 + 以下 applicatio
 | ~~B0g-c (#148)~~ | I10 theater fix + I11 spec §5.2 row 8 + I12 polling helper + I13 half-dead engine + I14 mock arg verify | **完了**(PR #152 squash `833c7d9`、test 447 / 498) |
 | ~~B0h-a (#153)~~ | C3 hexagonal driven port 反転(`learning_port` を engine-core に新設、`kotoha-engine-adapter` crate 切出し、engine-core が storage を直接 import しない構造へ) | **完了**(PR #154 squash `5c37d65`、test 464 / 515) |
 | ~~B0h-b (#155)~~ | I4 `HybridRanker` を `kotoha-ranker-hybrid` 別 crate へ切り出し(engine-core から concrete adapter を分離、LLM features を ranker-hybrid 側に移送) | **完了**(PR #156 squash `3cc36a9`、test 504 / 515) |
-| **B0h-d (#157)** | I2 `IBusEventDispatcher` を `Arc<Mutex<dyn IMEEngine>>` 化(B3 event loop の前提整備) | **進行中**(本 PR、test 504 / 515) |
+| ~~B0h-d (#157)~~ | I2 `IBusEventDispatcher` を `Arc<Mutex<dyn IMEEngine>>` 化(B3 event loop の前提整備) | **完了**(PR #158 squash `ba7dc6d`、test 504 / 515) |
+| **B0h-e (#159)** | I5 stub fallback feature gate(`StubRanker` / `StubHostBridge` を `dev-stubs` feature で gate、release default で stub symbol 0 link) | **進行中**(本 PR、test 504 / 515) |
 | B0g 後追加検討(B0h 候補) | self-review#1〜#9: `non_exhaustive` trade-off ADR、flaky panic sliding-window metrics ADR、`IMEEngine::enable` Result 化、F4-F9 系 ADR | OSS 公開前 |
-| B0h-c / B0h-e / B0h-f (#149) | I1 SRP 分割 / I5 stub feature gate / I3 async dispatch | OSS 公開前必修 |
+| B0h-c / B0h-f (#149) | I1 SRP 分割 / I3 async dispatch | OSS 公開前必修 |
 | B2 | IBus signal body marshalling | B0f 後着手 |
 | B3 | IBus signal listener loop + event loop | B0f / B2 後着手 |
 | B6 | L3 manual smoke | B2 / B3 後着手 |
