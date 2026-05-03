@@ -248,7 +248,13 @@ fn run_ibus() -> anyhow::Result<()> {
     // event loop が無いまま exit code 0 を返し、systemd の Restart=on-failure
     // が再起動しない silent failure(spec §9.3 違反)だった。実 event loop
     // 完成までは fail-loud で起動失敗を user に通知する。
-    let _dispatcher = kotoha_engine_ibus::IBusEventDispatcher::new(engine);
+    //
+    // Phase 3-B B0h-d (ISSUE #149 / #157):dispatcher を `Arc<Mutex<dyn IMEEngine>>`
+    // に切り替え。B3 event loop で D-Bus signal listener thread と engine を
+    // 共有する瞬間に必須となる前提を、B3 着手前に整える先行作業。
+    let engine_shared: std::sync::Arc<std::sync::Mutex<dyn kotoha_engine_core::IMEEngine>> =
+        std::sync::Arc::new(std::sync::Mutex::new(engine));
+    let _dispatcher = kotoha_engine_ibus::IBusEventDispatcher::new(engine_shared);
 
     tracing::error!(
         ranker_backend,

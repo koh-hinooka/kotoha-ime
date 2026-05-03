@@ -2,15 +2,23 @@
 //! `IMEEngine` method 呼び出しに変換する driving adapter。
 //!
 //! Phase 3-A spec §3.3 全体図 / §3.2 driving adapter。
-//! 本 PR (M5) では blocking loop で `IBusEngine` interface の signal を
-//! receive し、`process_key_event` / `focus_in` / `focus_out` / `enable` /
-//! `disable` / `reset` に dispatch する。
+//! 本 module は single-method dispatcher を provide し、生 signal listener は
+//! kotoha-bin / Phase 3-B B3 で確立する。実際の D-Bus signal body decode + match
+//! は Phase 3-B B2(spec §13 Open Q 9)で詳細化する。
 //!
-//! 実際の D-Bus signal body decode + match は Phase 3-A 実装段階で
-//! 詳細詰め(spec §13 Open Q 9)。本 PR では single-method dispatcher を
-//! provide し、生 signal listener は kotoha-bin (M6) で確立する。
+//! # Phase 3-B B0h-d (ISSUE #149 / #157):dispatcher を `Arc<Mutex<dyn IMEEngine>>`
+//!
+//! 旧 dispatcher は `IBusEventDispatcher<E: IMEEngine> { engine: E }` で engine を
+//! 自身で own していた。Phase 3-B B3 (event loop) で D-Bus signal listener thread
+//! と engine を multi-thread 越しに共有する瞬間に必ず `Arc<Mutex<dyn IMEEngine>>` 化
+//! が必要となるため(spec §13 Open Q 9)、B3 直前に入れる先行作業として B0h-d で
+//! 反転した。各 `dispatch_*` method 内は `self.engine.lock().unwrap_or_else
+//! (PoisonError::into_inner)` 経由で MutexGuard を取り、その上で engine を呼ぶ。
+//! Mutex poisoning policy は kotoha-storage の `LearningCacheStore` などと同じ
+//! 「内部 invariant が無いので poison から復帰する」方針(B0g-a / PR #150)。
 
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use kotoha_engine_core::IMEEngine;
 
@@ -19,18 +27,24 @@ use crate::keysym;
 /// IBus daemon が送る engine signal を receive し engine に dispatch する。
 ///
 /// 各 `dispatch_*` method は IBus daemon 側から受け取る生 args を受領し、
-/// engine の対応 method を呼び出す薄い変換層として動く。
-///
-/// # Generic 引数
-///
-/// `E: IMEEngine` を受けるため、test では `MockEngine` を直接注入できる
-/// (kotoha-engine-core::testing::MockHostBridge と同方針)。
-pub struct IBusEventDispatcher<E: IMEEngine> {
-    engine: E,
+/// engine の対応 method を呼び出す薄い変換層として動く。`engine` は
+/// [`Arc<Mutex<dyn IMEEngine>>`] として保持され、外部(将来の B3 event loop /
+/// test)から `Arc::clone` で共有可能。`IMEEngine` trait は `Send` を要求し、
+/// `Mutex<T>: Sync where T: Send` から `Arc<Mutex<dyn IMEEngine>>` は
+/// `Send + Sync` を満たす。
+pub struct IBusEventDispatcher {
+    engine: Arc<Mutex<dyn IMEEngine>>,
 }
 
-impl<E: IMEEngine> IBusEventDispatcher<E> {
-    pub fn new(engine: E) -> Self {
+impl IBusEventDispatcher {
+    /// dispatcher を構築する。
+    ///
+    /// # Preconditions
+    ///
+    /// - `engine` は `IMEEngine` trait object の Mutex を共有する Arc。
+    ///   呼び出し側(`kotoha-bin`)で `Arc::new(Mutex::new(KotohaEngine::new(...)))`
+    ///   等として構築する。
+    pub fn new(engine: Arc<Mutex<dyn IMEEngine>>) -> Self {
         Self { engine }
     }
 
@@ -53,10 +67,12 @@ impl<E: IMEEngine> IBusEventDispatcher<E> {
     /// - panic 検出は `tracing::error!` で観測される
     /// - reset() 自体が panic した場合は二重 panic を避けるため再 catch_unwind
     ///   で囲い、それも失敗したら最後の手段として `false` だけ返す
-    pub fn dispatch_key(&mut self, keysym: u32, keycode: u32, state: u32) -> bool {
+    pub fn dispatch_key(&self, keysym: u32, keycode: u32, state: u32) -> bool {
         let ev = keysym::from_ibus(keysym, keycode, state);
-        let engine = &mut self.engine;
-        let result = panic::catch_unwind(AssertUnwindSafe(|| engine.process_key_event(ev)));
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            let mut guard = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+            guard.process_key_event(ev)
+        }));
         match result {
             Ok(kotoha_engine_core::KeyEventResult::Consumed) => true,
             Ok(kotoha_engine_core::KeyEventResult::Forwarded) => false,
@@ -77,7 +93,8 @@ impl<E: IMEEngine> IBusEventDispatcher<E> {
                 // 指摘:payload 中身は捨てても fact は残さないと後続 keystroke で
                 // 再 panic ループが起きた時に root cause traceability が失われる)。
                 let reset_result = panic::catch_unwind(AssertUnwindSafe(|| {
-                    self.engine.reset();
+                    let mut guard = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+                    guard.reset();
                 }));
                 if let Err(reset_payload) = reset_result {
                     let reset_msg = kotoha_engine_core::engine::panic_message_from(&reset_payload);
@@ -92,29 +109,29 @@ impl<E: IMEEngine> IBusEventDispatcher<E> {
         }
     }
 
-    pub fn dispatch_focus_in(&mut self) {
-        self.engine.focus_in();
+    pub fn dispatch_focus_in(&self) {
+        let mut guard = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        guard.focus_in();
     }
 
-    pub fn dispatch_focus_out(&mut self) {
-        self.engine.focus_out();
+    pub fn dispatch_focus_out(&self) {
+        let mut guard = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        guard.focus_out();
     }
 
-    pub fn dispatch_enable(&mut self) {
-        self.engine.enable();
+    pub fn dispatch_enable(&self) {
+        let mut guard = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        guard.enable();
     }
 
-    pub fn dispatch_disable(&mut self) {
-        self.engine.disable();
+    pub fn dispatch_disable(&self) {
+        let mut guard = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        guard.disable();
     }
 
-    pub fn dispatch_reset(&mut self) {
-        self.engine.reset();
-    }
-
-    /// engine への可変参照を返す(test での状態確認用)。
-    pub fn engine_mut(&mut self) -> &mut E {
-        &mut self.engine
+    pub fn dispatch_reset(&self) {
+        let mut guard = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        guard.reset();
     }
 }
 
@@ -122,10 +139,15 @@ impl<E: IMEEngine> IBusEventDispatcher<E> {
 mod tests {
     //! Phase 3-B B0e (ISSUE #140 / Important 11): dispatcher の 6 method を
     //! `MockEngine` 注入で網羅する unit test。
+    //!
+    //! Phase 3-B B0h-d (ISSUE #149 / #157): dispatcher が `Arc<Mutex<dyn IMEEngine>>`
+    //! ベースに変わったため、test fixture も `Arc<Mutex<MockEngine>>` を
+    //! 共有する pattern に切り替えた(test 側で同 Arc を保持し直接観測する)。
 
     use super::*;
     use kotoha_engine_core::ime_engine::IMEEngine;
     use kotoha_engine_core::key_event::{KeyEvent, KeyEventResult};
+    use std::sync::{Arc, Mutex};
 
     /// dispatcher 単体 test 専用の最小 IMEEngine 実装。
     ///
@@ -170,13 +192,25 @@ mod tests {
         }
     }
 
+    /// MockEngine を Arc<Mutex<>> で wrap して dispatcher と test code に共有
+    /// 注入するための helper。返り値の `(dispatcher, mock)` 双方が同 inner を
+    /// 共有しており、`mock.lock().unwrap()` で test 側が直接観測できる。
+    fn build_with_mock(
+        key_result: KeyEventResult,
+    ) -> (IBusEventDispatcher, Arc<Mutex<MockEngine>>) {
+        let mock = Arc::new(Mutex::new(MockEngine::new(key_result)));
+        let engine: Arc<Mutex<dyn IMEEngine>> = mock.clone();
+        (IBusEventDispatcher::new(engine), mock)
+    }
+
     #[test]
     fn dispatch_key_consumed_returns_true_and_decodes_state() {
-        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Consumed));
+        let (d, mock) = build_with_mock(KeyEventResult::Consumed);
         // SHIFT_MASK (1 << 0) | CONTROL_MASK (1 << 2) = 0b101 = 5
         let consumed = d.dispatch_key(0x6b, 45, 5);
         assert!(consumed);
-        let ev = d.engine_mut().last_key.expect("key recorded");
+        let m = mock.lock().expect("mock lock");
+        let ev = m.last_key.expect("key recorded");
         assert_eq!(ev.keysym, 0x6b);
         assert_eq!(ev.keycode, 45);
         assert!(ev
@@ -185,49 +219,49 @@ mod tests {
         assert!(ev
             .modifiers
             .contains(kotoha_engine_core::KeyModifiers::CTRL));
-        assert_eq!(d.engine_mut().lifecycle, vec!["process_key_event"]);
+        assert_eq!(m.lifecycle, vec!["process_key_event"]);
     }
 
     #[test]
     fn dispatch_key_forwarded_returns_false() {
-        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        let (d, _mock) = build_with_mock(KeyEventResult::Forwarded);
         let consumed = d.dispatch_key(0x6b, 0, 0);
         assert!(!consumed);
     }
 
     #[test]
     fn dispatch_focus_in_invokes_focus_in() {
-        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        let (d, mock) = build_with_mock(KeyEventResult::Forwarded);
         d.dispatch_focus_in();
-        assert_eq!(d.engine_mut().lifecycle, vec!["focus_in"]);
+        assert_eq!(mock.lock().expect("mock lock").lifecycle, vec!["focus_in"]);
     }
 
     #[test]
     fn dispatch_focus_out_invokes_focus_out() {
-        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        let (d, mock) = build_with_mock(KeyEventResult::Forwarded);
         d.dispatch_focus_out();
-        assert_eq!(d.engine_mut().lifecycle, vec!["focus_out"]);
+        assert_eq!(mock.lock().expect("mock lock").lifecycle, vec!["focus_out"]);
     }
 
     #[test]
     fn dispatch_enable_invokes_enable() {
-        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        let (d, mock) = build_with_mock(KeyEventResult::Forwarded);
         d.dispatch_enable();
-        assert_eq!(d.engine_mut().lifecycle, vec!["enable"]);
+        assert_eq!(mock.lock().expect("mock lock").lifecycle, vec!["enable"]);
     }
 
     #[test]
     fn dispatch_disable_invokes_disable() {
-        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        let (d, mock) = build_with_mock(KeyEventResult::Forwarded);
         d.dispatch_disable();
-        assert_eq!(d.engine_mut().lifecycle, vec!["disable"]);
+        assert_eq!(mock.lock().expect("mock lock").lifecycle, vec!["disable"]);
     }
 
     #[test]
     fn dispatch_reset_invokes_reset() {
-        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        let (d, mock) = build_with_mock(KeyEventResult::Forwarded);
         d.dispatch_reset();
-        assert_eq!(d.engine_mut().lifecycle, vec!["reset"]);
+        assert_eq!(mock.lock().expect("mock lock").lifecycle, vec!["reset"]);
     }
 
     // --------------------------------------------------------------
@@ -265,20 +299,29 @@ mod tests {
     /// I17: dispatch_key 内で process_key_event が panic した場合、dispatcher
     /// は catch_unwind で受けて reset() を呼び、戻り値は `false`(forward)を
     /// 返す。IBus daemon 側 thread の永久 hang(spec §9.1 row 5)を防ぐ。
+    ///
+    /// B0h-d:Mutex poison 後でも reset() が呼べ、test 側 observation が
+    /// `unwrap_or_else(PoisonError::into_inner)` 経由で続行できることも合わせて
+    /// 検証する。
     #[test]
     fn dispatch_key_catches_engine_panic_and_resets_state() {
-        let mut d = IBusEventDispatcher::new(PanickingEngine::new());
+        let mock = Arc::new(Mutex::new(PanickingEngine::new()));
+        let engine: Arc<Mutex<dyn IMEEngine>> = mock.clone();
+        let d = IBusEventDispatcher::new(engine);
         let result = d.dispatch_key(0x6b, 0, 0);
         assert!(
             !result,
             "dispatch_key should return false when engine.process_key_event panics"
         );
+        // panic 発生で Mutex は poison 状態。test 側からも
+        // `unwrap_or_else(PoisonError::into_inner)` で recover して観測する。
+        let m = mock.lock().unwrap_or_else(PoisonError::into_inner);
         assert!(
-            d.engine_mut().process_key_called,
+            m.process_key_called,
             "process_key_event should have been called before the panic"
         );
         assert!(
-            d.engine_mut().reset_called,
+            m.reset_called,
             "reset() should be called after panic recovery in dispatch_key"
         );
     }
