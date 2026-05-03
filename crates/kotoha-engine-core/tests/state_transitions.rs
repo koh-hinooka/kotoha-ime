@@ -78,13 +78,73 @@ fn idle_typing_transitions_to_live() {
     assert_eq!(r2, KeyEventResult::Consumed);
     assert_eq!(eng.state_for_test(), EngineState::LiveConverting);
     let ops = host.operations();
-    assert!(ops.iter().any(|o| matches!(
-        o,
-        HostOperation::UpdatePreedit { text, .. } if text == "か"
-    )));
+    // B0g-c #148 / I14: cursor 値も含めて contract 違反を catch する。
+    //
+    // # cursor 単位
+    //
+    // production 側 `engine/transitions.rs::handle_typing` は
+    // `engine.current_preedit.chars().count()` を cursor として host.update_preedit
+    // に渡す(= **Unicode scalar 単位**、UTF-8 byte 数や grapheme cluster 数では
+    // ない)。「か」1 文字 = 1 scalar、`len()=3` (UTF-8 3 bytes) ではないこと
+    // を本 assert で pin する。byte-length-vs-char-count drift で `cursor=3` に
+    // regress する production bug を即時 detect。grapheme cluster 単位への変更
+    // を将来検討する場合は spec 側で凍結 + 本 test を新単位に追従させる。
+    assert!(
+        ops.iter().any(|o| matches!(
+            o,
+            HostOperation::UpdatePreedit { text, cursor, visible }
+                if text == "か" && *cursor == 1 && *visible
+        )),
+        "expected UpdatePreedit(text=\"か\", cursor=1 (Unicode scalar count), visible=true) \
+         but got {ops:?}"
+    );
     assert!(ops
         .iter()
         .any(|o| matches!(o, HostOperation::ShowCandidateWindow)));
+}
+
+/// I14 demonstration: MockRanker.last_kana / last_mode で `dispatch_rank_request`
+/// が正しい kana / mode を Ranker に渡しているかを直接観測する。
+///
+/// `cursor` 値検証(`idle_typing_transitions_to_live`)と組合わせて、engine →
+/// Ranker 境界の引数 contract を二重に守る。
+#[test]
+fn idle_typing_passes_correct_kana_and_mode_to_ranker() {
+    use kotoha_engine_core::ranker::ConversionMode;
+    let host = MockHostBridge::new();
+    let host_clone = host.clone();
+    let ranker = Arc::new(kotoha_engine_core::testing::MockRanker::new(vec![
+        Candidate::new("か", -1.0),
+    ]));
+    let ranker_handle = ranker.clone();
+    let writer = Arc::new(MockLearningWriter::default());
+    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, writer).expect("engine spawn");
+    eng.enable();
+    eng.focus_in();
+    let _ = host;
+
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+
+    // Live mode で kana="か" が渡る(spec §6.1)。
+    assert_eq!(
+        ranker_handle.last_kana(),
+        Some("か".to_string()),
+        "Ranker should receive the current preedit as kana arg"
+    );
+    assert_eq!(
+        ranker_handle.last_mode(),
+        Some(ConversionMode::Live),
+        "Live keystroke should dispatch in ConversionMode::Live"
+    );
+
+    // space で commit mode に切替わる。
+    eng.process_key_event(key_special(keysyms::SPACE));
+    assert_eq!(
+        ranker_handle.last_mode(),
+        Some(ConversionMode::Commit),
+        "space keystroke should dispatch in ConversionMode::Commit"
+    );
 }
 
 /// spec §5.2 row 4: LiveConverting + space。即応 Ranker(MockRanker は同期 send)で
@@ -406,6 +466,87 @@ fn live_space_with_slow_ranker_stays_at_commit_converting() {
         .operations()
         .iter()
         .any(|o| matches!(o, HostOperation::ShowCandidateWindow)));
+}
+
+// ------------------------------------------------------------------
+// Phase 3-B B0g-c (ISSUE #148 / I11): spec §5.2 row 8 — CommitConverting
+// 中間状態での Esc / backspace / focus_out / typing 各 trigger
+// ------------------------------------------------------------------
+
+/// row 8 path-1: CommitConverting + Esc → Idle + preedit clear
+///
+/// SlowRanker で CommitConverting に留めた状態で Esc を撃ち、Idle に戻る
+/// + preedit が空になることを観測。spec §5.2 row 8 / §6.4。
+///
+/// self-review C1:旧版は `sleep(100ms) + DOWN keystroke` で「遅れて到着した
+/// 候補が CandidatesShown 昇格しない」を assert していたが、これは
+/// (a) `sleep(100ms)` 固定 wait が CI scheduler 圧迫で flaky を新規導入し、
+/// (b) SlowRanker thread が cancel 経由で sink.send をスキップする path と
+/// 「100ms 経っても何も起こらない」path が観測上区別不能(timing dependent
+/// theater pattern)、という二重問題があったため削除。Esc→Idle 直後の
+/// primary 不変条件のみを残す。
+#[test]
+fn commit_converting_escape_returns_to_idle() {
+    let (mut eng, _host) = build_engine_with_slow_ranker(80, vec![Candidate::new("か", -1.0)]);
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+    eng.process_key_event(key_special(keysyms::SPACE));
+    assert_eq!(eng.state_for_test(), EngineState::CommitConverting);
+    eng.process_key_event(key_special(keysyms::ESCAPE));
+    assert_eq!(eng.state_for_test(), EngineState::Idle);
+    assert!(eng.preedit_for_test().is_empty());
+}
+
+/// row 8 path-2: CommitConverting + backspace → Idle(preedit 全消去で空に)。
+///
+/// kana 「か」(1 文字)を持つ CommitConverting で backspace を撃つと
+/// preedit が空になり Idle に戻る。
+#[test]
+fn commit_converting_backspace_returns_to_idle() {
+    let (mut eng, _host) = build_engine_with_slow_ranker(80, vec![Candidate::new("か", -1.0)]);
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+    eng.process_key_event(key_special(keysyms::SPACE));
+    assert_eq!(eng.state_for_test(), EngineState::CommitConverting);
+    eng.process_key_event(key_special(keysyms::BACKSPACE));
+    assert_eq!(eng.state_for_test(), EngineState::Idle);
+    assert!(eng.preedit_for_test().is_empty());
+}
+
+/// row 8 path-3: CommitConverting + focus_out → Idle + preedit clear。
+///
+/// IME-host が focus 喪失を通知した時、進行中の commit converting を破棄して
+/// state を Idle に戻す(spec §5.3 lifecycle)。
+#[test]
+fn commit_converting_focus_out_returns_to_idle() {
+    use kotoha_engine_core::ime_engine::IMEEngine as _;
+    let (mut eng, _host) = build_engine_with_slow_ranker(80, vec![Candidate::new("か", -1.0)]);
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+    eng.process_key_event(key_special(keysyms::SPACE));
+    assert_eq!(eng.state_for_test(), EngineState::CommitConverting);
+    eng.focus_out();
+    assert_eq!(eng.state_for_test(), EngineState::Idle);
+    assert!(eng.preedit_for_test().is_empty());
+}
+
+/// row 8 path-4: CommitConverting + 通常 char → 古い request を cancel し
+/// 拡張 preedit で LiveConverting に戻る。
+///
+/// CommitConverting 中に user が typing を続けた場合、user は変換結果を
+/// 待たずに次文字を打ち始めた = commit を諦めた、と解釈する。spec §5.2
+/// row 8 / §6.1 で Live mode に降格する。
+#[test]
+fn commit_converting_typing_returns_to_live_with_extended_preedit() {
+    let (mut eng, _host) = build_engine_with_slow_ranker(80, vec![Candidate::new("か", -1.0)]);
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+    eng.process_key_event(key_special(keysyms::SPACE));
+    assert_eq!(eng.state_for_test(), EngineState::CommitConverting);
+    // 'i' を打つ → preedit が「かい」に拡張、state は LiveConverting に降格。
+    eng.process_key_event(key_char('i'));
+    assert_eq!(eng.state_for_test(), EngineState::LiveConverting);
+    assert_eq!(eng.preedit_for_test(), "かい");
 }
 
 /// spec §5.2 row 7: CommitConverting で RankerOutput が遅れて到着すると、
