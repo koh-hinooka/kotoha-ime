@@ -17,25 +17,35 @@ pub const LEARNING_CACHE_MAX_ROWS: usize = 10_000;
 /// 本 static は **test-only** であり、`#[cfg(any(test, feature = "test-helpers"))]`
 /// で gate されているため production / release binary には含まれない
 /// (spec §4.5 / §4.6)。
-/// integration test crate(`crates/kotoha-storage/tests/*.rs`)から利用するため、
-/// crate feature `test-helpers` を有効化したときのみ `pub` として可視化する。
-/// 本 feature は `--features kotoha-storage/test-helpers` を渡したテスト時のみ
-/// 有効化する想定で、production binary では常に compile-out される。
+///
+/// # Visibility
+///
+/// `pub(crate)`(B0g 後の ISSUE #107 / S-3 follow-up):本 static を直接
+/// `.store(...)` で書き換える経路は [`CapOverrideGuard`] の RAII 契約を bypass
+/// するため、外部 crate(integration test 含む)からは [`CapOverrideGuard::new`] /
+/// [`CapOverrideGuard::lock_only`] のみを使う規約とする。本 static の直接
+/// access は同 crate 内 (`learning_cache::sqlite` module 内 unit test や
+/// `CapOverrideGuard::Drop`)に限定する。
 ///
 /// 10,000 行を実際に挿入するテストは時間 / メモリの観点で非現実的なため、
 /// 単体テスト / integration テストはこの override を介して小さな上限値で
 /// eviction 動作を検証する。
 #[cfg(any(test, feature = "test-helpers"))]
-pub static LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
 
 /// override の直列化用 Mutex(複数 test が同時 override しないよう直列化)。
 ///
 /// 本 static は **test-only** であり、`#[cfg(any(test, feature = "test-helpers"))]`
 /// で gate されているため production / release binary には含まれない。
-/// integration test crate から利用するため、crate feature `test-helpers` を
-/// 有効化したときのみ `pub` として可視化する。
+///
+/// # Visibility
+///
+/// `pub(crate)`(ISSUE #107 / S-3 follow-up):本 lock を直接取得する経路は
+/// [`CapOverrideGuard`] の RAII 契約を bypass するため、外部 crate からは
+/// [`CapOverrideGuard::new`] / [`CapOverrideGuard::lock_only`] のみを使う規約
+/// とする。
 #[cfg(any(test, feature = "test-helpers"))]
-pub static CAP_OVERRIDE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static CAP_OVERRIDE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// 行数上限の effective value を返す。
 ///
@@ -45,8 +55,11 @@ pub static CAP_OVERRIDE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// test build (`cargo test` の unit test、または `--features test-helpers` を
 /// 有効化した integration test) では override 値を反映する。
 ///
-/// `pub` 公開は test build に限定する(spec §4.5 / §4.6)。production からは
-/// `pub(crate)` でのみ参照可能で、外部 crate に test-only API は露出しない。
+/// # Visibility
+///
+/// `pub(crate)`(ISSUE #107 / S-3 follow-up):本関数は内部 cap 計算 helper で
+/// 外部 crate からの直接呼び出し経路は無い(record_choice 内部で参照される
+/// のみ)。両 cfg variant とも `pub(crate)` で統一して expose 範囲を縮小する。
 ///
 /// # Postconditions
 ///
@@ -55,7 +68,7 @@ pub static CAP_OVERRIDE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 ///   それ以外の場合は override 値を返す
 #[cfg(any(test, feature = "test-helpers"))]
 #[inline]
-pub fn effective_max_rows() -> usize {
+pub(crate) fn effective_max_rows() -> usize {
     let v = LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE.load(Ordering::SeqCst);
     if v != 0 {
         return v;
@@ -67,7 +80,6 @@ pub fn effective_max_rows() -> usize {
 ///
 /// override 機構は `#[cfg(any(test, feature = "test-helpers"))]` で
 /// compile-out されるため、production では常に [`LEARNING_CACHE_MAX_ROWS`] を返す。
-/// crate-internal 利用に限定するため `pub(crate)` で公開する。
 #[cfg(not(any(test, feature = "test-helpers")))]
 #[inline]
 pub(crate) fn effective_max_rows() -> usize {
