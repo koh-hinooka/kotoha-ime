@@ -1,47 +1,39 @@
 //! IBus 1.x D-Bus interface proxy 定義(zbus 5.x blocking API 経由)。
 //!
-//! # 現状(Phase 3-B B0f 時点)
+//! `IBusEngineSignals` は IBus engine が host(`InputContext`)に発する
+//! signal の helper 群。Phase 3-B B2 で 5 method すべてが
+//! `Message::signal(...)?.build(&body)?` + `connection.send(&signal)` の形で
+//! 実 D-Bus signal を session bus に発信する。
 //!
-//! signal body marshalling と emit 機構は **Phase 3-B B2 / B3 で実装する**。
-//! B0f までは 5 method すべて [`zbus::Error::Failure`] を返し fail-loud で
-//! 動く(spec §9.3「silent_failure 禁止」を守るため)。host_bridge 側は
-//! `Err` を `tracing::warn!` で観測する経路を既に持つ
-//! (`crates/kotoha-engine-ibus/src/host_bridge.rs`)。
+//! signal の wire-format type は [`crate::types`] module で定義(spec §4.2 r2)。
 //!
-//! 旧版(B0e まで)は `Ok(())` を返して TRACE log 1 行のみ残す **silent
-//! no-op stub** で、production 起動成功 INFO log と組合わさって user に
-//! 「IBus 通信が動いていない」を伝えない構造的 silent failure を作っていた。
-//! 包括 review (2026-05-03) で Critical 1 として検出した(ISSUE #146)。
+//! # 失敗時挙動
 //!
-//! 実 signal emit は Phase 3-B B3 で `connection.send_signal` 越しに
-//! `IBusText` / `IBusLookupTable` の D-Bus marshalling を含めて詳細化する
-//! (spec §13 Open Q 9)。
+//! 各 method は `Result<(), zbus::Error>` を返し、caller(`host_bridge.rs`)が
+//! `tracing::warn!(error = %e, ...)` で集約観測する。signal failure は engine
+//! state に伝播させない(spec §9.3「silent_failure 禁止」と「non-propagating」
+//! の両立)。
 
 use zbus::blocking::Connection;
+use zbus::message::Message;
+use zbus::zvariant::Value;
 use zbus::Result;
 
-/// 5 method すべてに共通する「未実装である」error message。
+use crate::types::{IBusLookupTable, IBusText};
+
+/// IBus 1.5.x の engine signal が emit される D-Bus interface 名。
 ///
-/// caller(`host_bridge.rs`)は本 message を tracing::warn 経由で観測する。
-/// Phase 3-B B3 で実 signal emit に置き換わると本 message は廃止される。
-const NOT_YET_IMPLEMENTED: &str =
-    "IBus signal emit is not yet implemented; tracked in Phase 3-B B3";
+/// 対応する仕様: IBus 1.5.x `bus/inputcontext.c` の `BUS_INPUT_CONTEXT_GET_INTERFACE`。
+pub(crate) const IBUS_ENGINE_INTERFACE: &str = "org.freedesktop.IBus.Engine";
 
 /// IBus engine が host(`InputContext`)に発する signal の helper 群。
 ///
-/// # 現状
-///
-/// session bus 接続と object path 保持までは本 struct 内で完結するが、
-/// 各 signal emit は B0f 段階で fail-loud(`Err` を返す)。実 emit は
-/// Phase 3-B B3 で実装される。
+/// Phase 3-B B2 完了後は 5 method すべてが session bus に実 D-Bus signal を
+/// 発信する。
 pub struct IBusEngineSignals {
-    /// zbus blocking connection(session bus)。Phase 3-B B3 で
-    /// `connection.send_signal(...)` 越しに使用される。
-    #[allow(dead_code)]
+    /// zbus blocking connection(session bus)。
     connection: Connection,
     /// engine object path(`/org/freedesktop/IBus/Engine/Kotoha` 等)。
-    /// Phase 3-B B3 で signal の `path` field に使用される。
-    #[allow(dead_code)]
     object_path: zbus::zvariant::OwnedObjectPath,
 }
 
@@ -63,67 +55,245 @@ impl IBusEngineSignals {
 
     /// `UpdatePreeditText(IBusText, u32 cursor_pos, bool visible)` signal emit。
     ///
+    /// signature: `(vub)`(IBusText variant + cursor + visible)
+    ///
     /// # Errors
     ///
-    /// 現状は常に [`zbus::Error::Failure`] を返す(Phase 3-B B3 まで未実装)。
+    /// - signal message build 失敗(D-Bus serialization error)
+    /// - `connection.send` 失敗(D-Bus daemon disconnect 等)
     pub fn update_preedit(&self, text: &str, cursor: u32, visible: bool) -> Result<()> {
-        tracing::warn!(
+        tracing::debug!(
             text_len = text.chars().count(),
             cursor,
             visible,
-            "IBus update_preedit not yet wired to D-Bus (Phase 3-B B3)"
+            "IBus update_preedit emit"
         );
-        Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED.to_string()))
+
+        let body = IBusText::plain(text.to_string()).into_variant();
+        let signal = Message::signal(
+            self.object_path.as_ref(),
+            IBUS_ENGINE_INTERFACE,
+            "UpdatePreeditText",
+        )?
+        .build(&(body, cursor, visible))?;
+        self.connection.send(&signal)?;
+        Ok(())
     }
 
     /// `CommitText(IBusText)` signal emit。
     ///
+    /// signature: `(v)`(IBusText variant のみ)
+    ///
     /// # Errors
     ///
-    /// 現状は常に [`zbus::Error::Failure`] を返す(Phase 3-B B3 まで未実装)。
+    /// - signal message build 失敗(D-Bus serialization error)
+    /// - `connection.send` 失敗(D-Bus daemon disconnect 等)
     pub fn commit_text(&self, text: &str) -> Result<()> {
-        tracing::warn!(
-            text_len = text.chars().count(),
-            "IBus commit_text not yet wired to D-Bus (Phase 3-B B3)"
-        );
-        Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED.to_string()))
+        tracing::debug!(text_len = text.chars().count(), "IBus commit_text emit");
+
+        let body = IBusText::plain(text.to_string()).into_variant();
+        let signal = Message::signal(
+            self.object_path.as_ref(),
+            IBUS_ENGINE_INTERFACE,
+            "CommitText",
+        )?
+        .build(&(body,))?;
+        self.connection.send(&signal)?;
+        Ok(())
     }
 
     /// `UpdateLookupTable(IBusLookupTable, bool visible)` signal emit。
     ///
+    /// signature: `(vb)`(IBusLookupTable variant + visible)
+    ///
     /// # Errors
     ///
-    /// 現状は常に [`zbus::Error::Failure`] を返す(Phase 3-B B3 まで未実装)。
+    /// - signal message build 失敗(D-Bus serialization error)
+    /// - `connection.send` 失敗(D-Bus daemon disconnect 等)
     pub fn update_lookup_table(
         &self,
         candidates: &[kotoha_core::Candidate],
         visible: bool,
     ) -> Result<()> {
-        tracing::warn!(
+        tracing::debug!(
             count = candidates.len(),
             visible,
-            "IBus update_lookup_table not yet wired to D-Bus (Phase 3-B B3)"
+            "IBus update_lookup_table emit"
         );
-        Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED.to_string()))
+
+        let ibus_candidates: Vec<IBusText> = candidates
+            .iter()
+            .map(|c| IBusText::plain(c.surface.clone()))
+            .collect();
+        let body = IBusLookupTable::from_candidates(ibus_candidates).into_variant();
+
+        let signal = Message::signal(
+            self.object_path.as_ref(),
+            IBUS_ENGINE_INTERFACE,
+            "UpdateLookupTable",
+        )?
+        .build(&(body, visible))?;
+        self.connection.send(&signal)?;
+        Ok(())
     }
 
-    /// `ShowLookupTable` signal emit。
+    /// `ShowLookupTable()` signal emit。
+    ///
+    /// signature: `()`(empty body)
     ///
     /// # Errors
     ///
-    /// 現状は常に [`zbus::Error::Failure`] を返す(Phase 3-B B3 まで未実装)。
+    /// - signal message build 失敗(D-Bus serialization error、empty body でも
+    ///   header が壊れていれば fail)
+    /// - `connection.send` 失敗(D-Bus daemon disconnect 等)
     pub fn show_lookup_table(&self) -> Result<()> {
-        tracing::warn!("IBus show_lookup_table not yet wired to D-Bus (Phase 3-B B3)");
-        Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED.to_string()))
+        tracing::debug!("IBus show_lookup_table emit");
+
+        let signal = Message::signal(
+            self.object_path.as_ref(),
+            IBUS_ENGINE_INTERFACE,
+            "ShowLookupTable",
+        )?
+        .build(&())?;
+        self.connection.send(&signal)?;
+        Ok(())
     }
 
-    /// `HideLookupTable` signal emit。
+    /// `HideLookupTable()` signal emit。
+    ///
+    /// signature: `()`(empty body)
     ///
     /// # Errors
     ///
-    /// 現状は常に [`zbus::Error::Failure`] を返す(Phase 3-B B3 まで未実装)。
+    /// - signal message build 失敗(D-Bus serialization error、empty body でも
+    ///   header が壊れていれば fail)
+    /// - `connection.send` 失敗(D-Bus daemon disconnect 等)
     pub fn hide_lookup_table(&self) -> Result<()> {
-        tracing::warn!("IBus hide_lookup_table not yet wired to D-Bus (Phase 3-B B3)");
-        Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED.to_string()))
+        tracing::debug!("IBus hide_lookup_table emit");
+
+        let signal = Message::signal(
+            self.object_path.as_ref(),
+            IBUS_ENGINE_INTERFACE,
+            "HideLookupTable",
+        )?
+        .build(&())?;
+        self.connection.send(&signal)?;
+        Ok(())
+    }
+}
+
+// `Value` を unused import にしないため(各 emit method 内で `into_variant` 戻り値を
+// 受ける expression が `Value<'static>` であり、型推論で `Value` 型名が要求される)。
+const _: fn() = || {
+    let _: Value<'static> = IBusText::plain(String::new()).into_variant();
+};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Spec §4.2 r2 acceptance: UpdatePreeditText signal が IBus 1.x interface
+    /// 名と member 名で組立される。
+    #[test]
+    fn update_preedit_signal_has_correct_path_interface_member() {
+        let object_path = "/org/freedesktop/IBus/Engine/Kotoha";
+        let body = IBusText::plain("こ".to_string()).into_variant();
+        let signal = Message::signal(object_path, IBUS_ENGINE_INTERFACE, "UpdatePreeditText")
+            .expect("path/iface/member valid")
+            .build(&(body, 1u32, true))
+            .expect("build signal body");
+
+        let header = signal.header();
+        assert_eq!(header.path().unwrap().as_str(), object_path);
+        assert_eq!(
+            header.interface().unwrap().as_str(),
+            "org.freedesktop.IBus.Engine"
+        );
+        assert_eq!(header.member().unwrap().as_str(), "UpdatePreeditText");
+    }
+
+    /// Spec §4.2 r2 acceptance: CommitText signal が IBus 1.x member 名で
+    /// 組立される。
+    #[test]
+    fn commit_text_signal_has_correct_member() {
+        let body = IBusText::plain("漢字".to_string()).into_variant();
+        let signal = Message::signal(
+            "/org/freedesktop/IBus/Engine/Kotoha",
+            IBUS_ENGINE_INTERFACE,
+            "CommitText",
+        )
+        .expect("path/iface/member valid")
+        .build(&(body,))
+        .expect("build signal body");
+
+        assert_eq!(signal.header().member().unwrap().as_str(), "CommitText");
+        assert_eq!(
+            signal.header().interface().unwrap().as_str(),
+            "org.freedesktop.IBus.Engine"
+        );
+    }
+
+    /// Spec §4.2 r2 acceptance: UpdateLookupTable signal が IBus 1.x member 名で
+    /// 組立され、候補配列が body に乗る。
+    #[test]
+    fn update_lookup_table_signal_has_correct_member_and_carries_candidates() {
+        let cands = vec![
+            IBusText::plain("漢字".to_string()),
+            IBusText::plain("勘事".to_string()),
+        ];
+        let body = IBusLookupTable::from_candidates(cands).into_variant();
+        let signal = Message::signal(
+            "/org/freedesktop/IBus/Engine/Kotoha",
+            IBUS_ENGINE_INTERFACE,
+            "UpdateLookupTable",
+        )
+        .expect("path/iface/member valid")
+        .build(&(body, true))
+        .expect("build signal body");
+
+        assert_eq!(
+            signal.header().member().unwrap().as_str(),
+            "UpdateLookupTable"
+        );
+    }
+
+    /// Spec §4.2 r2 acceptance: ShowLookupTable signal は empty body で組立可能
+    /// (IBus 1.x signature `()`)。
+    #[test]
+    fn show_lookup_table_signal_has_empty_body() {
+        let signal = Message::signal(
+            "/org/freedesktop/IBus/Engine/Kotoha",
+            IBUS_ENGINE_INTERFACE,
+            "ShowLookupTable",
+        )
+        .expect("path/iface/member valid")
+        .build(&())
+        .expect("build empty signal body");
+
+        assert_eq!(
+            signal.header().member().unwrap().as_str(),
+            "ShowLookupTable"
+        );
+        assert!(signal.body().data().is_empty(), "empty body");
+    }
+
+    /// Spec §4.2 r2 acceptance: HideLookupTable signal は empty body で組立可能
+    /// (IBus 1.x signature `()`)。
+    #[test]
+    fn hide_lookup_table_signal_has_empty_body() {
+        let signal = Message::signal(
+            "/org/freedesktop/IBus/Engine/Kotoha",
+            IBUS_ENGINE_INTERFACE,
+            "HideLookupTable",
+        )
+        .expect("path/iface/member valid")
+        .build(&())
+        .expect("build empty signal body");
+
+        assert_eq!(
+            signal.header().member().unwrap().as_str(),
+            "HideLookupTable"
+        );
+        assert!(signal.body().data().is_empty(), "empty body");
     }
 }

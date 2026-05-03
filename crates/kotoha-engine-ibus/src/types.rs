@@ -1,9 +1,3 @@
-// Phase 3-B B2 段階的実装:Task 3-7 で proxy.rs から各 type の `into_variant`
-// が呼ばれる。Task 1(本 module 単独)時点では未参照のため一時的に許容する。
-// `IBusAttribute` は B5 で attribute 付き preedit 実装時まで未使用。
-// Task 8 で proxy 配線完了後、本 attribute を撤去する。
-#![allow(dead_code)]
-
 //! IBus 1.x wire-format types(Phase 3-B B2 で導入)。
 //!
 //! 各 struct は IBus 1.5.x の `IBusSerializable` 互換シリアライゼーションに
@@ -50,9 +44,11 @@ fn empty_attachments() -> HashMap<String, Value<'static>> {
 /// IBus 1.x `IBusAttribute`(下線・色 etc 属性)。
 ///
 /// Phase 3-B B2 では未使用(plain text のみ送信)。Phase 5 で attribute
-/// 付き preedit を出すときに helper を生やす。
+/// 付き preedit を出すときに helper を生やすため `#[allow(dead_code)]` で
+/// 残置する(構造を他の wire-format type と並んで読みやすくするため)。
 ///
 /// signature: `(s a{sv} u u u u)`
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct IBusAttribute {
     pub type_: u32,
@@ -61,6 +57,7 @@ pub struct IBusAttribute {
     pub end_index: u32,
 }
 
+#[allow(dead_code)]
 impl IBusAttribute {
     /// IBusSerializable type-name(class lookup 用、IBus daemon 側で `g_type_from_name`)。
     pub const NAME: &'static str = "IBusAttribute";
