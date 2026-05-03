@@ -8,6 +8,8 @@
 //! - Live: 7ms (5-10ms range の中央値、実装段階 empirical 確定)
 //! - Commit: 30ms (LLM 結果待機、second window 150ms で追加 push 受信)
 
+use std::io;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::thread;
@@ -38,18 +40,34 @@ pub const COMMIT_SECOND_WINDOW: Duration = Duration::from_millis(150);
 ///
 /// - `tx_request` が drop されると worker は loop を抜けて return
 /// - `JoinHandle` は engine 側 `Drop` impl で best-effort join
-pub(crate) fn spawn_worker() -> (
+///
+/// # Errors
+///
+/// - [`io::Error`] — OS が thread spawn を拒否した場合(thread resource 枯渇等)。
+///   呼び出し側([`super::KotohaEngine::new`])で `Result` 経由 propagate し、
+///   process 起動を中断させる(spec §9.1 row 5)。
+pub(crate) fn spawn_worker() -> io::Result<(
     mpsc::Sender<RankRequest>,
     mpsc::Receiver<EngineEvent>,
     thread::JoinHandle<()>,
-) {
+)> {
     let (tx_request, rx_request) = mpsc::channel::<RankRequest>();
     let (tx_event, rx_event) = mpsc::channel::<EngineEvent>();
     let handle = thread::Builder::new()
         .name("kotoha-ranker-worker".into())
-        .spawn(move || worker_loop(rx_request, tx_event))
-        .expect("spawn ranker worker thread");
-    (tx_request, rx_event, handle)
+        .spawn(move || worker_loop(rx_request, tx_event))?;
+    Ok((tx_request, rx_event, handle))
+}
+
+/// engine 主 thread の receiver が drop された場合に worker_loop を即時終了させる
+/// helper。`tx_event.send` が `Err` を返したら debug log を残して `true` を返す。
+/// 呼び出し側は `if try_send_event(...) { return; }` の pattern で抜ける。
+fn try_send_event(tx_event: &mpsc::Sender<EngineEvent>, ev: EngineEvent, request_id: u64) -> bool {
+    if tx_event.send(ev).is_err() {
+        tracing::debug!(request_id, "engine receiver dropped; worker exiting");
+        return true;
+    }
+    false
 }
 
 fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<EngineEvent>) {
@@ -59,14 +77,37 @@ fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<E
         let cancel = req.cancel_dyn();
 
         let (tx_ranker, rx_ranker) = mpsc::channel::<RankerOutput>();
-        let rank_result = req
-            .ranker
-            .rank(&req.kana, &req.ctx, cancel.clone(), tx_ranker);
-        if let Err(e) = rank_result {
-            let _ = tx_event.send(EngineEvent::WorkerError {
+
+        // spec §9.1 row 2: Ranker::rank の panic を catch し WorkerError として
+        // 報告。worker thread 自体は loop continue で生存させる(セッション全断
+        // を避ける)。`AssertUnwindSafe` は Ranker / kana / ctx / cancel / sink
+        // が panic 越しに不変であることを caller(本 module)が引き受ける明示。
+        let kana = req.kana.clone();
+        let ctx = req.ctx.clone();
+        let ranker = req.ranker.clone();
+        let cancel_for_call = cancel.clone();
+        let rank_result = panic::catch_unwind(AssertUnwindSafe(move || {
+            ranker.rank(&kana, &ctx, cancel_for_call, tx_ranker)
+        }));
+
+        let rank_outcome = match rank_result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(format!("ranker error: {e}")),
+            Err(panic_payload) => {
+                let msg = panic_message(&panic_payload);
+                tracing::error!(request_id, panic = msg, "ranker panicked");
+                Err(format!("ranker panicked: {msg}"))
+            }
+        };
+
+        if let Err(error) = rank_outcome {
+            if try_send_event(
+                &tx_event,
+                EngineEvent::WorkerError { request_id, error },
                 request_id,
-                error: format!("{e}"),
-            });
+            ) {
+                return;
+            }
             continue;
         }
 
@@ -78,11 +119,18 @@ fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<E
         let mut buffer: Vec<Candidate> = Vec::new();
         drain_window(&rx_ranker, &cancel, window, &mut buffer);
 
-        if !cancel.is_cancelled() && !buffer.is_empty() {
-            let _ = tx_event.send(EngineEvent::Candidates {
+        if !cancel.is_cancelled()
+            && !buffer.is_empty()
+            && try_send_event(
+                &tx_event,
+                EngineEvent::Candidates {
+                    request_id,
+                    update: CandidateUpdate::Replace(buffer.clone()),
+                },
                 request_id,
-                update: CandidateUpdate::Replace(buffer.clone()),
-            });
+            )
+        {
+            return;
         }
 
         // 2nd window for Commit mode: LLM 後続結果
@@ -96,12 +144,30 @@ fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<E
             );
             if !cancel.is_cancelled() && !second_buffer.is_empty() {
                 buffer.extend(second_buffer);
-                let _ = tx_event.send(EngineEvent::Candidates {
+                let send_failed = try_send_event(
+                    &tx_event,
+                    EngineEvent::Candidates {
+                        request_id,
+                        update: CandidateUpdate::Replace(buffer),
+                    },
                     request_id,
-                    update: CandidateUpdate::Replace(buffer),
-                });
+                );
+                if send_failed {
+                    return;
+                }
             }
         }
+    }
+}
+
+/// `catch_unwind` payload から表示用 message を取り出す best-effort helper。
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        s
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.as_str()
+    } else {
+        "(non-string panic payload)"
     }
 }
 

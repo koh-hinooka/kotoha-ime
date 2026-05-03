@@ -52,7 +52,7 @@ fn build(candidates: Vec<Candidate>) -> (KotohaEngine, MockHostBridge) {
     let host_clone = host.clone();
     let ranker = Arc::new(MockRanker::new(candidates));
     let writer = Arc::new(StubWriter);
-    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, writer);
+    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, writer).expect("engine spawn");
     eng.enable();
     eng.focus_in();
     (eng, host)

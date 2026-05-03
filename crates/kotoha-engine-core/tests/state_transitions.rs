@@ -61,7 +61,8 @@ fn build_engine(
     let host_clone = host.clone();
     let ranker = Arc::new(MockRanker::new(candidates));
     let writer = Arc::new(MockLearningWriter::default());
-    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, writer.clone());
+    let mut eng =
+        KotohaEngine::new(Box::new(host_clone), ranker, writer.clone()).expect("engine spawn");
     eng.enable();
     eng.focus_in();
     (eng, host, writer)
