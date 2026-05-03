@@ -34,8 +34,9 @@ use kotoha_core::kanji::{KanjiBackend, KanjiError, MockBackend};
 use kotoha_core::{Candidate, ConvertOptions};
 use kotoha_engine_core::{
     cancel::StdCancellationToken, CancellationToken, CandidateUpdate, ConversionContext,
-    ConversionMode, HybridRanker, Ranker,
+    ConversionMode, Ranker,
 };
+use kotoha_ranker_hybrid::HybridRanker;
 use kotoha_storage::learning_cache::MockLearningCacheStore;
 use kotoha_storage::user_vocab::MockUserVocabStore;
 

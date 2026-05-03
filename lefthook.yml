@@ -44,9 +44,13 @@ pre-push:
           echo "lefthook: skip clippy (no crates/ yet; enforced from M2)"
         fi
     test:
+      # B0h-b (#155) で `kotoha-ranker-hybrid/test-helpers` を追加する。
+      # `crates/kotoha-ranker-hybrid/tests/engine_wrap_hybrid.rs` は本 feature
+      # gate (`#![cfg(feature = "test-helpers")]`) で gate されており、未指定の
+      # ままだと test 関数が登録されない silent skip になる(self-review F2)。
       run: |
         if [ -d crates ] && [ -n "$(ls -A crates 2>/dev/null)" ]; then
-          cargo test --workspace --features kotoha-storage/test-helpers
+          cargo test --workspace --features kotoha-storage/test-helpers,kotoha-ranker-hybrid/test-helpers
         else
           echo "lefthook: skip test (no crates/ yet; enforced from M2)"
         fi

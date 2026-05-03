@@ -15,7 +15,7 @@
 use proptest::prelude::*;
 
 use kotoha_core::Candidate;
-use kotoha_engine_core::ranker::merge::{merge_candidates, CandidateSource};
+use kotoha_ranker_hybrid::merge::{merge_candidates, CandidateSource};
 
 /// `Candidate` の任意値生成 strategy。
 ///

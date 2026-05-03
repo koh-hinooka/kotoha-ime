@@ -7,9 +7,13 @@
 //!
 //! 本 crate の主要 trait / types:
 //!
-//! - [`ranker::Ranker`] — 候補生成 trait(P2-D で `HybridRanker` として impl)
+//! - [`ranker::Ranker`] — 候補生成 trait(concrete impl は `kotoha-ranker-hybrid`
+//!   crate 側に置かれる、B0h-b)
 //! - [`ranker::ConversionContext`] / [`ranker::ConversionMode`] — Ranker 入力 context
 //! - [`ranker::CandidateUpdate`] — 候補差分通知 enum
+//! - [`learning_port::LearningRecorder`] / [`learning_port::LearningLookup`] /
+//!   [`learning_port::UserVocabLookup`] — 学習・ユーザ辞書 driven ports
+//!   (B0h-a で導入、impl は `kotoha-engine-adapter` crate 側)
 //! - [`cancel::CancellationToken`] — cancel signal trait
 //! - [`cancel::StdCancellationToken`] — std::sync ベース impl
 //! - [`ime_engine::IMEEngine`] — driving port(host → engine)
@@ -41,6 +45,5 @@ pub use learning_port::{
     UserVocabRecord,
 };
 pub use ranker::{
-    CandidateUpdate, ConversionContext, ConversionMode, HybridRanker, Ranker, RankerError,
-    RankerOutput,
+    CandidateUpdate, ConversionContext, ConversionMode, Ranker, RankerError, RankerOutput,
 };

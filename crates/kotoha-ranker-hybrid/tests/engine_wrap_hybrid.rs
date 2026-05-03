@@ -30,7 +30,7 @@ use kotoha_engine_core::engine::KotohaEngine;
 use kotoha_engine_core::ime_engine::IMEEngine;
 use kotoha_engine_core::key_event::{KeyEvent, KeyModifiers};
 use kotoha_engine_core::testing::{HostOperation, MockHostBridge};
-use kotoha_engine_core::HybridRanker;
+use kotoha_ranker_hybrid::HybridRanker;
 use kotoha_storage::learning_cache::MockLearningCacheStore;
 use kotoha_storage::user_vocab::MockUserVocabStore;
 

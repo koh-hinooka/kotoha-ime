@@ -799,6 +799,7 @@ dependencies = [
  "kotoha-engine-adapter",
  "kotoha-engine-core",
  "kotoha-engine-ibus",
+ "kotoha-ranker-hybrid",
  "kotoha-storage",
  "tracing",
  "tracing-subscriber",
@@ -845,7 +846,6 @@ dependencies = [
  "kotoha-core",
  "kotoha-engine-adapter",
  "kotoha-storage",
- "proptest",
  "thiserror 1.0.69",
  "tracing",
 ]
@@ -859,6 +859,19 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "zbus",
+]
+
+[[package]]
+name = "kotoha-ranker-hybrid"
+version = "0.1.0"
+dependencies = [
+ "kotoha-core",
+ "kotoha-engine-adapter",
+ "kotoha-engine-core",
+ "kotoha-storage",
+ "proptest",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]

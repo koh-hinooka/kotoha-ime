@@ -278,7 +278,7 @@ fn build_hybrid_ranker(
         })?;
     let sudachi = kotoha_core::dict::load_morphological_engine(&dict_path)
         .with_context(|| format!("load SudachiDict from {}", dict_path.display()))?;
-    let ranker = kotoha_engine_core::HybridRanker::new(sudachi, user_vocab, learning_cache);
+    let ranker = kotoha_ranker_hybrid::HybridRanker::new(sudachi, user_vocab, learning_cache);
     Ok(Arc::new(ranker))
 }
 

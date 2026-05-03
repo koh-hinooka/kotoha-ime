@@ -24,8 +24,9 @@ use kotoha_core::dict::{EngineCandidate, MorphologicalEngine};
 use kotoha_core::kanji::KanjiError;
 use kotoha_engine_core::{
     cancel::StdCancellationToken, CancellationToken, CandidateUpdate, ConversionContext,
-    ConversionMode, HybridRanker, Ranker,
+    ConversionMode, Ranker,
 };
+use kotoha_ranker_hybrid::HybridRanker;
 use kotoha_storage::learning_cache::{LearningCacheWriter, MockLearningCacheStore};
 use kotoha_storage::user_vocab::{MockUserVocabStore, UserVocabRecord, UserVocabWriter};
 
@@ -201,7 +202,7 @@ fn hybrid_ranker_reflects_learning_cache_bonus() {
     // - cache 無し:「言葉」=-0.55、「琴葉」=-1.05 → 「言葉」上位
     // - cache 有り:「琴葉」=-1.05+0.5=-0.55、「言葉」=-0.55 → 同 score だが
     //   「琴葉」は cache bonus を受けたことが score 値で確認可能
-    use kotoha_engine_core::ranker::merge::BONUS_CACHE_HIT;
+    use kotoha_ranker_hybrid::merge::BONUS_CACHE_HIT;
 
     let (ranker_no_cache, _uv1, _lc1) = build_ranker(kotoha_dict_candidates());
     let cancel1 = Arc::new(StdCancellationToken::new());
