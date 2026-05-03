@@ -1,9 +1,18 @@
-//! `HybridRanker` — SudachiDict + UserVocab + LearningCache + LLM の統合 Ranker。
+//! `kotoha-ranker-hybrid`: `HybridRanker` — SudachiDict + UserVocab +
+//! LearningCache + LLM の統合 Ranker。
 //!
-//! 本 module は M2 で dict-only(SudachiDict + UserVocab + LearningCache)を実装し、
-//! M3 で LLM backend 統合を追加する。
+//! 本 crate は P2-D で `kotoha-engine-core::ranker::hybrid` として実装された
+//! `HybridRanker` を、Phase 3-B B0h-b (ISSUE #149 / #155) で別 crate に切り出した
+//! もの。`HybridRanker` は domain core ではなく concrete adapter であり、
+//! `kotoha-engine-core` から分離することで Hexagonal Architecture を保ちつつ、
+//! Phase 4 (fcitx5) / Phase 5 (multi-backend) で別 Ranker を差し込むときの
+//! 結合度を下げる(spec §3.1)。
 //!
-//! Phase 3-A spec §4.3 で凍結された Ranker trait の concrete impl。
+//! 本 crate は Phase 3-A spec §4.3 で凍結された [`Ranker`] trait の concrete
+//! impl のみを公開する。trait / driven port / value type は `kotoha-engine-core`
+//! 側に置かれ、本 crate は dependency として参照する。
+
+pub mod merge;
 
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc;
@@ -14,10 +23,13 @@ use kotoha_core::dict::MorphologicalEngine;
 use kotoha_core::kanji::KanjiBackend;
 use kotoha_core::{Candidate, ConvertOptions};
 
-use super::merge::{merge_candidates, CandidateSource};
-use super::{CandidateUpdate, ConversionContext, Ranker, RankerError, RankerOutput};
-use crate::cancel::CancellationToken;
-use crate::learning_port::{LearningLookup, UserVocabLookup};
+use kotoha_engine_core::cancel::CancellationToken;
+use kotoha_engine_core::learning_port::{LearningLookup, UserVocabLookup};
+use kotoha_engine_core::ranker::{
+    CandidateUpdate, ConversionContext, Ranker, RankerError, RankerOutput,
+};
+
+use self::merge::{merge_candidates, CandidateSource};
 
 /// 候補生成の top_k(暫定、empirical で再評価)。
 const DEFAULT_TOP_K: usize = 10;
@@ -337,7 +349,7 @@ impl Ranker for HybridRanker {
                 // post-mortem で `&'static str` / `String` / `panic_any(...)` の
                 // どれだったか判別不能。`engine::panic_message_from` を共有
                 // helper として再利用し、payload 中身を message 化する。
-                let msg = crate::engine::panic_message_from(&payload);
+                let msg = kotoha_engine_core::engine::panic_message_from(&payload);
                 tracing::error!(
                     panic = %msg,
                     "HybridRanker child thread panicked; sink dropped, worker drain_window will observe disconnect (spec §9.1 row 2 / B0g-b I7)"
@@ -352,11 +364,11 @@ impl Ranker for HybridRanker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cancel::StdCancellationToken;
-    use crate::learning_port::{LearningCacheRecord, LearningError, UserVocabRecord};
-    use crate::ranker::ConversionMode;
     use kotoha_core::dict::{EngineCandidate, MorphologicalEngine};
     use kotoha_core::kanji::KanjiError;
+    use kotoha_engine_core::cancel::StdCancellationToken;
+    use kotoha_engine_core::learning_port::{LearningCacheRecord, LearningError, UserVocabRecord};
+    use kotoha_engine_core::ranker::ConversionMode;
 
     /// In-test stub: dict ファイル不要で `MorphologicalEngine` を満たす。
     /// プロジェクト全体で `dict_backend` の StubEngine と同 pattern。

@@ -658,7 +658,7 @@ mod boundary_notify_tests {
         let mut engine = KotohaEngine::new(
             host_box,
             std::sync::Arc::new(NoopRanker),
-            std::sync::Arc::new(StubWriter::default()),
+            std::sync::Arc::new(StubWriter),
         )
         .expect("engine spawn");
 
@@ -737,7 +737,7 @@ mod boundary_notify_tests {
         let mut engine = KotohaEngine::new(
             host_box,
             std::sync::Arc::new(NoopRanker),
-            std::sync::Arc::new(StubWriter::default()),
+            std::sync::Arc::new(StubWriter),
         )
         .expect("engine spawn");
 
@@ -798,7 +798,7 @@ mod boundary_notify_tests {
         let mut engine = KotohaEngine::new(
             host_box,
             std::sync::Arc::new(NoopRanker),
-            std::sync::Arc::new(StubWriter::default()),
+            std::sync::Arc::new(StubWriter),
         )
         .expect("engine spawn");
 

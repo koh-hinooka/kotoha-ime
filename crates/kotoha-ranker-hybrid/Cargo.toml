@@ -1,0 +1,52 @@
+[package]
+name = "kotoha-ranker-hybrid"
+description = "Kotoha IME concrete Ranker adapter combining SudachiDict + UserVocab + LearningCache + LLM (Phase 3-B B0h-b, ISSUE #149/#155)"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# `kotoha-engine-core`: Ranker trait + ConversionContext + CandidateUpdate +
+# learning_port driven ports (LearningLookup / UserVocabLookup) + cancel.
+kotoha-engine-core = { path = "../kotoha-engine-core" }
+# `kotoha-core` (`dict` feature): MorphologicalEngine + KanjiBackend + Candidate
+# + ConvertOptions が HybridRanker の dict / LLM 段で必要。
+kotoha-core = { path = "../kotoha-core", features = ["dict"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# Integration tests construct mock stores via storage's writer trait to seed
+# fixtures, then wrap them with the engine adapter to inject domain ports.
+kotoha-storage = { path = "../kotoha-storage" }
+kotoha-engine-adapter = { path = "../kotoha-engine-adapter" }
+# `tests/proptest_invariants.rs` で merge_candidates の不変条件
+# (top_k respect / sorted descending / dedupe by surface) を property test する。
+proptest = { workspace = true }
+# Test-helpers feature exposed by engine-core/storage are required by some
+# integration tests (engine_wrap_hybrid.rs).
+kotoha-engine-core = { path = "../kotoha-engine-core", features = ["test-helpers"] }
+
+[features]
+default = []
+# `test-helpers` は `tests/engine_wrap_hybrid.rs` が要求する feature gate。
+# kotoha-engine-core 側の同名 feature を transitively 有効化する。これにより
+# `--features kotoha-ranker-hybrid/test-helpers` または既存 lefthook の
+# `--features kotoha-engine-core/test-helpers` のいずれでも当 test が compile
+# 対象になる(後者は cargo の dev-dep features 透過解決による)。
+test-helpers = ["kotoha-engine-core/test-helpers"]
+# `mock-backend` は kotoha-core::kanji::MockBackend を pull する pass-through。
+# `tests/hybrid_ranker_llm.rs` が `Arc<dyn KanjiBackend + Send + Sync>` 経由で
+# MockBackend を `with_llm()` builder に注入するため必要。B0h-b で engine-core
+# から本 crate へ feature ごと移送した。
+mock-backend = ["kotoha-core/mock-backend"]
+# `llama-cpp` は kotoha-core::kanji::llama_cpp::LlamaCppBackend を pull する
+# pass-through。lefthook pre-push の default features では feature off のため、
+# llama.cpp C++ build は走らない。
+llama-cpp = ["kotoha-core/llama-cpp"]
+# `llama-cpp-smoke` は Layer 3 live-inference smoke test の opt-in gate。
+# `regression_phase1.rs` の `mod smoke` は本 feature 有効時のみ compile される。
+llama-cpp-smoke = ["kotoha-core/llama-cpp-smoke"]

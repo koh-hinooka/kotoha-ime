@@ -21,6 +21,9 @@ kotoha-engine-core = { path = "../kotoha-engine-core" }
 # domain ports (`UserVocabLookup` / `LearningLookup` / `LearningRecorder`) に
 # wrap する hexagonal adapter。
 kotoha-engine-adapter = { path = "../kotoha-engine-adapter" }
+# `kotoha-ranker-hybrid`: B0h-b (#149 / #155) で engine-core から切り出した
+# concrete Ranker adapter (SudachiDict + UserVocab + LearningCache + LLM)。
+kotoha-ranker-hybrid = { path = "../kotoha-ranker-hybrid" }
 kotoha-engine-ibus = { path = "../kotoha-engine-ibus" }
 kotoha-storage = { path = "../kotoha-storage" }
 kotoha-core = { path = "../kotoha-core" }

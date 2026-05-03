@@ -9,47 +9,31 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-# M1 で skeleton 確定後、M2 で `HybridRanker` 本実装が surface した依存:
-# - `tracing`: backend 個別エラー(`UserVocab` / `LearningCache`)の `tracing::warn!`
-#   と sink drop 時の `tracing::trace!` で利用。
-# - `kotoha-core` の `dict` feature: `MorphologicalEngine` trait を pull する
-#   (`HybridRanker` の sudachi backend port)。
+# 本 crate は domain core layer に属し、host / persistence / Ranker concrete
+# adapter のいずれにも依存しない(spec §3.1)。
 #
-# B0h-a (#149 / #153) で `kotoha-storage` 直接依存を撤去し、domain side ports
-# (`crate::learning_port::{LearningRecorder, LearningLookup, UserVocabLookup}`)
-# 経由でしか永続化層と関わらない構造へ移行(C3 hexagonal driven port 反転)。
+# - `tracing`: domain layer 内 graceful degradation(learning_writer 失敗時等)
+#   の構造化 log 用。
+# - `kotoha-core` の `dict` feature は不要だった(P3-A 旧 ranker/hybrid 専用)。
+#   B0h-b (#149 / #155) で HybridRanker を別 crate へ切り出した時点で、
+#   `kotoha-core` への dict feature 依存も撤去できる…はずだが、`kotoha-core::Candidate`
+#   value object 自体が必要なため引き続き default features (= 空) で参照する。
+# - `bitflags`: `KeyModifiers` の bitflag 表現(spec §4.1)。
 thiserror = { workspace = true }
 tracing = { workspace = true }
-# `bitflags` pinned via P3-A M1 (2026-05-02): `KeyModifiers` の bitflag 表現
-# (Phase 3-A spec §4.1)。
 bitflags = { workspace = true }
-kotoha-core = { path = "../kotoha-core", features = ["dict"] }
+kotoha-core = { path = "../kotoha-core" }
 
 [dev-dependencies]
-# Integration tests (`tests/hybrid_ranker_dict.rs` 等) は `MockUserVocabStore` /
-# `MockLearningCacheStore` を直接構築し、`kotoha-engine-adapter` の wrapper
-# helpers (`arc_mock_user_vocab` / `arc_mock_learning_cache`) で domain port
+# Integration tests は `MockUserVocabStore` / `MockLearningCacheStore` を直接
+# 構築し、`kotoha-engine-adapter` の wrapper helpers
+# (`arc_mock_user_vocab` / `arc_mock_learning_cache`) で domain port
 # (`Arc<dyn UserVocabLookup>` / `Arc<dyn LearningLookup>`) として注入する。
 # adapter は dev-dep のみで、production code には混入しない。
 kotoha-storage = { path = "../kotoha-storage" }
 kotoha-engine-adapter = { path = "../kotoha-engine-adapter" }
-# `tests/proptest_invariants.rs` で merge_candidates の不変条件
-# (top_k respect / sorted descending / dedupe by surface) を property test
-# する。M4 で再導入(M1 review fix で一旦削除した dev-dep)。
-proptest = { workspace = true }
 
 [features]
 default = []
 # Mock backends / fixtures for cross-crate test injection. M2 以降で需要 surface。
 test-helpers = []
-# `mock-backend` は kotoha-core::kanji::MockBackend を pull する pass-through。
-# M3 で `tests/hybrid_ranker_llm.rs` が `Arc<dyn KanjiBackend + Send + Sync>`
-# 経由で MockBackend を `with_llm()` builder に注入するため必要。
-mock-backend = ["kotoha-core/mock-backend"]
-# `llama-cpp` は kotoha-core::kanji::llama_cpp::LlamaCppBackend を pull する
-# pass-through。lefthook pre-push の default features では feature off のため、
-# llama.cpp C++ build は走らない。
-llama-cpp = ["kotoha-core/llama-cpp"]
-# `llama-cpp-smoke` は Layer 3 live-inference smoke test の opt-in gate。
-# `regression_phase1.rs` の `mod smoke` は本 feature 有効時のみ compile される。
-llama-cpp-smoke = ["kotoha-core/llama-cpp-smoke"]

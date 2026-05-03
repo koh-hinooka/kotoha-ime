@@ -1,16 +1,14 @@
 //! `Ranker` trait + `RankerError` + `RankerOutput`.
 //!
 //! Phase 3-A spec §4.3 で凍結された候補生成 trait。P2-D で `HybridRanker` として
-//! 実装される。本 module は trait + types のみで、impl は `hybrid` sub-module
-//! (P2-D Milestone 2 以降で追加される)。
+//! 実装され、Phase 3-B B0h-b (ISSUE #149 / #155) で `kotoha-ranker-hybrid` 別
+//! crate へ切り出された。本 module は domain core layer に属する trait と
+//! 値型のみを公開する(impl は外部 crate に依存して提供される)。
 
 mod context;
-pub mod hybrid;
-pub mod merge;
 mod update;
 
 pub use context::{ConversionContext, ConversionMode};
-pub use hybrid::HybridRanker;
 pub use update::CandidateUpdate;
 
 use std::sync::mpsc;
