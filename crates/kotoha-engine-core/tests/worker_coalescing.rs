@@ -341,3 +341,80 @@ fn silent_ranker_clears_engine_candidates_via_empty_replace() {
     // 同じ Empty Replace を返す → candidates 空のまま。
     assert_eq!(eng.candidate_count_for_test(), 0);
 }
+
+// ------------------------------------------------------------------
+// Phase 3-B B0g (ISSUE #148): I16 deterministic ranker panic circuit breaker
+// ------------------------------------------------------------------
+
+/// 毎回 panic する Ranker。worker 連続 panic 上限到達 → worker exit →
+/// engine が IME-disabled に degrade することを観測する fixture。
+struct AlwaysPanicRanker;
+impl Ranker for AlwaysPanicRanker {
+    fn rank(
+        &self,
+        _kana: &str,
+        _ctx: &ConversionContext,
+        _cancel: Arc<dyn CancellationToken>,
+        _sink: std::sync::mpsc::Sender<RankerOutput>,
+    ) -> Result<(), RankerError> {
+        panic!("intentional ranker panic for circuit-breaker regression");
+    }
+}
+
+/// I16: Ranker.rank が deterministic に panic する場合、worker は連続 5 回で
+/// exit し、engine 主 thread は次 dispatch で `tx_request.send` の Err を
+/// 観測 → `enabled = false` に degrade する(spec §9.3「IME-disabled mode を
+/// user に通知」)。
+///
+/// MAX_CONSECUTIVE_PANICS=5 のため、6 回目以降の dispatch で channel
+/// disconnect が観測される設計。本 test では 10 回 keystroke を送って
+/// final state が IME-disabled であることを確認する。
+///
+/// # Theater pattern 防御(self-review #4)
+///
+/// 本 test の `enabled = false` 観測は、production code 中で **`tx_request.send`
+/// Err path 経由でのみ** 立つ前提に依存する。将来別経路(例:`focus_out` で
+/// disable 同等処理を追加する refactor)で `enabled = false` を立てる変更が
+/// 入ると本 test の検証根拠が変わる:
+///
+/// - 補助 assert 1:`state == Idle` を併せて assert(circuit breaker 経由は
+///   degrade_to_idle で必ず Idle に倒れるが、別経路は state を変えないかも)
+/// - 補助 assert 2:`candidate_count == 0` を併せて assert(同上)
+///
+/// flaky 化防止のため sleep margin を 20ms → 50ms に拡大(CI scheduler 圧迫
+/// 時の worker thread schedule 遅延吸収)。
+#[test]
+fn worker_circuit_breaker_disables_engine_after_repeated_ranker_panics() {
+    let ranker = Arc::new(AlwaysPanicRanker);
+    let host = Box::new(MockHostBridge::new());
+    let writer = Arc::new(StubWriter);
+    let mut eng = KotohaEngine::new(host, ranker, writer).expect("engine spawn");
+    eng.enable();
+    eng.focus_in();
+
+    // 10 keystroke 連続(MAX_CONSECUTIVE_PANICS=5 を超えて margin 確保)。
+    // 最初の 5 回は WorkerError event 経由で degrade_to_idle、6 回目以降に
+    // worker が channel close 済で tx_request.send Err → enabled=false。
+    for c in ['a', 'i', 'u', 'e', 'o', 'k', 's', 't', 'n', 'h'].iter() {
+        eng.process_key_event(key(*c));
+        // worker thread に panic + channel close 反映の余裕を与える。
+        sleep(Duration::from_millis(50));
+    }
+
+    // 三重 AND assert:circuit breaker 経由 degrade を特定。
+    assert!(
+        !eng.enabled_for_test(),
+        "engine should have degraded to IME-disabled after consecutive Ranker panics; \
+         enabled_for_test() returned true"
+    );
+    assert_eq!(
+        eng.state_for_test(),
+        kotoha_engine_core::EngineState::Idle,
+        "circuit breaker degrade path must end at Idle (degrade_to_idle invariant)"
+    );
+    assert_eq!(
+        eng.candidate_count_for_test(),
+        0,
+        "circuit breaker degrade path must clear candidate buffer"
+    );
+}

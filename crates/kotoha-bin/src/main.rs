@@ -50,6 +50,7 @@ const EXIT_FAILURE: u8 = 1;
 
 fn main() -> ExitCode {
     init_tracing();
+    install_panic_hook();
 
     // spec §9.1 row 5: top-level catch_unwind。`AssertUnwindSafe` は
     // `run()` 内部で borrow / mutex を panic 越しに抱える設計でないことを
@@ -64,21 +65,70 @@ fn main() -> ExitCode {
         }
         Err(panic_payload) => {
             let msg = panic_message(&panic_payload);
-            tracing::error!(panic = msg, "kotoha-bin caught top-level panic");
+            tracing::error!(panic = %msg, "kotoha-bin caught top-level panic");
             ExitCode::from(EXIT_TEMPFAIL)
         }
     }
 }
 
-/// `catch_unwind` payload から表示用 message を取り出す best-effort helper。
-fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
+/// `catch_unwind` payload から表示用 message を best-effort で抽出する。
+///
+/// B0g #148 / 第 2 回 review C4: 旧 impl は `&'static str` / `String` のみ
+/// downcast していたため、`panic_any(anyhow::Error)` 等の payload が
+/// `(non-string panic payload)` で消失していた。本版では:
+///
+/// - `&'static str` / `String` を最優先で抽出
+/// - `anyhow::Error` 経由の `panic_any` を debug 形式で展開
+/// - いずれにも該当しない場合は payload type 名(`std::any::Any::type_id`
+///   の Debug 表現)を含めて返す
+///
+/// 加えて、本関数で payload を取り損ねた場合でも `install_panic_hook` で
+/// 登録された hook が **panic 発生時の location + backtrace を `tracing::error!`
+/// に残す**(本関数の前段で観測される)ため、root cause 探索が継続可能。
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
-        s
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.as_str()
-    } else {
-        "(non-string panic payload)"
+        return (*s).to_string();
     }
+    if let Some(s) = payload.downcast_ref::<String>() {
+        return s.clone();
+    }
+    if let Some(e) = payload.downcast_ref::<anyhow::Error>() {
+        return format!("anyhow: {e:?}");
+    }
+    format!(
+        "(non-string panic payload, type_id={:?})",
+        (**payload).type_id()
+    )
+}
+
+/// process global panic hook。`tracing` が初期化された後に呼ぶこと。
+///
+/// B0g #148 / C4: hook を登録することで、`catch_unwind` の payload type に
+/// 依存せず **panic location + payload 表示** が確実に `tracing::error!` に
+/// 流れる。`catch_unwind` 経由の `tracing::error!(panic = ..., ...)` と
+/// 重複するが、hook の方が source file / line number を持つため debug 価値
+/// が高い。
+fn install_panic_hook() {
+    // Default hook も呼んで stderr 上の human-readable backtrace を残す。
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // tracing への構造化転送(systemd journal / log aggregator 想定)
+        //
+        // self-review #1:同一 panic に対して本 hook と `catch_unwind` 経路の
+        // 両方で `tracing::error!` が出る(unwind 開始前 / 後で 2 回)。後段
+        // 集計で重複扱いするため `source = "panic_hook"` で識別子を付与する。
+        // catch_unwind 経路側は別 message なので grep で区別可能だが、本 field
+        // を併用すると alert duplication 抑制が容易。
+        tracing::error!(
+            source = "panic_hook",
+            thread = ?std::thread::current().name(),
+            location = ?info.location(),
+            payload = %info,
+            "panic hook captured panic"
+        );
+        // stderr へ default の human-readable trace も流す
+        default_hook(info);
+    }));
 }
 
 fn run() -> anyhow::Result<()> {

@@ -176,15 +176,23 @@ impl KotohaEngine {
             // engine 状態を Idle に戻して候補ウィンドウを閉じ、stale な
             // active_request を残さない(後続 keystroke の cancel_active が
             // phantom request を握って残響しないようにする)。
+            //
+            // B0g #148 / I16: worker は連続 panic 上限到達で exit する circuit
+            // breaker を持つ。本 path に到達したら、engine 全体を IME-disabled
+            // に倒して keystroke ごとの ERROR log flood を停止し、user が
+            // 「IME が無効化された」を察知できるようにする(spec §9.3
+            // 「IME-disabled mode を user に通知」)。
             tracing::error!(
                 request_id,
-                "ranker worker channel closed; engine degrading to Idle"
+                "ranker worker channel closed; engine going to IME-disabled (consecutive panic threshold reached \
+                 or worker exited unexpectedly)"
             );
             self.active_request = None;
             self.candidates.clear();
             self.highlight_idx = 0;
             self.host.hide_candidate_window();
             self.state = EngineState::Idle;
+            self.enabled = false;
             return;
         }
 
@@ -427,5 +435,12 @@ impl KotohaEngine {
     /// Test-only inspector: 現在 state を返す。
     pub fn state_for_test(&self) -> EngineState {
         self.state
+    }
+    /// Test-only inspector: 現在 enabled flag を返す。
+    ///
+    /// B0g #148 / I16 で「worker 連続 panic → engine が IME-disabled に degrade」
+    /// を assert するための accessor。
+    pub fn enabled_for_test(&self) -> bool {
+        self.enabled
     }
 }

@@ -168,6 +168,8 @@ impl Ranker for HybridRanker {
                 Err(e) => {
                     tracing::warn!(
                         error = ?e,
+                        // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
+                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
                         kana = %kana_owned,
                         "sudachi tokenize failed; using empty dict candidates"
                     );
@@ -187,7 +189,9 @@ impl Ranker for HybridRanker {
                     Err(e) => {
                         tracing::warn!(
                             error = ?e,
-                            kana = %kana_owned,
+                            // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
+                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
+                        kana = %kana_owned,
                             "user_vocab find_by_prefix failed; using empty user candidates"
                         );
                         Vec::new()
@@ -200,6 +204,8 @@ impl Ranker for HybridRanker {
                 Err(e) => {
                     tracing::warn!(
                         error = ?e,
+                        // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
+                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
                         kana = %kana_owned,
                         "learning_cache lookup failed; using empty cache hits"
                     );
@@ -227,6 +233,24 @@ impl Ranker for HybridRanker {
             let dict_cands_for_llm = dict_cands.clone();
             let user_cands_for_llm = user_cands.clone();
             let cache_surfaces_for_llm = cache_surfaces.clone();
+
+            // B0g #148 / 第 2 回 review I15: dict / user / learning 3 source が
+            // 全て空(個別 WARN を吐いた直後)の場合、user 視点では「変換不能」
+            // という degraded mode に等しい。spec §9.1 row 3「全 backend 全滅
+            // なら空 Replace を engine に送り tracing::error」を遵守し、merge
+            // 直前で all-empty 検出時に ERROR log を残す。空 Replace 自体は
+            // engine 側の「前回候補画面残留」防止のため引き続き送る(spec §9.3)。
+            let dict_all_empty = dict_cands_for_llm.is_empty()
+                && user_cands_for_llm.is_empty()
+                && cache_surfaces_for_llm.is_empty();
+            if dict_all_empty {
+                tracing::error!(
+                    kana_len = kana_owned.chars().count(),
+                    "all dict-tier backends returned empty (sudachi+uservocab+learningcache); \
+                     engine will receive empty candidates (spec §9.1 row 3)"
+                );
+            }
+
             let merged = merge_candidates(
                 vec![
                     (user_cands, CandidateSource::Dict),
@@ -294,6 +318,8 @@ impl Ranker for HybridRanker {
                     // graceful degradation: dict-only fallback、第 2 段 push なし。
                     tracing::warn!(
                         error = ?e,
+                        // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
+                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
                         kana = %kana_owned,
                         "LLM backend failed, dict candidates only"
                     );

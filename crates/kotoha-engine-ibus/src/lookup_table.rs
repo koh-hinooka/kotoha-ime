@@ -47,9 +47,28 @@ impl LookupTable {
                 }
             }
             CandidateUpdate::Clear => guard.clear(),
-            // `CandidateUpdate` は non_exhaustive(spec §4.2、Phase 5 で variant 追加余地)。
-            // 未知 variant が来た場合は IBus 側から見ると no-op で扱い、tracing で観測する。
-            other => tracing::warn!(?other, "unknown CandidateUpdate variant; treating as no-op"),
+            // `CandidateUpdate` は non_exhaustive(`crates/kotoha-engine-core/src/ranker/update.rs` 凍結)
+            // のため、外部 crate である本 module には wildcard arm が syntax 上必須。
+            // 未知 variant 到達時は **production では buffer 維持で no-op** に倒すが、
+            // 「lookup table が新 variant の意図通り更新されない silent failure」
+            // (B0g #148 / 第 2 回 review C5)を防ぐため以下を強制する:
+            //
+            // - `tracing::error!`(WARN ではなく ERROR、`KOTOHA_LOG=info` default で観測可)
+            // - `debug_assert!` で dev / test build では即 panic(CI 通過前に検出)
+            // - log には variant 内容(候補 surface 等)を一切載せず、`std::mem::discriminant`
+            //   のみを記録(S-N9 future log leak の予防)
+            other => {
+                let disc = std::mem::discriminant(&other);
+                tracing::error!(
+                    variant_discriminant = ?disc,
+                    "unhandled CandidateUpdate variant; lookup_table.rs no-op fallback fired; \
+                     update crates/kotoha-engine-ibus/src/lookup_table.rs to support the new variant"
+                );
+                debug_assert!(
+                    false,
+                    "unhandled CandidateUpdate variant in kotoha-engine-ibus::LookupTable::apply"
+                );
+            }
         }
         guard.clone()
     }

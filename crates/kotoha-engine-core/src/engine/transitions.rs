@@ -76,6 +76,14 @@ fn handle_typing(engine: &mut KotohaEngine, key: KeyEvent) -> KeyEventResult {
     if !engine.current_preedit.is_empty() {
         engine.cancel_active();
         engine.dispatch_rank_request(ConversionMode::Live);
+        // B0g #148 / I16:dispatch_rank_request が worker channel disconnect を
+        // 観測すると `enabled = false` + `state = Idle` に degrade する。本 path
+        // では state を LiveConverting に上書きせず、IME-disabled 状態を維持する
+        // (上書きすると次 keystroke で再度 dispatch を試み ERROR log flood に
+        // 戻る)。
+        if !engine.enabled {
+            return KeyEventResult::Consumed;
+        }
         if !engine.candidates.is_empty() {
             engine
                 .host
