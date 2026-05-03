@@ -715,62 +715,59 @@ Default model version が更新された場合 (ADR 0009 の policy で判断)�
 
 ### 9.1 API 関数
 
+引数順序は **`<desc> <actual> <expected>`**(actual 先行)で固定する。これは Python `unittest` / `pytest` の `assertEqual(actual, expected)` 慣行に倣ったもので、xUnit 系の `<expected> <actual>` 順とは意図的に異なる(merge 済 `scripts/lib/assert.sh` も本順序で実装され、phase0-smoke / phase1-smoke 全行で本順序を使用する)。
+
+`assert_summary` は `ASSERT_PASS` / `ASSERT_FAIL` 内部 counter を `assert_*` 内部で更新し、summary 時には phase 名のみ受け取る設計とする(個別 caller での `pass=$((pass + 1))` boilerplate を排除する)。
+
 ```bash
+#!/usr/bin/env bash
 # scripts/lib/assert.sh
 
+ASSERT_PASS=0
+ASSERT_FAIL=0
+
 # 完全一致比較。引数 3 つで短い diagnostic を出力。
-# usage: assert_equal <label> <expected> <actual>
-# exit: 0 = pass, 1 = fail
+# usage: assert_equal <desc> <actual> <expected>
+# 副作用: ASSERT_PASS / ASSERT_FAIL を更新する。
 assert_equal() {
-  local label="$1"
-  local expected="$2"
-  local actual="$3"
-  if [ "$expected" = "$actual" ]; then
-    echo "PASS: $label"
-    return 0
-  else
-    echo "FAIL: $label"
-    echo "  expected: $expected"
-    echo "  actual:   $actual"
-    return 1
-  fi
+    local desc="$1"
+    local actual="$2"
+    local expected="$3"
+    if [[ "$actual" == "$expected" ]]; then
+        echo "PASS  $desc"
+        ASSERT_PASS=$((ASSERT_PASS + 1))
+    else
+        echo "FAIL  $desc: expected '$expected', got '$actual'"
+        ASSERT_FAIL=$((ASSERT_FAIL + 1))
+    fi
 }
 
-# 部分一致比較 (substring)。
-# usage: assert_contains <label> <needle> <haystack>
-# exit: 0 = pass, 1 = fail
+# 部分一致比較 (substring)。LLM 出力等の stochastic な比較に用いる。
+# usage: assert_contains <desc> <actual> <expected_substring>
+# 副作用: ASSERT_PASS / ASSERT_FAIL を更新する。
 assert_contains() {
-  local label="$1"
-  local needle="$2"
-  local haystack="$3"
-  case "$haystack" in
-    *"$needle"*)
-      echo "PASS: $label"
-      return 0
-      ;;
-    *)
-      echo "FAIL: $label"
-      echo "  expected to contain: $needle"
-      echo "  actual:              $haystack"
-      return 1
-      ;;
-  esac
+    local desc="$1"
+    local actual="$2"
+    local expected_substring="$3"
+    if [[ "$actual" == *"$expected_substring"* ]]; then
+        echo "PASS  $desc: contains '$expected_substring'"
+        ASSERT_PASS=$((ASSERT_PASS + 1))
+    else
+        echo "FAIL  $desc: '$actual' does not contain '$expected_substring'"
+        ASSERT_FAIL=$((ASSERT_FAIL + 1))
+    fi
 }
 
-# Pass/Fail count の最終 summary。
-# usage: assert_summary <pass_count> <fail_count>
-# exit: 0 if fail_count == 0, 1 otherwise
+# Pass/Fail count の最終 summary を表示し、FAIL > 0 で exit 1 する。
+# usage: assert_summary <phase_name>
+# 副作用: 集計 line を stdout に出し、ASSERT_FAIL > 0 の場合は process を exit 1。
 assert_summary() {
-  local pass="$1"
-  local fail="$2"
-  echo "---"
-  echo "passed: $pass"
-  echo "failed: $fail"
-  if [ "$fail" -eq 0 ]; then
-    return 0
-  else
-    return 1
-  fi
+    local phase_name="$1"
+    local total=$((ASSERT_PASS + ASSERT_FAIL))
+    echo "=== $phase_name: $ASSERT_PASS/$total PASS, $ASSERT_FAIL/$total FAIL ==="
+    if [[ $ASSERT_FAIL -gt 0 ]]; then
+        exit 1
+    fi
 }
 ```
 
@@ -778,7 +775,7 @@ assert_summary() {
 
 - `assert_equal` — Phase 0 smoke の主用途 (stdout 完全一致)
 - `assert_contains` — Phase 1 smoke の主用途 (LLM 出力の部分一致)
-- `assert_summary` — 全行処理後の集計と exit code 決定
+- `assert_summary` — 全行処理後の集計と exit code 決定(内部 counter を集計、phase 名のみ受け取る)
 
 ### 9.2 Phase 0 smoke の refactor (先行 PR P1-0 で実施)
 
@@ -807,19 +804,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/assert.sh
 . "$HERE/lib/assert.sh"
 
-pass=0
-fail=0
-
 actual=$(echo "nihongo" | kotoha-romaji)
-if assert_equal "romaji nihongo" "にほんご" "$actual"; then
-  pass=$((pass + 1))
-else
-  fail=$((fail + 1))
-fi
+assert_equal "romaji nihongo" "$actual" "にほんご"
 # (以下、他 fixture について同様)
 
-assert_summary "$pass" "$fail"
+assert_summary "phase0-smoke"
 ```
+
+`assert_*` 関数が `ASSERT_PASS` / `ASSERT_FAIL` を内部更新するため、caller 側で `pass=$((pass + 1))` を書く必要は無い。`assert_summary` は phase 名のみ受け取り、内部 counter から exit code を決定する。
 
 P1-0 は Phase 1 本体実装と分離した先行 PR として実施し、Phase 0 smoke が refactor 後も pass することを CI / lefthook で確認する。これにより Phase 1 の P1-3 で `scripts/phase1-smoke.sh` を書く時点で、library が既に安定している状態にする。
 
