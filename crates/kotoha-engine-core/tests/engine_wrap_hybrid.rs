@@ -75,13 +75,10 @@ fn build_engine_with_real_hybrid_ranker(
     let stub_engine: Arc<dyn MorphologicalEngine + Send + Sync> = Arc::new(StubEngine { canned });
     let user_vocab = Arc::new(MockUserVocabStore::default());
     let learning_cache = Arc::new(MockLearningCacheStore::default());
-    let ranker = Arc::new(HybridRanker::new(
-        stub_engine,
-        user_vocab,
-        learning_cache.clone(),
-    ));
-    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, learning_cache.clone())
-        .expect("engine spawn");
+    let user_vocab_port = kotoha_engine_adapter::arc_mock_user_vocab(user_vocab);
+    let (recorder, lookup) = kotoha_engine_adapter::arc_mock_learning_cache(learning_cache.clone());
+    let ranker = Arc::new(HybridRanker::new(stub_engine, user_vocab_port, lookup));
+    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, recorder).expect("engine spawn");
     eng.enable();
     eng.focus_in();
     (eng, host, learning_cache)

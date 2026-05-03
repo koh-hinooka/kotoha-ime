@@ -5,6 +5,7 @@ members = [
     "crates/kotoha-cli",
     "crates/kotoha-storage",
     "crates/kotoha-engine-core",
+    "crates/kotoha-engine-adapter",
     "crates/kotoha-engine-ibus",
     "crates/kotoha-bin",
 ]

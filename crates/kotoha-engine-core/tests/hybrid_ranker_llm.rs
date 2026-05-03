@@ -36,8 +36,8 @@ use kotoha_engine_core::{
     cancel::StdCancellationToken, CancellationToken, CandidateUpdate, ConversionContext,
     ConversionMode, HybridRanker, Ranker,
 };
-use kotoha_storage::learning_cache::{LearningCacheReader, MockLearningCacheStore};
-use kotoha_storage::user_vocab::{MockUserVocabStore, UserVocabReader};
+use kotoha_storage::learning_cache::MockLearningCacheStore;
+use kotoha_storage::user_vocab::MockUserVocabStore;
 
 /// dict-smoke 不要な stub engine。`hybrid_ranker_dict.rs` と同 pattern。
 struct StubEngine {
@@ -158,8 +158,10 @@ fn build_ranker_with_backend(
     let sudachi: Arc<dyn MorphologicalEngine + Send + Sync> = Arc::new(StubEngine {
         canned: engine_cands,
     });
-    let user_vocab = Arc::new(MockUserVocabStore::new()) as Arc<dyn UserVocabReader>;
-    let learning_cache = Arc::new(MockLearningCacheStore::new()) as Arc<dyn LearningCacheReader>;
+    let user_vocab =
+        kotoha_engine_adapter::arc_mock_user_vocab(Arc::new(MockUserVocabStore::new()));
+    let (_recorder, learning_cache) =
+        kotoha_engine_adapter::arc_mock_learning_cache(Arc::new(MockLearningCacheStore::new()));
     HybridRanker::new(sudachi, user_vocab, learning_cache).with_llm(llm)
 }
 

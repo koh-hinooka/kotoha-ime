@@ -9,26 +9,30 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-# M1 で skeleton 確定後、M2 で `HybridRanker` 本実装が surface した依存を追加:
+# M1 で skeleton 確定後、M2 で `HybridRanker` 本実装が surface した依存:
 # - `tracing`: backend 個別エラー(`UserVocab` / `LearningCache`)の `tracing::warn!`
-#   と sink drop 時の `tracing::trace!` で利用(M1 で YAGNI 削除した依存を再導入)。
-# - `kotoha-storage`: `UserVocabReader` / `LearningCacheReader` trait + `MockXxxStore`
-#   を `HybridRanker` が DI で受けるため再導入(同じく M1 で YAGNI 削除した依存)。
+#   と sink drop 時の `tracing::trace!` で利用。
 # - `kotoha-core` の `dict` feature: `MorphologicalEngine` trait を pull する
 #   (`HybridRanker` の sudachi backend port)。
+#
+# B0h-a (#149 / #153) で `kotoha-storage` 直接依存を撤去し、domain side ports
+# (`crate::learning_port::{LearningRecorder, LearningLookup, UserVocabLookup}`)
+# 経由でしか永続化層と関わらない構造へ移行(C3 hexagonal driven port 反転)。
 thiserror = { workspace = true }
 tracing = { workspace = true }
 # `bitflags` pinned via P3-A M1 (2026-05-02): `KeyModifiers` の bitflag 表現
 # (Phase 3-A spec §4.1)。
 bitflags = { workspace = true }
 kotoha-core = { path = "../kotoha-core", features = ["dict"] }
-kotoha-storage = { path = "../kotoha-storage" }
 
 [dev-dependencies]
-# Integration tests (`tests/hybrid_ranker_dict.rs`) は `MockUserVocabStore` /
-# `MockLearningCacheStore` を直接構築して使う。両者は kotoha-storage の
-# `default features` で公開されており、test-helpers feature は不要。
+# Integration tests (`tests/hybrid_ranker_dict.rs` 等) は `MockUserVocabStore` /
+# `MockLearningCacheStore` を直接構築し、`kotoha-engine-adapter` の wrapper
+# helpers (`arc_mock_user_vocab` / `arc_mock_learning_cache`) で domain port
+# (`Arc<dyn UserVocabLookup>` / `Arc<dyn LearningLookup>`) として注入する。
+# adapter は dev-dep のみで、production code には混入しない。
 kotoha-storage = { path = "../kotoha-storage" }
+kotoha-engine-adapter = { path = "../kotoha-engine-adapter" }
 # `tests/proptest_invariants.rs` で merge_candidates の不変条件
 # (top_k respect / sorted descending / dedupe by surface) を property test
 # する。M4 で再導入(M1 review fix で一旦削除した dev-dep)。

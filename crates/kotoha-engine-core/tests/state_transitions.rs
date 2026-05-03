@@ -16,24 +16,27 @@ use kotoha_engine_core::ime_engine::IMEEngine;
 use kotoha_engine_core::key_event::{KeyEvent, KeyEventResult, KeyModifiers};
 use kotoha_engine_core::testing::{HostOperation, MockHostBridge, MockRanker};
 
-/// 簡易 LearningCacheWriter mock: 全 record_choice を Vec に積む
+/// 簡易 LearningRecorder mock: 全 record_choice を Vec に積む
 #[derive(Default)]
 struct MockLearningWriter {
     records: std::sync::Mutex<Vec<(String, String)>>,
 }
-impl kotoha_storage::learning_cache::LearningCacheWriter for MockLearningWriter {
+impl kotoha_engine_core::learning_port::LearningRecorder for MockLearningWriter {
     fn record_choice(
         &self,
         kana_input: &str,
         chosen_kanji: &str,
-    ) -> Result<(), kotoha_storage::error::StorageError> {
+    ) -> Result<(), kotoha_engine_core::learning_port::LearningError> {
         self.records
             .lock()
             .unwrap()
             .push((kana_input.into(), chosen_kanji.into()));
         Ok(())
     }
-    fn evict_lru(&self, _max_entries: usize) -> Result<usize, kotoha_storage::error::StorageError> {
+    fn evict_lru(
+        &self,
+        _max_entries: usize,
+    ) -> Result<usize, kotoha_engine_core::learning_port::LearningError> {
         Ok(0)
     }
 }
@@ -418,15 +421,18 @@ impl kotoha_engine_core::ranker::Ranker for SlowRanker {
 
 #[derive(Default)]
 struct StubWriterB0d;
-impl kotoha_storage::learning_cache::LearningCacheWriter for StubWriterB0d {
+impl kotoha_engine_core::learning_port::LearningRecorder for StubWriterB0d {
     fn record_choice(
         &self,
         _kana_input: &str,
         _chosen_kanji: &str,
-    ) -> Result<(), kotoha_storage::error::StorageError> {
+    ) -> Result<(), kotoha_engine_core::learning_port::LearningError> {
         Ok(())
     }
-    fn evict_lru(&self, _max_entries: usize) -> Result<usize, kotoha_storage::error::StorageError> {
+    fn evict_lru(
+        &self,
+        _max_entries: usize,
+    ) -> Result<usize, kotoha_engine_core::learning_port::LearningError> {
         Ok(0)
     }
 }

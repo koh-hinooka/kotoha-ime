@@ -26,12 +26,8 @@ use kotoha_engine_core::{
     cancel::StdCancellationToken, CancellationToken, CandidateUpdate, ConversionContext,
     ConversionMode, HybridRanker, Ranker,
 };
-use kotoha_storage::learning_cache::{
-    LearningCacheReader, LearningCacheWriter, MockLearningCacheStore,
-};
-use kotoha_storage::user_vocab::{
-    MockUserVocabStore, UserVocabReader, UserVocabRecord, UserVocabWriter,
-};
+use kotoha_storage::learning_cache::{LearningCacheWriter, MockLearningCacheStore};
+use kotoha_storage::user_vocab::{MockUserVocabStore, UserVocabRecord, UserVocabWriter};
 
 /// dict-smoke 不要な stub。`SudachiAdapter::tokenize` の呼び出し contract を
 /// 満たし、reading に対して固定 `EngineCandidate` を返す。
@@ -85,11 +81,10 @@ fn build_ranker(
     });
     let user_vocab = Arc::new(MockUserVocabStore::new());
     let learning_cache = Arc::new(MockLearningCacheStore::new());
-    let ranker = HybridRanker::new(
-        sudachi,
-        user_vocab.clone() as Arc<dyn UserVocabReader>,
-        learning_cache.clone() as Arc<dyn LearningCacheReader>,
-    );
+    let user_vocab_port = kotoha_engine_adapter::arc_mock_user_vocab(user_vocab.clone());
+    let (_recorder, learning_lookup) =
+        kotoha_engine_adapter::arc_mock_learning_cache(learning_cache.clone());
+    let ranker = HybridRanker::new(sudachi, user_vocab_port, learning_lookup);
     (ranker, user_vocab, learning_cache)
 }
 

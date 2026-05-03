@@ -186,9 +186,15 @@ fn run_ibus() -> anyhow::Result<()> {
         Arc::new(kotoha_storage::learning_cache::SqliteLearningCacheStore::new(db.clone()));
 
     // 6 + 7. Ranker: SudachiDict-core を env var 経由で読み、HybridRanker を構築する。
+    //   adapter wrapper 経由で kotoha-engine-core の domain port
+    //   (`UserVocabLookup` / `LearningLookup` / `LearningRecorder`)に変換する
+    //   (B0h-a / C3 hexagonal driven port 反転、ISSUE #149 / #153)。
+    let user_vocab_port = kotoha_engine_adapter::arc_sqlite_user_vocab(user_vocab_store.clone());
+    let (learning_recorder, learning_lookup) =
+        kotoha_engine_adapter::arc_sqlite_learning_cache(learning_store.clone());
     let allow_stub = stub_fallback_allowed();
     let (ranker, ranker_backend): (Arc<dyn kotoha_engine_core::Ranker>, &'static str) =
-        match build_hybrid_ranker(user_vocab_store.clone(), learning_store.clone()) {
+        match build_hybrid_ranker(user_vocab_port.clone(), learning_lookup.clone()) {
             Ok(r) => {
                 tracing::info!("HybridRanker constructed (dict-only path; LLM is Phase 3-B B2+)");
                 (r, "HybridRanker")
@@ -231,8 +237,10 @@ fn run_ibus() -> anyhow::Result<()> {
     };
 
     // 9. engine(spec §9.1 row 5: spawn 失敗は Result 経由 propagate)
-    let engine = kotoha_engine_core::engine::KotohaEngine::new(host_bridge, ranker, learning_store)
-        .context("spawn ranker worker thread")?;
+    //    adapter 経由で `Arc<dyn LearningRecorder>` を engine に注入する。
+    let engine =
+        kotoha_engine_core::engine::KotohaEngine::new(host_bridge, ranker, learning_recorder)
+            .context("spawn ranker worker thread")?;
 
     // 10. dispatcher (event loop stub) — wire up but do NOT silently exit.
     //
@@ -260,8 +268,8 @@ fn run_ibus() -> anyhow::Result<()> {
 /// 失敗時は `Err` で fallback path に return する。LLM backend は Phase 3-B
 /// B2+ で feature gate 付きで追加する。
 fn build_hybrid_ranker(
-    user_vocab: Arc<kotoha_storage::user_vocab::SqliteUserVocabStore>,
-    learning_cache: Arc<kotoha_storage::learning_cache::SqliteLearningCacheStore>,
+    user_vocab: Arc<dyn kotoha_engine_core::learning_port::UserVocabLookup>,
+    learning_cache: Arc<dyn kotoha_engine_core::learning_port::LearningLookup>,
 ) -> anyhow::Result<Arc<dyn kotoha_engine_core::Ranker>> {
     let dict_path: PathBuf = std::env::var(KOTOHA_SYSTEM_DICT_PATH_ENV)
         .map(PathBuf::from)
