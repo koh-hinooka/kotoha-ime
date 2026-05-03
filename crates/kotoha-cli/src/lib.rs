@@ -56,6 +56,18 @@ pub fn process_line(ctx: &mut InputContext, line: &str) -> String {
             InputStep::Preedit | InputStep::Invalid(_) => {
                 // Intentionally silent per plan M6 既知懸念 1.
             }
+            InputStep::BufferFull(rejected) => {
+                // ISSUE #39: Direct buffer cap reached. Emit a tracing::warn
+                // (observable per spec §9.3) and drop the rejected char. Line-
+                // based CLI flow naturally bounds direct_buffer per line, so
+                // this branch is only reachable for pathological adversarial
+                // input piped through stdin (e.g., a single 16+ KiB Direct
+                // line with no commit boundary).
+                tracing::warn!(
+                    rejected_char = %rejected.escape_debug(),
+                    "InputContext direct_buffer full; dropping char (ISSUE #39 cap reached)"
+                );
+            }
             // `InputStep` is `#[non_exhaustive]`; future variants default to silent drop.
             _ => {}
         }

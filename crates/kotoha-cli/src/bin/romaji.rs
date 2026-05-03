@@ -13,6 +13,11 @@ use std::process::ExitCode;
 use clap::{Parser, ValueEnum};
 use kotoha_cli::{format_line_output, process_line};
 use kotoha_core::{InputContext, InputMode};
+use tracing_subscriber::EnvFilter;
+
+/// Env var controlling the `tracing` filter directive. Mirrors `kotoha-bin`'s
+/// `KOTOHA_LOG` for consistency across the workspace's binaries.
+const KOTOHA_LOG_ENV: &str = "KOTOHA_LOG";
 
 /// CLI mode selector.
 ///
@@ -55,6 +60,7 @@ struct Cli {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    init_tracing();
 
     let mut ctx = InputContext::new();
     // `--mode direct` sets Sticky Direct before entering the stdin loop
@@ -89,4 +95,31 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+/// `tracing_subscriber` を stderr 向けに初期化する。`KOTOHA_LOG` 未設定時は
+/// `warn` default(CLI 通常運用で flooding しない)、設定済 + parse 失敗時は
+/// `eprintln!` で warning を出して `warn` に fallback する。
+///
+/// ISSUE #39 / PR #168 self-review High:本 binary は以前 subscriber 未初期化で
+/// `tracing::warn!` が `NoSubscriber` で drop されていた(BufferFull arm の
+/// observability 主張が CLI 経由で成立しなかった)。kotoha-bin の `init_tracing`
+/// と同 pattern で配線する。
+fn init_tracing() {
+    let filter = match std::env::var(KOTOHA_LOG_ENV) {
+        Ok(directive) => match EnvFilter::try_new(&directive) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!(
+                    "warning: invalid {KOTOHA_LOG_ENV}={directive:?} ({e}); falling back to warn"
+                );
+                EnvFilter::new("warn")
+            }
+        },
+        Err(_) => EnvFilter::new("warn"),
+    };
+    tracing_subscriber::fmt()
+        .with_writer(io::stderr)
+        .with_env_filter(filter)
+        .init();
 }
