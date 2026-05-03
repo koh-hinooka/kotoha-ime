@@ -290,14 +290,24 @@ impl kotoha_engine_core::Ranker for StubRanker {
 }
 
 /// 暫定 stub host bridge(`KOTOHA_ALLOW_STUB=1` 時のみ fallback として利用)。
+///
+/// B0g-b #148 / I6: `text` 引数は user 入力(password 含む可能性)。`tracing::trace!`
+/// に流すと `KOTOHA_LOG=trace` 設定時に systemd journal / log aggregator へ
+/// 平文流出する。dev fallback path とはいえ user の手元で trace を有効化する
+/// ケース(debug session 中の log tail 等)を考慮し、`text_len` のみ記録する。
 struct StubHostBridge;
 
 impl kotoha_engine_core::IMEHostBridge for StubHostBridge {
     fn update_preedit(&self, text: &str, cursor: usize, visible: bool) {
-        tracing::trace!(text, cursor, visible, "stub update_preedit");
+        tracing::trace!(
+            text_len = text.chars().count(),
+            cursor,
+            visible,
+            "stub update_preedit"
+        );
     }
     fn commit_text(&self, text: &str) {
-        tracing::trace!(text, "stub commit_text");
+        tracing::trace!(text_len = text.chars().count(), "stub commit_text");
     }
     fn update_candidates(&self, _update: kotoha_engine_core::CandidateUpdate) {
         tracing::trace!("stub update_candidates");

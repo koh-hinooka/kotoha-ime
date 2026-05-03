@@ -5,6 +5,7 @@
 //!
 //! Phase 3-A spec §4.3 で凍結された Ranker trait の concrete impl。
 
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -151,179 +152,197 @@ impl Ranker for HybridRanker {
         let llm_opt = self.llm.as_ref().map(Arc::clone);
 
         // 並列 backend 呼び出し用 thread を spawn(`rank()` は即時 return)。
+        //
+        // B0g-b #148 / 第 2 回 review I7: 本 child thread の closure 全体を
+        // `panic::catch_unwind` で wrap する。worker.rs の outer catch は
+        // `Ranker::rank` の **同期 return まで** しか cover しないため、ここで
+        // spawn した child が `sudachi.tokenize` / `user_vocab.find_by_prefix`
+        // / `learning_cache.lookup` / `llm.convert` のいずれかで panic すると
+        // 旧実装は `tx_ranker` 相当の sink が drop されて worker `drain_window`
+        // が即時 `Disconnected` を返し、空 Replace が engine に送られる
+        // silent failure(spec §9.3「変換失敗で前回候補が画面に残る」未然防止
+        // ロジックに対し、観測 path が `tracing::error!` 抜きで進む)になる。
+        // 本 catch_unwind で `tracing::error!` を最低限残す。`AssertUnwindSafe`
+        // は内部で扱う `Arc<dyn Trait>` 共有 state がすべて `Mutex` poison 対応
+        // 済(PR #111 規約)である前提で引き受ける。
         thread::spawn(move || {
-            // Phase 1: entry cancel check(early return で thread を即終了)
-            if cancel.is_cancelled() {
-                return;
-            }
-
-            // SudachiDict tokenize
-            // backend 個別 error は global feedback「silent_failure 禁止」遵守のため
-            // tracing::warn! で観測、empty Vec で fallback(全 backend を block しない)。
-            let dict_cands: Vec<Candidate> = match sudachi.tokenize(&kana_owned) {
-                Ok(ecs) => ecs
-                    .into_iter()
-                    .map(|ec| Candidate::new(ec.surface, ec.score))
-                    .collect(),
-                Err(e) => {
-                    tracing::warn!(
-                        error = ?e,
-                        // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
-                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
-                        kana = %kana_owned,
-                        "sudachi tokenize failed; using empty dict candidates"
-                    );
-                    Vec::new()
+            let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                // Phase 1: entry cancel check(early return で thread を即終了)
+                if cancel.is_cancelled() {
+                    return;
                 }
-            };
 
-            // UserVocab prefix lookup
-            // `find_by_prefix(reading_prefix, limit)` は `score DESC` で最大 `limit` 件返す
-            // (UserVocabReader trait contract)。
-            let user_cands: Vec<Candidate> =
-                match user_vocab.find_by_prefix(&kana_owned, DEFAULT_TOP_K) {
-                    Ok(records) => records
+                // SudachiDict tokenize
+                // backend 個別 error は global feedback「silent_failure 禁止」遵守のため
+                // tracing::warn! で観測、empty Vec で fallback(全 backend を block しない)。
+                let dict_cands: Vec<Candidate> = match sudachi.tokenize(&kana_owned) {
+                    Ok(ecs) => ecs
                         .into_iter()
-                        .map(|r| Candidate::new(r.surface, r.score))
+                        .map(|ec| Candidate::new(ec.surface, ec.score))
                         .collect(),
                     Err(e) => {
                         tracing::warn!(
                             error = ?e,
-                            // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
-                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
-                        kana = %kana_owned,
-                            "user_vocab find_by_prefix failed; using empty user candidates"
+                            kana_len = kana_owned.chars().count(),
+                            "sudachi tokenize failed; using empty dict candidates"
                         );
                         Vec::new()
                     }
                 };
 
-            // LearningCache lookup
-            let cache_records = match learning_cache.lookup(&kana_owned, DEFAULT_TOP_K) {
-                Ok(records) => records,
-                Err(e) => {
-                    tracing::warn!(
-                        error = ?e,
-                        // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
-                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
-                        kana = %kana_owned,
-                        "learning_cache lookup failed; using empty cache hits"
-                    );
-                    Vec::new()
+                // UserVocab prefix lookup
+                // `find_by_prefix(reading_prefix, limit)` は `score DESC` で最大 `limit` 件返す
+                // (UserVocabReader trait contract)。
+                let user_cands: Vec<Candidate> =
+                    match user_vocab.find_by_prefix(&kana_owned, DEFAULT_TOP_K) {
+                        Ok(records) => records
+                            .into_iter()
+                            .map(|r| Candidate::new(r.surface, r.score))
+                            .collect(),
+                        Err(e) => {
+                            tracing::warn!(
+                                error = ?e,
+                                kana_len = kana_owned.chars().count(),
+                                "user_vocab find_by_prefix failed; using empty user candidates"
+                            );
+                            Vec::new()
+                        }
+                    };
+
+                // LearningCache lookup
+                let cache_records = match learning_cache.lookup(&kana_owned, DEFAULT_TOP_K) {
+                    Ok(records) => records,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = ?e,
+                            kana_len = kana_owned.chars().count(),
+                            "learning_cache lookup failed; using empty cache hits"
+                        );
+                        Vec::new()
+                    }
+                };
+                let cache_surfaces: Vec<String> = cache_records
+                    .iter()
+                    .map(|r| r.chosen_kanji.clone())
+                    .collect();
+
+                // Phase 2: backend 完了直後 cancel check
+                if cancel.is_cancelled() {
+                    return;
                 }
-            };
-            let cache_surfaces: Vec<String> = cache_records
-                .iter()
-                .map(|r| r.chosen_kanji.clone())
-                .collect();
 
-            // Phase 2: backend 完了直後 cancel check
-            if cancel.is_cancelled() {
-                return;
-            }
+                // merge / dedupe / sort(dict 段)
+                // UserVocab と SudachiDict を同一 WEIGHT_DICT で merge する。同一 surface が
+                // 競合した場合は max-score 採用のため、UserVocab 側の score が高ければ
+                // 自然に優先される(挿入順は無関係、merge_candidates の dedupe コメント参照)。
+                // caller(本関数)は UserVocab 由来 entry の score を意図的に高く付ける前提。
+                //
+                // LLM 段で再 merge するため、dict / user candidates の owned copy を
+                // clone しておく(merge は move semantics で消費する)。
+                let dict_cands_for_llm = dict_cands.clone();
+                let user_cands_for_llm = user_cands.clone();
+                let cache_surfaces_for_llm = cache_surfaces.clone();
 
-            // merge / dedupe / sort(dict 段)
-            // UserVocab と SudachiDict を同一 WEIGHT_DICT で merge する。同一 surface が
-            // 競合した場合は max-score 採用のため、UserVocab 側の score が高ければ
-            // 自然に優先される(挿入順は無関係、merge_candidates の dedupe コメント参照)。
-            // caller(本関数)は UserVocab 由来 entry の score を意図的に高く付ける前提。
-            //
-            // LLM 段で再 merge するため、dict / user candidates の owned copy を
-            // clone しておく(merge は move semantics で消費する)。
-            let dict_cands_for_llm = dict_cands.clone();
-            let user_cands_for_llm = user_cands.clone();
-            let cache_surfaces_for_llm = cache_surfaces.clone();
-
-            // B0g #148 / 第 2 回 review I15: dict / user / learning 3 source が
-            // 全て空(個別 WARN を吐いた直後)の場合、user 視点では「変換不能」
-            // という degraded mode に等しい。spec §9.1 row 3「全 backend 全滅
-            // なら空 Replace を engine に送り tracing::error」を遵守し、merge
-            // 直前で all-empty 検出時に ERROR log を残す。空 Replace 自体は
-            // engine 側の「前回候補画面残留」防止のため引き続き送る(spec §9.3)。
-            let dict_all_empty = dict_cands_for_llm.is_empty()
-                && user_cands_for_llm.is_empty()
-                && cache_surfaces_for_llm.is_empty();
-            if dict_all_empty {
-                tracing::error!(
-                    kana_len = kana_owned.chars().count(),
-                    "all dict-tier backends returned empty (sudachi+uservocab+learningcache); \
+                // B0g #148 / 第 2 回 review I15: dict / user / learning 3 source が
+                // 全て空(個別 WARN を吐いた直後)の場合、user 視点では「変換不能」
+                // という degraded mode に等しい。spec §9.1 row 3「全 backend 全滅
+                // なら空 Replace を engine に送り tracing::error」を遵守し、merge
+                // 直前で all-empty 検出時に ERROR log を残す。空 Replace 自体は
+                // engine 側の「前回候補画面残留」防止のため引き続き送る(spec §9.3)。
+                let dict_all_empty = dict_cands_for_llm.is_empty()
+                    && user_cands_for_llm.is_empty()
+                    && cache_surfaces_for_llm.is_empty();
+                if dict_all_empty {
+                    tracing::error!(
+                        kana_len = kana_owned.chars().count(),
+                        "all dict-tier backends returned empty (sudachi+uservocab+learningcache); \
                      engine will receive empty candidates (spec §9.1 row 3)"
+                    );
+                }
+
+                let merged = merge_candidates(
+                    vec![
+                        (user_cands, CandidateSource::Dict),
+                        (dict_cands, CandidateSource::Dict),
+                    ],
+                    &cache_surfaces,
+                    DEFAULT_TOP_K,
                 );
-            }
 
-            let merged = merge_candidates(
-                vec![
-                    (user_cands, CandidateSource::Dict),
-                    (dict_cands, CandidateSource::Dict),
-                ],
-                &cache_surfaces,
-                DEFAULT_TOP_K,
-            );
+                // Phase 3 (M2 互換): dict 結果 send 直前 cancel check
+                if cancel.is_cancelled() {
+                    return;
+                }
 
-            // Phase 3 (M2 互換): dict 結果 send 直前 cancel check
-            if cancel.is_cancelled() {
-                return;
-            }
+                // 1 段目 push:dict 結果。
+                // receiver が drop されてたら send error が返るが、「receiver 側 thread が
+                // 先に終わる」のは正常 path(engine 側で active request が更新済みのケース、
+                // Phase 3-A spec §7.5)。Caller が cleanup 中のため tracing::trace で吸収する。
+                if let Err(e) = sink.send(RankerOutput {
+                    update: CandidateUpdate::Replace(merged),
+                }) {
+                    tracing::trace!(error = ?e, "ranker sink closed before dict send");
+                    // 1 段目 send で receiver 不在なら 2 段目 LLM 段は試みない
+                    // (resource waste 回避、cancellation の lazy effect)。
+                    return;
+                }
 
-            // 1 段目 push:dict 結果。
-            // receiver が drop されてたら send error が返るが、「receiver 側 thread が
-            // 先に終わる」のは正常 path(engine 側で active request が更新済みのケース、
-            // Phase 3-A spec §7.5)。Caller が cleanup 中のため tracing::trace で吸収する。
-            if let Err(e) = sink.send(RankerOutput {
-                update: CandidateUpdate::Replace(merged),
-            }) {
-                tracing::trace!(error = ?e, "ranker sink closed before dict send");
-                // 1 段目 send で receiver 不在なら 2 段目 LLM 段は試みない
-                // (resource waste 回避、cancellation の lazy effect)。
-                return;
-            }
+                // LLM path(`llm = None` なら skip し dict-only 動作 = M2 完全互換)。
+                let Some(llm) = llm_opt else {
+                    return;
+                };
 
-            // LLM path(`llm = None` なら skip し dict-only 動作 = M2 完全互換)。
-            let Some(llm) = llm_opt else {
-                return;
-            };
+                // Phase 3 (LLM 前): LLM convert 呼び出し直前 cancel check
+                if cancel.is_cancelled() {
+                    return;
+                }
 
-            // Phase 3 (LLM 前): LLM convert 呼び出し直前 cancel check
-            if cancel.is_cancelled() {
-                return;
-            }
-
-            // M3 段階では ConvertOptions::default() で呼ぶ(top_k=5 / greedy / seed=0)。
-            // commit_history → prompt 注入は ConvertOptions 拡張要のため P2-D 後続
-            // ISSUE で対応する(spec §13 Open Q 4 関連)。
-            let opts = ConvertOptions::default();
-            match llm.convert(&kana_owned, &opts) {
-                Ok(llm_cands) => {
-                    // Phase 4 (LLM 後): LLM convert 完了直後 cancel check
-                    if cancel.is_cancelled() {
-                        return;
+                // M3 段階では ConvertOptions::default() で呼ぶ(top_k=5 / greedy / seed=0)。
+                // commit_history → prompt 注入は ConvertOptions 拡張要のため P2-D 後続
+                // ISSUE で対応する(spec §13 Open Q 4 関連)。
+                let opts = ConvertOptions::default();
+                match llm.convert(&kana_owned, &opts) {
+                    Ok(llm_cands) => {
+                        // Phase 4 (LLM 後): LLM convert 完了直後 cancel check
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+                        // 既存 dict + user 結果に LLM 結果を append、改めて merge して全置換 push。
+                        let combined = merge_candidates(
+                            vec![
+                                (user_cands_for_llm, CandidateSource::Dict),
+                                (dict_cands_for_llm, CandidateSource::Dict),
+                                (llm_cands, CandidateSource::Llm),
+                            ],
+                            &cache_surfaces_for_llm,
+                            DEFAULT_TOP_K,
+                        );
+                        if let Err(e) = sink.send(RankerOutput {
+                            update: CandidateUpdate::Replace(combined),
+                        }) {
+                            tracing::trace!(error = ?e, "ranker sink closed before LLM send");
+                        }
                     }
-                    // 既存 dict + user 結果に LLM 結果を append、改めて merge して全置換 push。
-                    let combined = merge_candidates(
-                        vec![
-                            (user_cands_for_llm, CandidateSource::Dict),
-                            (dict_cands_for_llm, CandidateSource::Dict),
-                            (llm_cands, CandidateSource::Llm),
-                        ],
-                        &cache_surfaces_for_llm,
-                        DEFAULT_TOP_K,
-                    );
-                    if let Err(e) = sink.send(RankerOutput {
-                        update: CandidateUpdate::Replace(combined),
-                    }) {
-                        tracing::trace!(error = ?e, "ranker sink closed before LLM send");
+                    Err(e) => {
+                        // graceful degradation: dict-only fallback、第 2 段 push なし。
+                        tracing::warn!(
+                            error = ?e,
+                            kana_len_for_llm = kana_owned.chars().count(),
+                            "LLM backend failed, dict candidates only"
+                        );
                     }
                 }
-                Err(e) => {
-                    // graceful degradation: dict-only fallback、第 2 段 push なし。
-                    tracing::warn!(
-                        error = ?e,
-                        // TODO(B0g-b / I6 #148): redact `kana` to `kana_len = kana_owned.chars().count()`;
-                        //   WARN level outputs at default KOTOHA_LOG=info, leaking user-typed reading.
-                        kana = %kana_owned,
-                        "LLM backend failed, dict candidates only"
-                    );
-                }
+            }));
+            if let Err(payload) = result {
+                // self-review F3:`panic_type` の opaque TypeId hex dump では
+                // post-mortem で `&'static str` / `String` / `panic_any(...)` の
+                // どれだったか判別不能。`engine::panic_message_from` を共有
+                // helper として再利用し、payload 中身を message 化する。
+                let msg = crate::engine::panic_message_from(&payload);
+                tracing::error!(
+                    panic = %msg,
+                    "HybridRanker child thread panicked; sink dropped, worker drain_window will observe disconnect (spec §9.1 row 2 / B0g-b I7)"
+                );
             }
         });
 

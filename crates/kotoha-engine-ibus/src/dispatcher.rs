@@ -61,11 +61,15 @@ impl<E: IMEEngine> IBusEventDispatcher<E> {
             Ok(kotoha_engine_core::KeyEventResult::Consumed) => true,
             Ok(kotoha_engine_core::KeyEventResult::Forwarded) => false,
             Err(payload) => {
+                // self-review F3 (B0g-b):TypeId opaque hex dump を `&'static str`
+                // / `String` / `panic_any(...)` 各 payload に対応した message に
+                // 拡張する共有 helper を再利用。
+                let msg = kotoha_engine_core::engine::panic_message_from(&payload);
                 tracing::error!(
                     keysym,
                     keycode,
                     state,
-                    panic_type = ?(*payload).type_id(),
+                    panic = %msg,
                     "engine.process_key_event panicked; resetting engine state"
                 );
                 // reset() 自体の二重 panic は session 全死亡相当で recovery 不能
@@ -76,8 +80,9 @@ impl<E: IMEEngine> IBusEventDispatcher<E> {
                     self.engine.reset();
                 }));
                 if let Err(reset_payload) = reset_result {
+                    let reset_msg = kotoha_engine_core::engine::panic_message_from(&reset_payload);
                     tracing::error!(
-                        panic_type = ?(*reset_payload).type_id(),
+                        panic = %reset_msg,
                         "engine.reset() panicked during dispatch_key recovery; \
                          engine state corruption likely; subsequent keystrokes may panic again"
                     );

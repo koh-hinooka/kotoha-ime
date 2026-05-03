@@ -122,7 +122,7 @@ fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<E
             Ok(IterationOutcome::RankerPanicked) => true,
             Ok(IterationOutcome::EngineDisconnected) => return,
             Err(payload) => {
-                let msg = panic_message(&payload);
+                let msg = panic_message_from(&payload);
                 tracing::error!(
                     request_id,
                     panic = %msg,
@@ -191,7 +191,7 @@ fn handle_one_request(req: RankRequest, tx_event: &mpsc::Sender<EngineEvent>) ->
         Ok(Ok(())) => (Ok(()), false),
         Ok(Err(e)) => (Err(format!("ranker error: {e}")), false),
         Err(panic_payload) => {
-            let msg = panic_message(&panic_payload);
+            let msg = panic_message_from(&panic_payload);
             tracing::error!(request_id, panic = %msg, "ranker panicked");
             (Err(format!("ranker panicked: {msg}")), true)
         }
@@ -272,8 +272,17 @@ fn handle_one_request(req: RankRequest, tx_event: &mpsc::Sender<EngineEvent>) ->
 ///
 /// `kotoha-engine-core` は domain crate のため `anyhow::Error` への downcast
 /// は実装しない(crate dependency を増やさない)。実際の `anyhow` 表示は
-/// `kotoha-bin::panic_message` 側で行う。
-fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+/// `kotoha-bin::panic_message_from` 側で行う。
+///
+/// # Visibility
+///
+/// B0g-b self-review F3:本 helper は `engine/worker.rs` 内の Ranker.rank /
+/// worker body panic 解析だけでなく `ranker/hybrid.rs` の child thread / 別
+/// crate の `kotoha-engine-ibus/dispatcher.rs` `dispatch_key` 経由 panic でも
+/// 共有再利用する。`pub(crate)` で同 crate 内 module 群に開放、external crate
+/// (engine-ibus 等)からは `crate::engine::panic_message_from` 経由で呼べる
+/// よう lib.rs で再 export する。
+pub fn panic_message_from(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         return (*s).to_string();
     }
@@ -333,7 +342,7 @@ fn apply_to_buffer(buffer: &mut Vec<Candidate>, update: CandidateUpdate) {
 
 #[cfg(test)]
 mod tests {
-    //! Phase 3-B B0g (ISSUE #148 / C4): `panic_message` の payload type 拡充
+    //! Phase 3-B B0g (ISSUE #148 / C4): `panic_message_from` の payload type 拡充
     //! が `&'static str` / `String` 経由 panic を取りこぼさないこと、未知 type の
     //! payload でも `(non-string panic payload, type_id=...)` で type 情報が
     //! 残ることを観測する。
@@ -346,14 +355,14 @@ mod tests {
     #[test]
     fn panic_message_extracts_static_str() {
         let payload = capture_panic(|| panic!("static panic message"));
-        assert_eq!(panic_message(&payload), "static panic message");
+        assert_eq!(panic_message_from(&payload), "static panic message");
     }
 
     #[test]
     fn panic_message_extracts_owned_string() {
         let owned = String::from("owned panic message");
         let payload = capture_panic(move || panic!("{}", owned));
-        assert_eq!(panic_message(&payload), "owned panic message");
+        assert_eq!(panic_message_from(&payload), "owned panic message");
     }
 
     #[test]
@@ -362,7 +371,7 @@ mod tests {
         // `&'static str` / `String` のいずれにも該当しないため未知 type
         // arm が発火し、type_id が message に含まれることを観測する。
         let payload = capture_panic(|| std::panic::panic_any(42_u32));
-        let msg = panic_message(&payload);
+        let msg = panic_message_from(&payload);
         assert!(
             msg.starts_with("(non-string panic payload, type_id="),
             "unexpected panic message: {msg}"

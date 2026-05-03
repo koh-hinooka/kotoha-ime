@@ -195,6 +195,39 @@ fn handle_return(engine: &mut KotohaEngine) -> KeyEventResult {
     let selected: Candidate = engine.candidates[engine.highlight_idx].clone();
     let kana_at_request = engine.current_preedit.clone();
 
+    // B0g-b #148 / 第 2 回 review I8: host 出力の trust boundary で sanitization。
+    // 改ざん辞書 / 悪意ある LLM 出力 / Phase 5 custom model から来た候補が ANSI
+    // escape / NUL byte / RTL override 等を含む場合、application 側(terminal /
+    // chat client / git editor 等)に注入されないよう commit を skip する。
+    //
+    // self-review F2:本 path に到達するということは `apply_candidate_update`
+    // の filter を通り抜けて engine.candidates に保持されている surface が
+    // unsafe ということ。理論上は到達不可能(filter があるため)だが、防御
+    // 深度として残し、到達した場合は engine state を Idle に戻して UI ロック
+    // を防ぐ(候補ウィンドウ閉鎖 + preedit clear + state Idle)。`debug_assert`
+    // で dev / CI build では必ず観測する。
+    if !crate::sanitize::is_safe_for_host(&selected.surface) {
+        tracing::error!(
+            surface_len = selected.surface.chars().count(),
+            "candidate surface contains unsafe control / bidi / escape characters; \
+             skipping commit_text and resetting engine state to avoid UI lock"
+        );
+        debug_assert!(
+            false,
+            "unsafe surface reached handle_return; apply_candidate_update filter bypass?"
+        );
+        // F2 cleanup:UI 状態を Idle に戻して user が次操作できるようにする。
+        engine.host.hide_candidate_window();
+        engine.host.update_preedit("", 0, false);
+        engine.current_preedit.clear();
+        engine.romaji.reset_pending();
+        engine.candidates.clear();
+        engine.highlight_idx = 0;
+        engine.cancel_active();
+        engine.state = EngineState::Idle;
+        return KeyEventResult::Consumed;
+    }
+
     engine.host.commit_text(&selected.surface);
     if let Err(e) = engine
         .learning_writer

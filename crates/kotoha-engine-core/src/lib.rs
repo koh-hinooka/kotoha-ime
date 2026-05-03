@@ -25,6 +25,7 @@ pub mod host_bridge;
 pub mod ime_engine;
 pub mod key_event;
 pub mod ranker;
+pub mod sanitize;
 
 #[cfg(feature = "test-helpers")]
 pub mod testing;
