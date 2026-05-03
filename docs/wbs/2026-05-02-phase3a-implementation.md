@@ -149,7 +149,8 @@ GNOME Wayland session 上で `cargo run --bin kotoha` 起動 + 以下 applicatio
 | 8 | KeyModifiers full mapping | IBus IBusModifierType 全列挙 | **解決(P3-B B4 / PR #138)** |
 | 9 | adapter Mutex<Vec<Candidate>> 競合 | B0h-d で `Arc<Mutex<dyn IMEEngine>>` 化済 | **解決(B0h-d / B2、spec §13 r2 で closure)** |
 | 9 (D-Bus body) | `IBusText` / `IBusLookupTable` marshalling | IBus 1.5.x signature 準拠で実装、`Value::Structure(...)` 経由(spec §4.2 r3) | **進行中(B2 / #170)** |
-| - (B0h-f 前提) | `update_preedit` blocking `connection.send` が typing path で 10ms budget 直撃 | Phase 3-B B0h-f(I3 async dispatch)で `WorkerChannel` 投入経路に切替、coalescing 5ms typing / 30ms commit を組合せ | TBD(B0h-f scope) |
+| - (B0h-f 前提) | `update_preedit` blocking `connection.send` が typing path で 10ms budget 直撃 | Phase 3-B B0h-f(I3 async dispatch)で `WorkerChannel` 投入経路に切替、coalescing 5ms typing / 30ms commit を組合せ + `host_bridge::tracing::warn!` emit 検証(`tracing-test` crate を dev-dependency 追加し L2 で 5 method 個別検証) | TBD(B0h-f scope) |
+| - (Phase 5 前提) | `IBusLookupTable::from_candidates` が候補数 unbounded(現状 dict + LLM 最大 ~30 件、Phase 5 で custom model 導入時に再評価) | `from_candidates` で `candidates.truncate(MAX_LOOKUP_TABLE_CANDIDATES)` 等の defense-in-depth を導入、debug log で truncation 観測 | TBD(Phase 5 scope、別 ISSUE 起票) |
 
 ## P3-B 後続予定
 

@@ -477,4 +477,25 @@ mod tests {
             other => panic!("expected Array, got {other:?}"),
         }
     }
+
+    /// Spec §4.2 r3 acceptance + Testing review Low: field 4 (`cursor_visible`)
+    /// と field 5 (`round`) は同 `bool` 型のため `from_candidates` default
+    /// (双方 true)では swap regression を検出できない。distinguishing 値で
+    /// 検出する追加 test。
+    #[test]
+    fn ibus_lookup_table_field_4_5_distinguish_cursor_visible_from_round() {
+        let mut t = IBusLookupTable::from_candidates(vec![]);
+        t.cursor_visible = true;
+        t.round = false;
+        let v = t.into_variant();
+        let fields = structure_fields(&v);
+        assert!(
+            bool::try_from(fields[4].try_clone().unwrap()).unwrap(),
+            "field 4 must be cursor_visible=true"
+        );
+        assert!(
+            !bool::try_from(fields[5].try_clone().unwrap()).unwrap(),
+            "field 5 must be round=false"
+        );
+    }
 }

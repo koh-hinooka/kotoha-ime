@@ -28,9 +28,18 @@
 //! # Visibility
 //!
 //! `IBusEngineSignals` は `pub(crate)` で crate 外部からは到達不可。production
-//! 経路は `IBusHostBridge::IMEHostBridge` impl 1 点のみで、入力は
-//! `kotoha_engine_core::sanitize` を通った text のみが流入する設計。adapter
-//! 内部の defense-in-depth は visibility 降格で satisfy する。
+//! 経路は `IBusHostBridge::IMEHostBridge` impl 1 点のみ。各 path の input gate は:
+//!
+//! - `commit_text`:`kotoha_engine_core::engine::transitions` 内 commit gate
+//!   (`is_safe_for_host` filter 通過)
+//! - `update_candidates`:`KotohaEngine::filter_safe_candidates`(同じく
+//!   `is_safe_for_host` filter 通過)
+//! - `update_preedit`:RomajiConverter の構造的出力(hiragana / katakana のみ)
+//!   を直接渡す。wire-format 層 NUL handling が最終 fail-safe として動作する
+//!
+//! adapter 内部の defense-in-depth は visibility 降格で satisfy する(crate 外部
+//! caller が sanitize を bypass して `IBusEngineSignals` を直接呼ぶ path 自体が存在
+//! しない)。
 
 use zbus::blocking::Connection;
 use zbus::message::Message;
