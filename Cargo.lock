@@ -796,6 +796,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "kotoha-core",
+ "kotoha-engine-adapter",
  "kotoha-engine-core",
  "kotoha-engine-ibus",
  "kotoha-storage",
@@ -829,11 +830,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kotoha-engine-adapter"
+version = "0.1.0"
+dependencies = [
+ "kotoha-engine-core",
+ "kotoha-storage",
+]
+
+[[package]]
 name = "kotoha-engine-core"
 version = "0.1.0"
 dependencies = [
  "bitflags",
  "kotoha-core",
+ "kotoha-engine-adapter",
  "kotoha-storage",
  "proptest",
  "thiserror 1.0.69",

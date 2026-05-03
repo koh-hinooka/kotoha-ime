@@ -58,7 +58,7 @@ pub(crate) struct RequestHandle {
 /// # Construction
 ///
 /// `Box<dyn IMEHostBridge>` / `Arc<dyn Ranker>` /
-/// `Arc<dyn LearningCacheWriter>` を構築時に DI で受け取る([`Self::new`])。
+/// `Arc<dyn LearningRecorder>` を構築時に DI で受け取る([`Self::new`])。
 ///
 /// # Invariants
 ///
@@ -69,7 +69,7 @@ pub struct KotohaEngine {
     pub(crate) state: EngineState,
     pub(crate) host: Box<dyn IMEHostBridge>,
     pub(crate) ranker: Arc<dyn Ranker>,
-    pub(crate) learning_writer: Arc<dyn kotoha_storage::learning_cache::LearningCacheWriter>,
+    pub(crate) learning_writer: Arc<dyn crate::learning_port::LearningRecorder>,
     pub(crate) romaji: RomajiConverter,
     pub(crate) current_preedit: String,
     pub(crate) commit_history: CommitHistory,
@@ -107,7 +107,7 @@ impl KotohaEngine {
     pub fn new(
         host: Box<dyn IMEHostBridge>,
         ranker: Arc<dyn Ranker>,
-        learning_writer: Arc<dyn kotoha_storage::learning_cache::LearningCacheWriter>,
+        learning_writer: Arc<dyn crate::learning_port::LearningRecorder>,
     ) -> io::Result<Self> {
         let (tx_request, rx_event, worker_handle) = worker::spawn_worker()?;
         Ok(Self {
@@ -639,18 +639,18 @@ mod boundary_notify_tests {
         }
         #[derive(Default)]
         struct StubWriter;
-        impl kotoha_storage::learning_cache::LearningCacheWriter for StubWriter {
+        impl crate::learning_port::LearningRecorder for StubWriter {
             fn record_choice(
                 &self,
                 _kana_input: &str,
                 _chosen_kanji: &str,
-            ) -> Result<(), kotoha_storage::error::StorageError> {
+            ) -> Result<(), crate::learning_port::LearningError> {
                 Ok(())
             }
             fn evict_lru(
                 &self,
                 _max_entries: usize,
-            ) -> Result<usize, kotoha_storage::error::StorageError> {
+            ) -> Result<usize, crate::learning_port::LearningError> {
                 Ok(0)
             }
         }
@@ -718,18 +718,18 @@ mod boundary_notify_tests {
         }
         #[derive(Default)]
         struct StubWriter;
-        impl kotoha_storage::learning_cache::LearningCacheWriter for StubWriter {
+        impl crate::learning_port::LearningRecorder for StubWriter {
             fn record_choice(
                 &self,
                 _kana_input: &str,
                 _chosen_kanji: &str,
-            ) -> Result<(), kotoha_storage::error::StorageError> {
+            ) -> Result<(), crate::learning_port::LearningError> {
                 Ok(())
             }
             fn evict_lru(
                 &self,
                 _max_entries: usize,
-            ) -> Result<usize, kotoha_storage::error::StorageError> {
+            ) -> Result<usize, crate::learning_port::LearningError> {
                 Ok(0)
             }
         }
@@ -779,18 +779,18 @@ mod boundary_notify_tests {
         }
         #[derive(Default)]
         struct StubWriter;
-        impl kotoha_storage::learning_cache::LearningCacheWriter for StubWriter {
+        impl crate::learning_port::LearningRecorder for StubWriter {
             fn record_choice(
                 &self,
                 _kana_input: &str,
                 _chosen_kanji: &str,
-            ) -> Result<(), kotoha_storage::error::StorageError> {
+            ) -> Result<(), crate::learning_port::LearningError> {
                 Ok(())
             }
             fn evict_lru(
                 &self,
                 _max_entries: usize,
-            ) -> Result<usize, kotoha_storage::error::StorageError> {
+            ) -> Result<usize, crate::learning_port::LearningError> {
                 Ok(0)
             }
         }

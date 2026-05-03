@@ -57,15 +57,18 @@ impl Ranker for CancelObservingRanker {
 
 #[derive(Default)]
 struct StubWriter;
-impl kotoha_storage::learning_cache::LearningCacheWriter for StubWriter {
+impl kotoha_engine_core::learning_port::LearningRecorder for StubWriter {
     fn record_choice(
         &self,
         _kana_input: &str,
         _chosen_kanji: &str,
-    ) -> Result<(), kotoha_storage::error::StorageError> {
+    ) -> Result<(), kotoha_engine_core::learning_port::LearningError> {
         Ok(())
     }
-    fn evict_lru(&self, _max_entries: usize) -> Result<usize, kotoha_storage::error::StorageError> {
+    fn evict_lru(
+        &self,
+        _max_entries: usize,
+    ) -> Result<usize, kotoha_engine_core::learning_port::LearningError> {
         Ok(0)
     }
 }

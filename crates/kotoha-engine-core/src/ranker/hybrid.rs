@@ -13,12 +13,11 @@ use std::thread;
 use kotoha_core::dict::MorphologicalEngine;
 use kotoha_core::kanji::KanjiBackend;
 use kotoha_core::{Candidate, ConvertOptions};
-use kotoha_storage::learning_cache::LearningCacheReader;
-use kotoha_storage::user_vocab::UserVocabReader;
 
 use super::merge::{merge_candidates, CandidateSource};
 use super::{CandidateUpdate, ConversionContext, Ranker, RankerError, RankerOutput};
 use crate::cancel::CancellationToken;
+use crate::learning_port::{LearningLookup, UserVocabLookup};
 
 /// 候補生成の top_k(暫定、empirical で再評価)。
 const DEFAULT_TOP_K: usize = 10;
@@ -27,8 +26,8 @@ const DEFAULT_TOP_K: usize = 10;
 ///
 /// # Construction
 ///
-/// `Arc<dyn MorphologicalEngine>` / `Arc<dyn UserVocabReader>` /
-/// `Arc<dyn LearningCacheReader>` を構築時に DI で受け取る。LLM backend は
+/// `Arc<dyn MorphologicalEngine>` / `Arc<dyn UserVocabLookup>` /
+/// `Arc<dyn LearningLookup>` を構築時に DI で受け取る。LLM backend は
 /// M3 で追加し、`Option` 化することで dict-only(M2)動作を保つ。
 ///
 /// # Stale response の discard (Phase 3-B B0e で簡素化)
@@ -44,8 +43,8 @@ const DEFAULT_TOP_K: usize = 10;
 /// ベース id 照合 + per-request channel 不変条件で十分に成立する(spec §7.5)。
 pub struct HybridRanker {
     sudachi: Arc<dyn MorphologicalEngine + Send + Sync>,
-    user_vocab: Arc<dyn UserVocabReader>,
-    learning_cache: Arc<dyn LearningCacheReader>,
+    user_vocab: Arc<dyn UserVocabLookup>,
+    learning_cache: Arc<dyn LearningLookup>,
     /// LLM backend(Phase 1 Gemma-2-2B-jpn-it / MockBackend / 将来 backend)。
     /// `None` なら dict-only 動作(M2 path、lefthook pre-push 既定)。
     /// `Some(_)` を builder [`Self::with_llm`] で設定すると、`rank()` 内で
@@ -74,8 +73,8 @@ impl HybridRanker {
     ///   [`Self::with_llm`] を chain する。
     pub fn new(
         sudachi: Arc<dyn MorphologicalEngine + Send + Sync>,
-        user_vocab: Arc<dyn UserVocabReader>,
-        learning_cache: Arc<dyn LearningCacheReader>,
+        user_vocab: Arc<dyn UserVocabLookup>,
+        learning_cache: Arc<dyn LearningLookup>,
     ) -> Self {
         Self {
             sudachi,
@@ -192,7 +191,7 @@ impl Ranker for HybridRanker {
 
                 // UserVocab prefix lookup
                 // `find_by_prefix(reading_prefix, limit)` は `score DESC` で最大 `limit` 件返す
-                // (UserVocabReader trait contract)。
+                // (UserVocabLookup trait contract)。
                 let user_cands: Vec<Candidate> =
                     match user_vocab.find_by_prefix(&kana_owned, DEFAULT_TOP_K) {
                         Ok(records) => records
@@ -354,11 +353,10 @@ impl Ranker for HybridRanker {
 mod tests {
     use super::*;
     use crate::cancel::StdCancellationToken;
+    use crate::learning_port::{LearningCacheRecord, LearningError, UserVocabRecord};
     use crate::ranker::ConversionMode;
     use kotoha_core::dict::{EngineCandidate, MorphologicalEngine};
     use kotoha_core::kanji::KanjiError;
-    use kotoha_storage::learning_cache::MockLearningCacheStore;
-    use kotoha_storage::user_vocab::MockUserVocabStore;
 
     /// In-test stub: dict ファイル不要で `MorphologicalEngine` を満たす。
     /// プロジェクト全体で `dict_backend` の StubEngine と同 pattern。
@@ -379,30 +377,67 @@ mod tests {
         }
     }
 
-    fn make_ranker(
-        engine_cands: Vec<EngineCandidate>,
-    ) -> (
-        HybridRanker,
-        Arc<MockUserVocabStore>,
-        Arc<MockLearningCacheStore>,
-    ) {
+    /// Empty user vocabulary stub. domain port `UserVocabLookup` を満たし、
+    /// 全 method が空 result を返す(adapter / storage 依存を engine-core src
+    /// から完全に切り離すための test-only stub、B0h-a)。
+    #[derive(Default)]
+    struct StubUserVocabLookup;
+
+    impl UserVocabLookup for StubUserVocabLookup {
+        fn find_by_reading(
+            &self,
+            _reading: &str,
+            _limit: usize,
+        ) -> Result<Vec<UserVocabRecord>, LearningError> {
+            Ok(Vec::new())
+        }
+        fn find_by_id(&self, _id: i64) -> Result<Option<UserVocabRecord>, LearningError> {
+            Ok(None)
+        }
+        fn find_by_prefix(
+            &self,
+            _reading_prefix: &str,
+            _limit: usize,
+        ) -> Result<Vec<UserVocabRecord>, LearningError> {
+            Ok(Vec::new())
+        }
+        fn list_all(
+            &self,
+            _limit: usize,
+            _offset: usize,
+        ) -> Result<Vec<UserVocabRecord>, LearningError> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Empty learning cache stub. domain port `LearningLookup` を満たし、
+    /// `lookup` は空 result を返す。詳細は [`StubUserVocabLookup`] と同様。
+    #[derive(Default)]
+    struct StubLearningLookup;
+
+    impl LearningLookup for StubLearningLookup {
+        fn lookup(
+            &self,
+            _kana_input: &str,
+            _limit: usize,
+        ) -> Result<Vec<LearningCacheRecord>, LearningError> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn make_ranker(engine_cands: Vec<EngineCandidate>) -> HybridRanker {
         let sudachi: Arc<dyn MorphologicalEngine + Send + Sync> = Arc::new(StubEngine {
             canned: engine_cands,
         });
-        let user_vocab = Arc::new(MockUserVocabStore::new());
-        let learning_cache = Arc::new(MockLearningCacheStore::new());
-        let ranker = HybridRanker::new(
-            sudachi,
-            user_vocab.clone() as Arc<dyn UserVocabReader>,
-            learning_cache.clone() as Arc<dyn LearningCacheReader>,
-        );
-        (ranker, user_vocab, learning_cache)
+        let user_vocab: Arc<dyn UserVocabLookup> = Arc::new(StubUserVocabLookup);
+        let learning_cache: Arc<dyn LearningLookup> = Arc::new(StubLearningLookup);
+        HybridRanker::new(sudachi, user_vocab, learning_cache)
     }
 
     /// dict-only path: stub engine の候補が sink に到達する。
     #[test]
     fn rank_returns_dict_candidates_via_stub_engine() {
-        let (ranker, _uv, _lc) = make_ranker(vec![EngineCandidate {
+        let ranker = make_ranker(vec![EngineCandidate {
             surface: "言葉".into(),
             reading: "ことば".into(),
             score: -1.0,

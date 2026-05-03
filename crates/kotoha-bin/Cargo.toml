@@ -17,6 +17,10 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 kotoha-engine-core = { path = "../kotoha-engine-core" }
+# `kotoha-engine-adapter`: B0h-a (#149 / #153) で導入。SQLite store を engine-core
+# domain ports (`UserVocabLookup` / `LearningLookup` / `LearningRecorder`) に
+# wrap する hexagonal adapter。
+kotoha-engine-adapter = { path = "../kotoha-engine-adapter" }
 kotoha-engine-ibus = { path = "../kotoha-engine-ibus" }
 kotoha-storage = { path = "../kotoha-storage" }
 kotoha-core = { path = "../kotoha-core" }

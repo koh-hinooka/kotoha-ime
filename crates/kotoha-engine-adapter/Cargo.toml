@@ -1,0 +1,22 @@
+[package]
+name = "kotoha-engine-adapter"
+description = "Hexagonal adapter that bridges kotoha-engine-core domain ports to kotoha-storage SQLite/in-memory backends (Phase 3-B B0h-a, ISSUE #149/#153)"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# `kotoha-engine-core`: domain core defining LearningRecorder / LearningLookup /
+# UserVocabLookup ports that this crate implements.
+kotoha-engine-core = { path = "../kotoha-engine-core" }
+# `kotoha-storage`: SQLite + in-memory backend whose Sqlite/Mock stores are
+# wrapped to satisfy the engine-core domain ports.
+kotoha-storage = { path = "../kotoha-storage" }
+
+[dev-dependencies]
+# Integration tests construct MockUserVocabStore via its UserVocabWriter trait
+# to seed test fixtures, so kotoha-storage stays as a dev-dep too.
+kotoha-storage = { path = "../kotoha-storage" }

@@ -24,6 +24,7 @@ pub mod engine;
 pub mod host_bridge;
 pub mod ime_engine;
 pub mod key_event;
+pub mod learning_port;
 pub mod ranker;
 pub mod sanitize;
 
@@ -35,6 +36,10 @@ pub use engine::{CommitHistory, EngineState, KotohaEngine};
 pub use host_bridge::IMEHostBridge;
 pub use ime_engine::IMEEngine;
 pub use key_event::{KeyEvent, KeyEventResult, KeyModifiers};
+pub use learning_port::{
+    LearningCacheRecord, LearningError, LearningLookup, LearningRecorder, UserVocabLookup,
+    UserVocabRecord,
+};
 pub use ranker::{
     CandidateUpdate, ConversionContext, ConversionMode, HybridRanker, Ranker, RankerError,
     RankerOutput,

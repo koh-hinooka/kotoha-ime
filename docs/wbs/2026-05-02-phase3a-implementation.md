@@ -145,9 +145,10 @@ GNOME Wayland session 上で `cargo run --bin kotoha` 起動 + 以下 applicatio
 | ~~B0f (#146)~~ | 機能完成宣言取り下げ + proxy / event loop fail-loud 化 | **完了**(PR #147 squash `9602dff`) |
 | ~~B0g-a (#148)~~ | C4 panic_message + C5 lookup_table + I9/I16 worker circuit breaker + I15 hybrid empty-fallback + I17 dispatcher panic catch | **完了**(PR #150 squash `fdaafe3`、test 432→436 / 473→478) |
 | ~~B0g-b (#148)~~ | I6 hybrid+stub kana/text redact + I7 HybridRanker child thread catch_unwind + I8 engine 境界 candidate sanitize + commit_text safety | **完了**(PR #151 squash `4b010c8`、test 436→447 / 478→491) |
-| **B0g-c (#148)** | I10 theater fix + I11 spec §5.2 row 8 + I12 polling helper + I13 half-dead engine + I14 mock arg verify | **進行中**(本 PR) |
+| ~~B0g-c (#148)~~ | I10 theater fix + I11 spec §5.2 row 8 + I12 polling helper + I13 half-dead engine + I14 mock arg verify | **完了**(PR #152 squash `833c7d9`、test 447 / 498) |
+| **B0h-a (#153)** | C3 hexagonal driven port 反転(`learning_port` を engine-core に新設、`kotoha-engine-adapter` crate 切出し、engine-core が storage を直接 import しない構造へ) | **進行中**(本 PR、test 464 / 515) |
 | B0g 後追加検討(B0h 候補) | self-review#1〜#9: `non_exhaustive` trade-off ADR、flaky panic sliding-window metrics ADR、`IMEEngine::enable` Result 化、F4-F9 系 ADR | OSS 公開前 |
-| B0h (#149) | hexagonal port 反転(C3) + SRP 分割(I1) + dispatcher Arc<Mutex>(I2) + dispatch async 化(I3) + Hybrid 切出し(I4) + stub feature gate(I5) | OSS 公開前必修 |
+| B0h-b〜f (#149) | I4 Hybrid 切出し / I1 SRP 分割 / I2 dispatcher Arc<Mutex> / I5 stub feature gate / I3 async dispatch | OSS 公開前必修 |
 | B2 | IBus signal body marshalling | B0f 後着手 |
 | B3 | IBus signal listener loop + event loop | B0f / B2 後着手 |
 | B6 | L3 manual smoke | B2 / B3 後着手 |
