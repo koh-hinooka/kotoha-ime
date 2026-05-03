@@ -341,3 +341,54 @@ fn silent_ranker_clears_engine_candidates_via_empty_replace() {
     // 同じ Empty Replace を返す → candidates 空のまま。
     assert_eq!(eng.candidate_count_for_test(), 0);
 }
+
+// ------------------------------------------------------------------
+// Phase 3-B B0g (ISSUE #148): I16 deterministic ranker panic circuit breaker
+// ------------------------------------------------------------------
+
+/// 毎回 panic する Ranker。worker 連続 panic 上限到達 → worker exit →
+/// engine が IME-disabled に degrade することを観測する fixture。
+struct AlwaysPanicRanker;
+impl Ranker for AlwaysPanicRanker {
+    fn rank(
+        &self,
+        _kana: &str,
+        _ctx: &ConversionContext,
+        _cancel: Arc<dyn CancellationToken>,
+        _sink: std::sync::mpsc::Sender<RankerOutput>,
+    ) -> Result<(), RankerError> {
+        panic!("intentional ranker panic for circuit-breaker regression");
+    }
+}
+
+/// I16: Ranker.rank が deterministic に panic する場合、worker は連続 5 回で
+/// exit し、engine 主 thread は次 dispatch で `tx_request.send` の Err を
+/// 観測 → `enabled = false` に degrade する(spec §9.3「IME-disabled mode を
+/// user に通知」)。
+///
+/// MAX_CONSECUTIVE_PANICS=5 のため、6 回目以降の dispatch で channel
+/// disconnect が観測される設計。本 test では 8 回 keystroke を送って
+/// final state が IME-disabled であることを確認する。
+#[test]
+fn worker_circuit_breaker_disables_engine_after_repeated_ranker_panics() {
+    let ranker = Arc::new(AlwaysPanicRanker);
+    let host = Box::new(MockHostBridge::new());
+    let writer = Arc::new(StubWriter);
+    let mut eng = KotohaEngine::new(host, ranker, writer).expect("engine spawn");
+    eng.enable();
+    eng.focus_in();
+
+    // 連続 8 keystroke。最初の 5 回は WorkerError event 経由で degrade_to_idle、
+    // 6 回目以降に worker が channel close 済で tx_request.send Err → enabled=false。
+    for c in ['a', 'i', 'u', 'e', 'o', 'k', 's', 't'].iter() {
+        eng.process_key_event(key(*c));
+        // worker thread に panic + channel close 反映の余裕を与える。
+        sleep(Duration::from_millis(20));
+    }
+
+    assert!(
+        !eng.enabled_for_test(),
+        "engine should have degraded to IME-disabled after consecutive Ranker panics; \
+         enabled_for_test() returned true"
+    );
+}

@@ -10,6 +10,8 @@
 //! 詳細詰め(spec §13 Open Q 9)。本 PR では single-method dispatcher を
 //! provide し、生 signal listener は kotoha-bin (M6) で確立する。
 
+use std::panic::{self, AssertUnwindSafe};
+
 use kotoha_engine_core::IMEEngine;
 
 use crate::keysym;
@@ -38,12 +40,42 @@ impl<E: IMEEngine> IBusEventDispatcher<E> {
     ///
     /// `true` なら engine が消費(IBus への return 値として `true` を返す)、
     /// `false` なら IBus は default 処理(application に key を渡す)。
+    ///
+    /// # Panic recovery
+    ///
+    /// B0g #148 / 第 2 回 review I17 + spec §9.1 row 5: `engine.process_key_event`
+    /// 内で発生した panic を catch_unwind で受け、engine state を `reset()` で
+    /// Idle に戻し、本 dispatch では `false`(forward)を返す。これにより:
+    ///
+    /// - IBus daemon 側 thread が panic で死んで keystroke が永久 hang する
+    ///   (D-Bus signal handler thread の `process_key_event` 経由 unwind)を
+    ///   防ぐ
+    /// - panic 検出は `tracing::error!` で観測される
+    /// - reset() 自体が panic した場合は二重 panic を避けるため再 catch_unwind
+    ///   で囲い、それも失敗したら最後の手段として `false` だけ返す
     pub fn dispatch_key(&mut self, keysym: u32, keycode: u32, state: u32) -> bool {
         let ev = keysym::from_ibus(keysym, keycode, state);
-        matches!(
-            self.engine.process_key_event(ev),
-            kotoha_engine_core::KeyEventResult::Consumed
-        )
+        let engine = &mut self.engine;
+        let result = panic::catch_unwind(AssertUnwindSafe(|| engine.process_key_event(ev)));
+        match result {
+            Ok(kotoha_engine_core::KeyEventResult::Consumed) => true,
+            Ok(kotoha_engine_core::KeyEventResult::Forwarded) => false,
+            Err(payload) => {
+                tracing::error!(
+                    keysym,
+                    keycode,
+                    state,
+                    panic_type = ?(*payload).type_id(),
+                    "engine.process_key_event panicked; resetting engine state"
+                );
+                // reset() 自体の二重 panic は session 全死亡を意味するので
+                // 静かに諦める(catch_unwind で flatten、`tracing::error!` のみ残す)。
+                let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+                    self.engine.reset();
+                }));
+                false
+            }
+        }
     }
 
     pub fn dispatch_focus_in(&mut self) {
@@ -182,5 +214,58 @@ mod tests {
         let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
         d.dispatch_reset();
         assert_eq!(d.engine_mut().lifecycle, vec!["reset"]);
+    }
+
+    // --------------------------------------------------------------
+    // Phase 3-B B0g (ISSUE #148 / I17): dispatch_key panic catch
+    // --------------------------------------------------------------
+
+    /// `process_key_event` が panic する MockEngine。dispatcher の
+    /// catch_unwind 経路 + reset() invocation を観測する fixture。
+    struct PanickingEngine {
+        process_key_called: bool,
+        reset_called: bool,
+    }
+    impl PanickingEngine {
+        fn new() -> Self {
+            Self {
+                process_key_called: false,
+                reset_called: false,
+            }
+        }
+    }
+    impl IMEEngine for PanickingEngine {
+        fn process_key_event(&mut self, _key: KeyEvent) -> KeyEventResult {
+            self.process_key_called = true;
+            panic!("intentional process_key_event panic for I17 regression");
+        }
+        fn focus_in(&mut self) {}
+        fn focus_out(&mut self) {}
+        fn reset(&mut self) {
+            self.reset_called = true;
+        }
+        fn enable(&mut self) {}
+        fn disable(&mut self) {}
+    }
+
+    /// I17: dispatch_key 内で process_key_event が panic した場合、dispatcher
+    /// は catch_unwind で受けて reset() を呼び、戻り値は `false`(forward)を
+    /// 返す。IBus daemon 側 thread の永久 hang(spec §9.1 row 5)を防ぐ。
+    #[test]
+    fn dispatch_key_catches_engine_panic_and_resets_state() {
+        let mut d = IBusEventDispatcher::new(PanickingEngine::new());
+        let result = d.dispatch_key(0x6b, 0, 0);
+        assert!(
+            !result,
+            "dispatch_key should return false when engine.process_key_event panics"
+        );
+        assert!(
+            d.engine_mut().process_key_called,
+            "process_key_event should have been called before the panic"
+        );
+        assert!(
+            d.engine_mut().reset_called,
+            "reset() should be called after panic recovery in dispatch_key"
+        );
     }
 }

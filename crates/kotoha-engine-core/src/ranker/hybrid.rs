@@ -227,6 +227,24 @@ impl Ranker for HybridRanker {
             let dict_cands_for_llm = dict_cands.clone();
             let user_cands_for_llm = user_cands.clone();
             let cache_surfaces_for_llm = cache_surfaces.clone();
+
+            // B0g #148 / 第 2 回 review I15: dict / user / learning 3 source が
+            // 全て空(個別 WARN を吐いた直後)の場合、user 視点では「変換不能」
+            // という degraded mode に等しい。spec §9.1 row 3「全 backend 全滅
+            // なら空 Replace を engine に送り tracing::error」を遵守し、merge
+            // 直前で all-empty 検出時に ERROR log を残す。空 Replace 自体は
+            // engine 側の「前回候補画面残留」防止のため引き続き送る(spec §9.3)。
+            let dict_all_empty = dict_cands_for_llm.is_empty()
+                && user_cands_for_llm.is_empty()
+                && cache_surfaces_for_llm.is_empty();
+            if dict_all_empty {
+                tracing::error!(
+                    kana_len = kana_owned.chars().count(),
+                    "all dict-tier backends returned empty (sudachi+uservocab+learningcache); \
+                     engine will receive empty candidates (spec §9.1 row 3)"
+                );
+            }
+
             let merged = merge_candidates(
                 vec![
                     (user_cands, CandidateSource::Dict),
