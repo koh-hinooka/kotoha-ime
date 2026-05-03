@@ -332,25 +332,17 @@ fn key_special_for_cancel(keysym: u32) -> KeyEvent {
 // Phase 3-B B0d (Important 8): worker 空 buffer 時の Replace 送信
 // ------------------------------------------------------------------
 
-/// silent ranker → engine `apply_candidate_update` の prior_was_nonempty 経路 →
-/// host に Clear + hide という規約を assert する。
+/// `apply_candidate_update` の prior_was_nonempty 経路 → host に Clear + hide
+/// という **boundary 規約** を engine 直接呼び出しで assert する unit-style test。
 ///
-/// # B0g-c #148 / I10 theater fix
+/// # B0g-c #148 / I10 theater fix(unit boundary 部、self-review C2 で split)
 ///
-/// 旧 test は initial candidate_count == 0 の状態から SilentRanker を走らせて
-/// 「最終 candidate_count == 0」を assert していたが、これは 0 → 0 の
-/// **tautology** で worker の空 Replace 送信機構が壊れても PASS する theater
-/// pattern だった。
-///
-/// 本 fix では `apply_candidate_update` boundary 規約を **engine 直接呼び出し**
-/// で assert する pattern。worker → engine の chain timing(`drain_events_blocking`
-/// 12ms vs CI scheduler 圧迫)から独立した unit-style 検証で、broken impl
-/// (host 通知 path 撤去 / prior_was_nonempty ガード bypass 等)で必ず FAIL する。
-///
-/// worker → engine の end-to-end timing 検証は別 test
-/// (`worker_recovers_after_ranker_panic` 等)で個別 cover。
+/// worker chain end-to-end は別 test
+/// (`silent_ranker_end_to_end_clears_host_via_worker_chain`)で cover する。
+/// 本 test は `apply_candidate_update_for_test` 直接呼びで chain timing から
+/// 独立に boundary 規約のみを pin する。
 #[test]
-fn silent_ranker_clears_engine_candidates_via_empty_replace() {
+fn silent_ranker_apply_boundary_clears_host_when_prior_was_nonempty() {
     use kotoha_engine_core::engine::KotohaEngine;
     use kotoha_engine_core::testing::{HostOperation, MockCandidateUpdate};
 
@@ -400,6 +392,91 @@ fn silent_ranker_clears_engine_candidates_via_empty_replace() {
 
     // (4) engine 内 candidates も空。
     assert_eq!(eng.candidate_count_for_test(), 0);
+}
+
+/// silent ranker(`Ranker::rank` が `sink.send` を 1 度も呼ばずに Ok 復帰)を
+/// 経由した worker → engine → host の **end-to-end chain** で、前回表示の
+/// 候補が IBus 側 lookup table から確実に消える(spec §9.3「変換失敗で
+/// 前回候補が画面に残る」防止)を assert する。
+///
+/// # B0g-c #148 / I10 theater fix(end-to-end 部、self-review C2 で split)
+///
+/// 本 test の核心:`dispatch_rank_request` 内で導入した「pre-clear に表示中
+/// 候補があり、drain 後も engine.candidates が空のままなら host に Clear +
+/// hide」path を polling helper(I12)で検証する。CI scheduler 圧迫を吸収する。
+#[test]
+fn silent_ranker_end_to_end_clears_host_via_worker_chain() {
+    use kotoha_engine_core::engine::KotohaEngine;
+    use kotoha_engine_core::ime_engine::IMEEngine;
+    use kotoha_engine_core::testing::{await_until, HostOperation, MockCandidateUpdate};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// 第 1 回 rank で固定候補、第 2 回以降は silent path。
+    struct ToggleRanker {
+        first_call: AtomicBool,
+    }
+    impl Ranker for ToggleRanker {
+        fn rank(
+            &self,
+            _kana: &str,
+            _ctx: &ConversionContext,
+            _cancel: Arc<dyn CancellationToken>,
+            sink: std::sync::mpsc::Sender<RankerOutput>,
+        ) -> Result<(), RankerError> {
+            if self.first_call.swap(false, Ordering::SeqCst) {
+                let _ = sink.send(RankerOutput {
+                    update: CandidateUpdate::Replace(vec![Candidate::new("あ", -1.0)]),
+                });
+            }
+            Ok(())
+        }
+    }
+
+    let host = MockHostBridge::new();
+    let host_handle = host.clone();
+    let host_box: Box<dyn kotoha_engine_core::IMEHostBridge> = Box::new(host);
+    let writer = Arc::new(StubWriter);
+    let ranker = Arc::new(ToggleRanker {
+        first_call: AtomicBool::new(true),
+    });
+    let mut eng = KotohaEngine::new(host_box, ranker, writer).expect("engine spawn");
+    eng.enable();
+    eng.focus_in();
+
+    // 第 1 keystroke で候補を populate(prior path のための setup)。
+    eng.process_key_event(key('a'));
+    await_until(
+        || eng.candidate_count_for_test() >= 1,
+        Duration::from_millis(500),
+    )
+    .expect("first keystroke should populate candidates within 500ms");
+    host_handle.clear();
+
+    // 第 2 keystroke で silent ranker → worker 空 Replace → dispatch_rank_request
+    // post-drain 経路で host.update_candidates(Clear) + hide が発火する。
+    eng.process_key_event(key('i'));
+    await_until(
+        || {
+            eng.flush_pending_events_for_test();
+            let ops = host_handle.operations();
+            ops.iter().any(|op| {
+                matches!(
+                    op,
+                    HostOperation::UpdateCandidates(MockCandidateUpdate::Clear)
+                )
+            }) && ops
+                .iter()
+                .any(|op| matches!(op, HostOperation::HideCandidateWindow))
+        },
+        Duration::from_millis(1000),
+    )
+    .expect(
+        "worker chain should propagate silent-ranker empty Replace and engine should emit \
+         host.Clear + hide within 1s",
+    );
+
+    assert_eq!(eng.candidate_count_for_test(), 0);
+    assert_eq!(eng.preedit_for_test(), "あい");
 }
 
 // ------------------------------------------------------------------

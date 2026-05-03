@@ -79,15 +79,24 @@ fn idle_typing_transitions_to_live() {
     assert_eq!(eng.state_for_test(), EngineState::LiveConverting);
     let ops = host.operations();
     // B0g-c #148 / I14: cursor 値も含めて contract 違反を catch する。
-    // 「か」1 文字 → cursor=1, visible=true。byte length ベース cursor
-    // 計算 bug や +1/-1 ずれを直接 detect する。
+    //
+    // # cursor 単位
+    //
+    // production 側 `engine/transitions.rs::handle_typing` は
+    // `engine.current_preedit.chars().count()` を cursor として host.update_preedit
+    // に渡す(= **Unicode scalar 単位**、UTF-8 byte 数や grapheme cluster 数では
+    // ない)。「か」1 文字 = 1 scalar、`len()=3` (UTF-8 3 bytes) ではないこと
+    // を本 assert で pin する。byte-length-vs-char-count drift で `cursor=3` に
+    // regress する production bug を即時 detect。grapheme cluster 単位への変更
+    // を将来検討する場合は spec 側で凍結 + 本 test を新単位に追従させる。
     assert!(
         ops.iter().any(|o| matches!(
             o,
             HostOperation::UpdatePreedit { text, cursor, visible }
                 if text == "か" && *cursor == 1 && *visible
         )),
-        "expected UpdatePreedit(text=\"か\", cursor=1, visible=true) but got {ops:?}"
+        "expected UpdatePreedit(text=\"か\", cursor=1 (Unicode scalar count), visible=true) \
+         but got {ops:?}"
     );
     assert!(ops
         .iter()
@@ -467,8 +476,15 @@ fn live_space_with_slow_ranker_stays_at_commit_converting() {
 /// row 8 path-1: CommitConverting + Esc → Idle + preedit clear
 ///
 /// SlowRanker で CommitConverting に留めた状態で Esc を撃ち、Idle に戻る
-/// + preedit が空になる + 後発の候補(到着しても)が CandidatesShown 昇格
-/// しないことを観測。spec §5.2 row 8 / §6.4。
+/// + preedit が空になることを観測。spec §5.2 row 8 / §6.4。
+///
+/// self-review C1:旧版は `sleep(100ms) + DOWN keystroke` で「遅れて到着した
+/// 候補が CandidatesShown 昇格しない」を assert していたが、これは
+/// (a) `sleep(100ms)` 固定 wait が CI scheduler 圧迫で flaky を新規導入し、
+/// (b) SlowRanker thread が cancel 経由で sink.send をスキップする path と
+/// 「100ms 経っても何も起こらない」path が観測上区別不能(timing dependent
+/// theater pattern)、という二重問題があったため削除。Esc→Idle 直後の
+/// primary 不変条件のみを残す。
 #[test]
 fn commit_converting_escape_returns_to_idle() {
     let (mut eng, _host) = build_engine_with_slow_ranker(80, vec![Candidate::new("か", -1.0)]);
@@ -479,11 +495,6 @@ fn commit_converting_escape_returns_to_idle() {
     eng.process_key_event(key_special(keysyms::ESCAPE));
     assert_eq!(eng.state_for_test(), EngineState::Idle);
     assert!(eng.preedit_for_test().is_empty());
-    // 候補が遅れて到着しても CandidatesShown には昇格しない(active_request
-    // が cancel_active 経由で破棄されるため row 7 promote 経路が成立しない)。
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    eng.process_key_event(key_special(keysyms::DOWN));
-    assert_eq!(eng.state_for_test(), EngineState::Idle);
 }
 
 /// row 8 path-2: CommitConverting + backspace → Idle(preedit 全消去で空に)。

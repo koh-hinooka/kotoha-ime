@@ -111,7 +111,7 @@ ISSUE #140(P3-B B0)で第 1 回レビューの Critical 4 + Important 9 を消�
 | P3-B B0f 完了時(2026-05-03、PR #147) | 432 | 473(test 改変ゼロ) |
 | P3-B B0g-a 完了時(2026-05-03、PR #150) | 436 | 478(+5: panic_message 3 + worker circuit breaker 1 + dispatcher panic catch 1) |
 | P3-B B0g-b 完了時(2026-05-03、PR #151) | 447 | 491(+13: sanitize unit 7 + filter 4 + boundary_notify regression 2) |
-| **P3-B B0g-c 完了時(2026-05-03、本 PR)** | **447** | **497**(+6: row 8 4 件 + I14 demo 1 + boundary skip-when-empty 1) |
+| **P3-B B0g-c 完了時(2026-05-03、本 PR)** | **447** | **498**(+7: row 8 4 件 + I14 demo 1 + boundary skip-when-empty 1 + silent_ranker e2e 1) |
 
 註:`cargo test --workspace` (default features) と `cargo test --workspace --features kotoha-storage/test-helpers,kotoha-engine-core/test-helpers` で結果が異なる。lefthook pre-push は default features を回す。第 1 回包括 review (B0a-B0e) では test-helpers feature 経由の合計値 (416 → 473) を baseline として参照する。過去の commit message で `446` / `448` / `454` と記載した数値はいずれも不正確で、上表が正規値。
 

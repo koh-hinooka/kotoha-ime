@@ -203,8 +203,25 @@ impl KotohaEngine {
             ConversionMode::Live => worker::LIVE_WINDOW + Duration::from_millis(5),
             ConversionMode::Commit => worker::COMMIT_WINDOW + Duration::from_millis(5),
         };
+        // B0g-c #148 / silent_ranker e2e fix:dispatch 入口時点で表示中だった
+        // 候補があり、本 dispatch を経ても engine.candidates が空のまま終わった
+        // 場合(silent ranker / 全 backend 失敗 + timeout / filter all-unsafe
+        // 等)、host 側 lookup table も明示的に Clear + hide する(spec §9.3
+        // 「変換失敗で前回候補が画面に残る」防止)。
+        //
+        // 注意:`apply_candidate_update` Replace path にも prior_was_nonempty
+        // 検出があるが、本関数の `self.candidates.clear()` で apply 時点では
+        // prior=empty になるため、runtime path では apply 側の host 通知は
+        // 発火しない。direct-call test (`apply_candidate_update_for_test`) が
+        // 単体 API として apply boundary を assert するために apply 側の
+        // 検出は維持する(両者の発火条件は排他、二重通知はしない)。
+        let had_displayed_before_dispatch = !self.candidates.is_empty();
         self.candidates.clear();
         self.drain_events_blocking(max_wait, request_id);
+        if had_displayed_before_dispatch && self.candidates.is_empty() {
+            self.host.update_candidates(CandidateUpdate::Clear);
+            self.host.hide_candidate_window();
+        }
     }
 
     /// spec §5.2 row 7 (CommitConverting + RankerOutput → CandidatesShown) の
@@ -344,13 +361,15 @@ impl KotohaEngine {
                 }
             }
             CandidateUpdate::Append(c) => {
-                let prior_was_nonempty = !self.candidates.is_empty();
+                // Append は self.candidates に extend するため:
+                // - prior=non-empty + extend(任意) → post=non-empty(Clear 不要)
+                // - prior=empty + extend(空) → post=empty(host も既に hide 状態のため通知不要)
+                // - prior=empty + extend(非空) → post=non-empty(caller transitions.rs が
+                //   `if !candidates.is_empty()` で host.update_candidates を出す経路が存在)
+                // よって本 path 内に host.Clear + hide を fire する必要のある branch は
+                // 存在しない(self-review#3 で dead code 撤去、Replace path 限定の規約)。
                 let filtered = filter_safe_candidates(c);
                 self.candidates.extend(filtered);
-                if prior_was_nonempty && self.candidates.is_empty() {
-                    self.host.update_candidates(CandidateUpdate::Clear);
-                    self.host.hide_candidate_window();
-                }
             }
             CandidateUpdate::Remove(r) => {
                 let len = self.candidates.len();
