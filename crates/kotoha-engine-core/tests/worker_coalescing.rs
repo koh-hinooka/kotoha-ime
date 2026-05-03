@@ -48,7 +48,6 @@ impl Ranker for CancelObservingRanker {
                 return;
             }
             let _ = sink.send(RankerOutput {
-                request_id: 0,
                 update: CandidateUpdate::Replace(vec![Candidate::new("か", -1.0)]),
             });
         });
@@ -134,7 +133,6 @@ fn worker_recovers_after_ranker_panic() {
             self.second_calls
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let _ = sink.send(RankerOutput {
-                request_id: 0,
                 update: CandidateUpdate::Replace(vec![Candidate::new("あ", -1.0)]),
             });
             Ok(())

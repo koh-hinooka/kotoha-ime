@@ -50,7 +50,19 @@ mod smoke {
 
 /// `llama-cpp-smoke` 無効時の compile-only sanity。本 test は assertion を
 /// 持たず、ファイル全体が default features で compile することのみ観測する。
+///
+/// # B0e (ISSUE #140) `#[ignore]` 化
+///
+/// 包括レビュー(2026-05-03)で「empty body / no assertion で silent test
+/// rot を作る」と指摘された。本 placeholder は実 fixture loader 実装が完了
+/// するまで `#[ignore]` で skip し、`cargo test` の green check が空 body
+/// に騙されないようにする。`cargo test -- --ignored` で明示実行可能(現状は
+/// 通っても何も assert しないため意味のある signal は出ない)。
+///
+/// 後続 ISSUE で実 fixture loader を実装するまでの暫定処置。
 #[test]
+#[ignore = "placeholder: no assertions; will be replaced by HybridRanker-driven \
+            14/15 fixture loader in a follow-up ISSUE"]
 #[cfg(not(feature = "llama-cpp-smoke"))]
 fn regression_test_compiles_without_llama_smoke_feature() {
     // Intentional empty body. The presence of this test under default features

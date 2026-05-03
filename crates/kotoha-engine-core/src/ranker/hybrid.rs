@@ -5,7 +5,6 @@
 //!
 //! Phase 3-A spec §4.3 で凍結された Ranker trait の concrete impl。
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -31,11 +30,17 @@ const DEFAULT_TOP_K: usize = 10;
 /// `Arc<dyn LearningCacheReader>` を構築時に DI で受け取る。LLM backend は
 /// M3 で追加し、`Option` 化することで dict-only(M2)動作を保つ。
 ///
-/// # Invariants
+/// # Stale response の discard (Phase 3-B B0e で簡素化)
 ///
-/// - `request_id_seed` は `rank()` 呼び出し毎に単調増加で採番される
-///   (`RankerOutput.request_id` の uniqueness を担保し、engine 主 thread
-///   側で stale response の discard に使う、Phase 3-A spec §7.5)
+/// 以前は `request_id_seed` で内部 counter を維持し `RankerOutput.request_id`
+/// に stamp していたが、`Ranker::rank` の trait signature が engine 側
+/// `request_id` を引数で受けない設計のため、Ranker 側で stamp しても engine 側
+/// で意味のある照合は不可能(B5 で worker レベルの id 照合を撤去した時点で
+/// dead surface 化していた)。`RankerOutput.request_id` field を撤去した
+/// (Important 10、ISSUE #140)。
+///
+/// Stale response の discard は engine 主 thread 側の `RankRequest`/`active_request`
+/// ベース id 照合 + per-request channel 不変条件で十分に成立する(spec §7.5)。
 pub struct HybridRanker {
     sudachi: Arc<dyn MorphologicalEngine + Send + Sync>,
     user_vocab: Arc<dyn UserVocabReader>,
@@ -50,7 +55,6 @@ pub struct HybridRanker {
     /// `Send + Sync` 不要、Phase 1 単 thread CLI 由来の歴史的設計、
     /// kotoha-core spec §5.3)。
     llm: Option<Arc<dyn KanjiBackend + Send + Sync>>,
-    request_id_seed: AtomicU64,
 }
 
 impl HybridRanker {
@@ -77,7 +81,6 @@ impl HybridRanker {
             user_vocab,
             learning_cache,
             llm: None,
-            request_id_seed: AtomicU64::new(0),
         }
     }
 
@@ -96,10 +99,6 @@ impl HybridRanker {
     pub fn with_llm(mut self, llm: Arc<dyn KanjiBackend + Send + Sync>) -> Self {
         self.llm = Some(llm);
         self
-    }
-
-    fn next_request_id(&self) -> u64 {
-        self.request_id_seed.fetch_add(1, Ordering::SeqCst)
     }
 }
 
@@ -142,7 +141,6 @@ impl Ranker for HybridRanker {
         cancel: Arc<dyn CancellationToken>,
         sink: mpsc::Sender<RankerOutput>,
     ) -> Result<(), RankerError> {
-        let request_id = self.next_request_id();
         let kana_owned = kana.to_string();
         // ConversionContext.mode は debug 用 capture(将来 Live mode で LLM skip など
         // mode-dependent behavior を実装する余地)。commit_history 注入は M3 範囲外。
@@ -248,7 +246,6 @@ impl Ranker for HybridRanker {
             // 先に終わる」のは正常 path(engine 側で active request が更新済みのケース、
             // Phase 3-A spec §7.5)。Caller が cleanup 中のため tracing::trace で吸収する。
             if let Err(e) = sink.send(RankerOutput {
-                request_id,
                 update: CandidateUpdate::Replace(merged),
             }) {
                 tracing::trace!(error = ?e, "ranker sink closed before dict send");
@@ -288,7 +285,6 @@ impl Ranker for HybridRanker {
                         DEFAULT_TOP_K,
                     );
                     if let Err(e) = sink.send(RankerOutput {
-                        request_id,
                         update: CandidateUpdate::Replace(combined),
                     }) {
                         tracing::trace!(error = ?e, "ranker sink closed before LLM send");
@@ -356,19 +352,6 @@ mod tests {
             learning_cache.clone() as Arc<dyn LearningCacheReader>,
         );
         (ranker, user_vocab, learning_cache)
-    }
-
-    /// 別 `rank()` 呼び出しで `request_id` が単調増加することを確認(spec §7.5)。
-    #[test]
-    fn request_id_is_monotonically_increasing() {
-        let (ranker, _uv, _lc) = make_ranker(vec![EngineCandidate {
-            surface: "言葉".into(),
-            reading: "ことば".into(),
-            score: -1.0,
-        }]);
-        let id1 = ranker.next_request_id();
-        let id2 = ranker.next_request_id();
-        assert!(id2 > id1, "expected id2 > id1, got id1={id1} id2={id2}");
     }
 
     /// dict-only path: stub engine の候補が sink に到達する。
