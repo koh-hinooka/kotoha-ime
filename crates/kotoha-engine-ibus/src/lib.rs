@@ -23,6 +23,7 @@ pub mod host_bridge;
 pub mod keysym;
 pub mod lookup_table;
 pub mod proxy;
+pub(crate) mod types;
 
 pub use dispatcher::IBusEventDispatcher;
 pub use host_bridge::IBusHostBridge;
