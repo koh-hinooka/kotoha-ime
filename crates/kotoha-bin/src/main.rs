@@ -184,15 +184,24 @@ fn run_ibus() -> anyhow::Result<()> {
     let engine = kotoha_engine_core::engine::KotohaEngine::new(host_bridge, ranker, learning_store)
         .context("spawn ranker worker thread")?;
 
-    // 10. dispatcher (event loop stub)
+    // 10. dispatcher (event loop stub) — wire up but do NOT silently exit.
+    //
+    // Phase 3-B B0f (ISSUE #146):旧 path は `let _dispatcher = ...; Ok(())` で
+    // event loop が無いまま exit code 0 を返し、systemd の Restart=on-failure
+    // が再起動しない silent failure(spec §9.3 違反)だった。実 event loop
+    // 完成までは fail-loud で起動失敗を user に通知する。
     let _dispatcher = kotoha_engine_ibus::IBusEventDispatcher::new(engine);
 
-    tracing::info!(
+    tracing::error!(
         ranker_backend,
         host_bridge_backend,
-        "kotoha engine wired up; event loop deferred to Phase 3-B B3"
+        "kotoha engine wired up but the IBus event loop is not yet implemented (Phase 3-B B3); \
+         refusing to silently exit"
     );
-    Ok(())
+    anyhow::bail!(
+        "IBus event loop not yet implemented (tracked in Phase 3-B B3 / ISSUE #146); \
+         kotoha-bin cannot serve as an IME yet"
+    );
 }
 
 /// `HybridRanker` を構築する production helper。
