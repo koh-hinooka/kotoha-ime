@@ -26,14 +26,17 @@ default = ["bundled-sqlite"]
 # `bundled-sqlite` vendors the SQLite C library inside the rusqlite crate.
 # Default ON to avoid distro SQLite version drift (P2-B spec §4.3).
 bundled-sqlite = ["rusqlite/bundled"]
-# `test-helpers` exposes integration-test-only items
-# (`CapOverrideGuard`, `LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE`,
-# `CAP_OVERRIDE_LOCK`, `effective_max_rows`) so that test crates under
-# `crates/kotoha-storage/tests/` can drive learning_cache eviction with a
-# small cap. The flag must NOT be enabled in release/production builds:
-# spec §4.5 / §4.6 require these helpers to be compiled out of the
-# production binary. lefthook's pre-push test steps enable the flag
-# explicitly via `--features kotoha-storage/test-helpers`.
+# `test-helpers` exposes integration-test-only items so that test crates
+# under `crates/kotoha-storage/tests/` can drive learning_cache eviction
+# with a small cap. The single externally-visible item is
+# `learning_cache::CapOverrideGuard` (RAII helper); the underlying statics
+# (`LEARNING_CACHE_MAX_ROWS_TEST_OVERRIDE` / `CAP_OVERRIDE_LOCK`) and the
+# `effective_max_rows()` cap function are crate-private to prevent direct
+# `.store(...)` bypass of the RAII contract (#107 / S-3 follow-up).
+# The flag must NOT be enabled in release/production builds: spec §4.5 /
+# §4.6 require these helpers to be compiled out of the production binary.
+# lefthook's pre-push test steps enable the flag explicitly via
+# `--features kotoha-storage/test-helpers`.
 test-helpers = []
 
 [[test]]
