@@ -269,6 +269,16 @@ IBus 1.x の `update_lookup_table` は全置換のみであるため、adapter �
 
 adapter は internal buffer を `Mutex<Vec<Candidate>>` で保持し、`update_candidates` 呼び出しごとに mutate + IBus call を発行する。
 
+#### Phase 3-B B2 での wire format 実装方針
+
+Phase 3-A は `IBusEngineSignals`(`crates/kotoha-engine-ibus/src/proxy.rs`)の 5 method を `Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED))` の fail-loud stub で残置していた(B0f, ISSUE #146 review で silent no-op stub から fail-loud に再分類)。Phase 3-B B2 では本 stub を実 D-Bus signal emit に置換し、IBus 1.x 仕様の wire format 確定を以下の方針で実装する。
+
+- IBus 1.x の `IBusText` / `IBusAttribute` / `IBusLookupTable` を `crates/kotoha-engine-ibus/src/types.rs`(新設)に Rust struct + `#[derive(zbus::zvariant::Type, serde::Serialize)]` で定義する。`IBusSerializable` 由来の `(sv)` variant ラッピングは `zbus::zvariant::Value` で表現する。
+- `IBusEngineSignals` の 5 method(`update_preedit` / `commit_text` / `update_lookup_table` / `show_lookup_table` / `hide_lookup_table`)は `connection.send_signal(...)` で実 D-Bus signal を session bus に発信する。signal interface name は `org.freedesktop.IBus.Engine`。
+- 失敗時は `Result<(), zbus::Error>` を caller(`host_bridge.rs`)へ propagate、host_bridge は `tracing::warn!(error = ?e, ...)` で集約観測する。engine state には影響を与えない(spec §9.3「silent_failure 禁止」と「signal failure を engine state に伝播させない non-propagating」の両立)。
+- L1 unit test は wire format round-trip(`zvariant::to_bytes` → `deserialize`)を `proxy.rs` 内部 `#[cfg(test)]` で検証する。Connection mock は CI 不安定要因(D-Bus daemon 依存)のため避け、実 D-Bus daemon 検証は B6 L3 manual smoke で実施する。
+- proxy 内 method 入口の `tracing::warn!("not yet wired ...")` は実装後に削除し、`tracing::debug!` で per-signal trace に降格する。`KOTOHA_LOG=debug` 起動時のみ観測される。
+
 ### §4.3 `Ranker`(P2-D で実装される consumed contract)
 
 ```rust
@@ -807,7 +817,7 @@ Task A と Task B は実装規模が小さく(各 1 PR)、統合 PR にしても
 | 6(prerequisite)| Phase 0 RomajiConverter trie が kunrei/Hepburn/waapuro 3 方式並立か | §12.2 Task B | 別 ISSUE 起票 |
 | 7 | typing 中 LLM invocation を投げるか / dict only にするか | 投げる(best-effort、cancel propagation 受容)| Phase 3-A 本番実装 + Phase 1 Gemma で empirical、Phase 5 custom model 来たら再評価 |
 | 8 | `KeyModifiers` の IBus 完全 mapping | bitflags 暫定 4 種(Shift/Ctrl/Alt/Super)| IBus IBusModifierType 全列挙を実装段階で対応 |
-| 9 | adapter 内 Mutex<Vec<Candidate>> internal buffer の同時編集競合 | best-effort、IBus event loop は単一 thread 想定 | 実装段階で multi-thread 化が必要になったら lock 設計見直し |
+| 9 | adapter 内 Mutex<Vec<Candidate>> internal buffer の同時編集競合 | Phase 3-B B0h-d で `Arc<Mutex<dyn IMEEngine>>` 化済(dispatcher + engine 両方が thread-safe)。adapter 側 buffer も `Mutex<Vec<Candidate>>` 保持で thread-safe | **closure**(B0h-d, B2):"best-effort 単一thread 想定" は撤回。multi-thread D-Bus signal listener(B3)に対応した lock 設計済 |
 
 ## §14 forward direction(Phase 4 / 5 / 6)
 
@@ -851,3 +861,4 @@ Task A と Task B は実装規模が小さく(各 1 PR)、統合 PR にしても
 | 日付 | revision | 内容 |
 |------|----------|------|
 | 2026-05-02 | r1 | 初版 draft、ISSUE #116 |
+| 2026-05-04 | r2 | Phase 3-B B2 wire format 実装方針を §4.2 に追記、§13 Open Q 9 を B0h-d 結果で closure |
