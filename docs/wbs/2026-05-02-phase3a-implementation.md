@@ -110,7 +110,8 @@ ISSUE #140(P3-B B0)で第 1 回レビューの Critical 4 + Important 9 を消�
 | **P3-B B0e 完了時(2026-05-03)** | 432 | **473** |
 | P3-B B0f 完了時(2026-05-03、PR #147) | 432 | 473(test 改変ゼロ) |
 | P3-B B0g-a 完了時(2026-05-03、PR #150) | 436 | 478(+5: panic_message 3 + worker circuit breaker 1 + dispatcher panic catch 1) |
-| **P3-B B0g-b 完了時(2026-05-03、本 PR)** | **447** | **491**(+13: sanitize unit 7 + filter 4 + boundary_notify regression 2) |
+| P3-B B0g-b 完了時(2026-05-03、PR #151) | 447 | 491(+13: sanitize unit 7 + filter 4 + boundary_notify regression 2) |
+| **P3-B B0g-c 完了時(2026-05-03、本 PR)** | **447** | **497**(+6: row 8 4 件 + I14 demo 1 + boundary skip-when-empty 1) |
 
 註:`cargo test --workspace` (default features) と `cargo test --workspace --features kotoha-storage/test-helpers,kotoha-engine-core/test-helpers` で結果が異なる。lefthook pre-push は default features を回す。第 1 回包括 review (B0a-B0e) では test-helpers feature 経由の合計値 (416 → 473) を baseline として参照する。過去の commit message で `446` / `448` / `454` と記載した数値はいずれも不正確で、上表が正規値。
 
@@ -143,10 +144,9 @@ GNOME Wayland session 上で `cargo run --bin kotoha` 起動 + 以下 applicatio
 | ~~B0 (#140)~~ | 第 1 回包括レビュー Critical 4 + Important 9 消化 | **完了**(PR #141-#145、test 416 → 473) |
 | ~~B0f (#146)~~ | 機能完成宣言取り下げ + proxy / event loop fail-loud 化 | **完了**(PR #147 squash `9602dff`) |
 | ~~B0g-a (#148)~~ | C4 panic_message + C5 lookup_table + I9/I16 worker circuit breaker + I15 hybrid empty-fallback + I17 dispatcher panic catch | **完了**(PR #150 squash `fdaafe3`、test 432→436 / 473→478) |
-| **B0g-b (#148)** | I6 hybrid+stub kana/text redact + I7 HybridRanker child thread catch_unwind + I8 engine 境界 candidate sanitize + commit_text safety | **進行中**(本 PR) |
-| B0g (#148) で追加検討 | self-review #2 ADR(`non_exhaustive` trade-off)、#3 ADR(flaky panic sliding-window metrics)、#7 `IMEEngine::enable` Result 化 で worker 死亡時 IBus daemon の re-enable loop 抑制 | B0g-c 以降 |
-| B0g-b (#148) | I6 log credential leak redact + I7 HybridRanker child thread catch + I8 output sanitization | B0g-a 後着手 |
-| B0g-c (#148) | I10 theater fix + I11 spec §5.2 row 8 + I12 polling helper + I13 half-dead engine + I14 mock arg verify | B0g-b 後着手 |
+| ~~B0g-b (#148)~~ | I6 hybrid+stub kana/text redact + I7 HybridRanker child thread catch_unwind + I8 engine 境界 candidate sanitize + commit_text safety | **完了**(PR #151 squash `4b010c8`、test 436→447 / 478→491) |
+| **B0g-c (#148)** | I10 theater fix + I11 spec §5.2 row 8 + I12 polling helper + I13 half-dead engine + I14 mock arg verify | **進行中**(本 PR) |
+| B0g 後追加検討(B0h 候補) | self-review#1〜#9: `non_exhaustive` trade-off ADR、flaky panic sliding-window metrics ADR、`IMEEngine::enable` Result 化、F4-F9 系 ADR | OSS 公開前 |
 | B0h (#149) | hexagonal port 反転(C3) + SRP 分割(I1) + dispatcher Arc<Mutex>(I2) + dispatch async 化(I3) + Hybrid 切出し(I4) + stub feature gate(I5) | OSS 公開前必修 |
 | B2 | IBus signal body marshalling | B0f 後着手 |
 | B3 | IBus signal listener loop + event loop | B0f / B2 後着手 |
