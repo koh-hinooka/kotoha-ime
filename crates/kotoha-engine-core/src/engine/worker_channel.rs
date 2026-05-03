@@ -45,6 +45,11 @@ use super::worker;
 /// 本 PR で resource lifetime と engine state lifecycle を分離したことで、
 /// engine 自体の Drop impl は撤去されている。
 pub(crate) struct WorkerChannel {
+    // 注意: 本 struct の field 宣言順序は **load-bearing**(`Drop` semantics に
+    // 直接影響する)。`Drop::drop` 完了後の field drop は宣言順で行われるため、
+    // `tx_request` が **必ず最初** に drop される必要がある(worker `rx_request.recv()`
+    // を Err 復帰させ、joiner thread の `h.join()` を完了可能にするため)。
+    // field を並び替える PR は本 invariant を再検証すること。
     /// engine 主 thread → worker への `RankRequest` 送信 channel。
     pub(crate) tx_request: mpsc::Sender<RankRequest>,
     /// worker → engine 主 thread への `EngineEvent` 受信 channel。
