@@ -28,6 +28,7 @@ pub mod transitions;
 mod worker;
 
 pub use commit_history::CommitHistory;
+pub use worker::panic_message_from;
 
 /// `KotohaEngine` の現在状態(spec §5.1)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,19 +315,39 @@ impl KotohaEngine {
     /// candidate は ranker 内部の SudachiDict / UserVocab / LearningCache /
     /// LLM 由来。改ざん辞書 / 悪意ある LLM 出力 / Phase 5 custom model 等から
     /// ANSI escape / NUL byte / RTL override が混入しないよう engine 境界で
-    /// reject filter する(`crate::sanitize::is_safe_for_host`)。filter 結果
-    /// が空 Vec になる場合は **空 Replace を engine 内に保持** することで
-    /// spec §9.3「変換失敗で前回候補が画面に残る」防止規約と整合する。
+    /// reject filter する(`crate::sanitize::is_safe_for_host`)。
+    ///
+    /// # Empty after filter
+    ///
+    /// B0g-b self-review F1 (Critical):filter 結果が空 Vec になり、かつ
+    /// 元入力が non-empty だった場合(= 全 candidate が unsafe で drop された
+    /// 場合)、**host にも明示的に Clear + hide を発行** する。これがないと
+    /// caller (transitions.rs) の `if !engine.candidates.is_empty()` guard で
+    /// host への update_candidates 通知が抑制され、IBus 側 LookupTable に
+    /// 前回 request の candidate buffer が残留する silent failure(spec §9.3
+    /// 「変換失敗で前回候補が画面に残る」)を **本 filter 自身が新規に作る**
+    /// regression を引き起こすため。
     pub(crate) fn apply_candidate_update(&mut self, update: CandidateUpdate) {
         match update {
             CandidateUpdate::Replace(c) => {
+                let original_was_nonempty = !c.is_empty();
                 let filtered = filter_safe_candidates(c);
                 self.candidates = filtered;
                 self.highlight_idx = 0;
+                if original_was_nonempty && self.candidates.is_empty() {
+                    self.host.update_candidates(CandidateUpdate::Clear);
+                    self.host.hide_candidate_window();
+                }
             }
             CandidateUpdate::Append(c) => {
+                let original_was_nonempty = !c.is_empty();
                 let filtered = filter_safe_candidates(c);
+                let was_empty_before = self.candidates.is_empty();
                 self.candidates.extend(filtered);
+                if original_was_nonempty && was_empty_before && self.candidates.is_empty() {
+                    self.host.update_candidates(CandidateUpdate::Clear);
+                    self.host.hide_candidate_window();
+                }
             }
             CandidateUpdate::Remove(r) => {
                 let len = self.candidates.len();
@@ -537,5 +558,150 @@ mod tests {
         ];
         let kept = filter_safe_candidates(input);
         assert!(kept.is_empty());
+    }
+}
+
+#[cfg(all(test, feature = "test-helpers"))]
+mod boundary_notify_tests {
+    //! Phase 3-B B0g-b self-review F1 (Critical) regression:
+    //! `apply_candidate_update` で filter 全 drop された Replace を受けた時、
+    //! engine 内部 state だけでなく **host にも明示的に Clear + hide が発行**
+    //! されることを assert する。host call 経路まで観測しないと、I8 filter
+    //! 自体が新たに「前回候補画面残留」silent failure を作る。
+
+    use super::*;
+    use crate::testing::{HostOperation, MockCandidateUpdate, MockHostBridge};
+    use kotoha_core::Candidate;
+
+    #[test]
+    fn replace_with_all_unsafe_candidates_emits_host_clear_and_hide() {
+        let host = MockHostBridge::new();
+        let host_handle = host.clone();
+        let host_box: Box<dyn IMEHostBridge> = Box::new(host);
+
+        // engine spawn を避けて test 速度確保のため、apply_candidate_update を
+        // 直接 call できる構造で engine を組み立てる。Ranker / writer は本 test
+        // で発火しないので minimal stub。
+        struct NoopRanker;
+        impl crate::Ranker for NoopRanker {
+            fn rank(
+                &self,
+                _kana: &str,
+                _ctx: &crate::ConversionContext,
+                _cancel: std::sync::Arc<dyn crate::CancellationToken>,
+                _sink: std::sync::mpsc::Sender<crate::RankerOutput>,
+            ) -> Result<(), crate::RankerError> {
+                Ok(())
+            }
+        }
+        #[derive(Default)]
+        struct StubWriter;
+        impl kotoha_storage::learning_cache::LearningCacheWriter for StubWriter {
+            fn record_choice(
+                &self,
+                _kana_input: &str,
+                _chosen_kanji: &str,
+            ) -> Result<(), kotoha_storage::error::StorageError> {
+                Ok(())
+            }
+            fn evict_lru(
+                &self,
+                _max_entries: usize,
+            ) -> Result<usize, kotoha_storage::error::StorageError> {
+                Ok(0)
+            }
+        }
+
+        let mut engine = KotohaEngine::new(
+            host_box,
+            std::sync::Arc::new(NoopRanker),
+            std::sync::Arc::new(StubWriter::default()),
+        )
+        .expect("engine spawn");
+
+        // 全 unsafe な candidate を Replace で投入。
+        engine.apply_candidate_update(CandidateUpdate::Replace(vec![
+            Candidate::new("\u{001B}[2J", 0.0),
+            Candidate::new("\u{0000}null", 0.0),
+        ]));
+
+        // engine 内 state は空。
+        assert_eq!(engine.candidate_count_for_test(), 0);
+
+        // host への通知経路を観測:filter 全 drop で Clear + hide が送られている。
+        let ops = host_handle.operations();
+        assert!(
+            ops.iter().any(|op| matches!(
+                op,
+                HostOperation::UpdateCandidates(MockCandidateUpdate::Clear)
+            )),
+            "expected UpdateCandidates(Clear) but got {ops:?}"
+        );
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op, HostOperation::HideCandidateWindow)),
+            "expected HideCandidateWindow but got {ops:?}"
+        );
+    }
+
+    #[test]
+    fn replace_with_clean_candidates_does_not_emit_extra_clear() {
+        let host = MockHostBridge::new();
+        let host_handle = host.clone();
+        let host_box: Box<dyn IMEHostBridge> = Box::new(host);
+
+        struct NoopRanker;
+        impl crate::Ranker for NoopRanker {
+            fn rank(
+                &self,
+                _kana: &str,
+                _ctx: &crate::ConversionContext,
+                _cancel: std::sync::Arc<dyn crate::CancellationToken>,
+                _sink: std::sync::mpsc::Sender<crate::RankerOutput>,
+            ) -> Result<(), crate::RankerError> {
+                Ok(())
+            }
+        }
+        #[derive(Default)]
+        struct StubWriter;
+        impl kotoha_storage::learning_cache::LearningCacheWriter for StubWriter {
+            fn record_choice(
+                &self,
+                _kana_input: &str,
+                _chosen_kanji: &str,
+            ) -> Result<(), kotoha_storage::error::StorageError> {
+                Ok(())
+            }
+            fn evict_lru(
+                &self,
+                _max_entries: usize,
+            ) -> Result<usize, kotoha_storage::error::StorageError> {
+                Ok(0)
+            }
+        }
+
+        let mut engine = KotohaEngine::new(
+            host_box,
+            std::sync::Arc::new(NoopRanker),
+            std::sync::Arc::new(StubWriter::default()),
+        )
+        .expect("engine spawn");
+
+        // clean candidate を Replace。
+        engine.apply_candidate_update(CandidateUpdate::Replace(vec![
+            Candidate::new("こんにちは", 0.0),
+            Candidate::new("hello", 0.0),
+        ]));
+
+        assert_eq!(engine.candidate_count_for_test(), 2);
+
+        // host への通知経路を観測:Clear / Hide は送られない(caller が出すもの)。
+        let ops = host_handle.operations();
+        assert!(
+            !ops.iter()
+                .any(|op| matches!(op, HostOperation::UpdateCandidates(_))),
+            "apply_candidate_update should not emit host update_candidates for clean Replace; \
+             host call is the caller's responsibility (transitions.rs). Observed: {ops:?}"
+        );
     }
 }

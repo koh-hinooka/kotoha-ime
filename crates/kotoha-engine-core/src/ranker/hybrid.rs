@@ -334,9 +334,13 @@ impl Ranker for HybridRanker {
                 }
             }));
             if let Err(payload) = result {
-                let panic_type = (*payload).type_id();
+                // self-review F3:`panic_type` の opaque TypeId hex dump では
+                // post-mortem で `&'static str` / `String` / `panic_any(...)` の
+                // どれだったか判別不能。`engine::panic_message_from` を共有
+                // helper として再利用し、payload 中身を message 化する。
+                let msg = crate::engine::panic_message_from(&payload);
                 tracing::error!(
-                    ?panic_type,
+                    panic = %msg,
                     "HybridRanker child thread panicked; sink dropped, worker drain_window will observe disconnect (spec §9.1 row 2 / B0g-b I7)"
                 );
             }
