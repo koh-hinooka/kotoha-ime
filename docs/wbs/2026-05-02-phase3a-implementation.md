@@ -103,12 +103,14 @@ ISSUE #140(P3-B B0)で第 1 回レビューの Critical 4 + Important 9 を消�
 
 ## Test count(実測)
 
-| timing | full workspace |
-|--------|----------------|
-| P2-D 完了時(P3-A 開始前) | 416 |
-| **P3-A M1〜M6 + P3-B B1/B4/B5 完了時(2026-05-03 現在)** | **454** |
+| timing | default features | `--features test-helpers` |
+|--------|------------------|---------------------------|
+| P2-D 完了時(P3-A 開始前) | n/a | 416 |
+| P3-A M1〜M6 + P3-B B1/B4/B5 完了時(B0e merge 直後) | n/a | 459 |
+| **P3-B B0e 完了時(2026-05-03)** | 432 | **473** |
+| **P3-B B0f 完了時(2026-05-03、本 PR)** | 432 | **473**(test 改変ゼロ) |
 
-註:過去の commit message で `446` / `448` と記載した数値は不正確。正規値は `cargo test --workspace --features kotoha-storage/test-helpers,kotoha-engine-core/test-helpers` で得た 454。
+註:`cargo test --workspace` (default features) と `cargo test --workspace --features kotoha-storage/test-helpers,kotoha-engine-core/test-helpers` で結果が異なる。lefthook pre-push は default features を回す。第 1 回包括 review (B0a-B0e) では test-helpers feature 経由の合計値 (416 → 473) を baseline として参照する。過去の commit message で `446` / `448` / `454` と記載した数値はいずれも不正確で、上表が正規値。
 
 ## L3 manual smoke 結果
 
