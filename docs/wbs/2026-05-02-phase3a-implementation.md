@@ -140,8 +140,8 @@ GNOME Wayland session 上で `cargo run --bin kotoha` 起動 + 以下 applicatio
 |---|---|---|
 | ~~B0 (#140)~~ | 第 1 回包括レビュー Critical 4 + Important 9 消化 | **完了**(PR #141-#145、test 416 → 473) |
 | **B0f (#146)** | 機能完成宣言取り下げ + proxy / event loop fail-loud 化 | **進行中**(本 PR) |
-| B0g (TBD ISSUE) | 第 2 回 review C4 / C5 / I7-I17 系の中期消化 | B0f 後着手 |
-| B0h (TBD ISSUE) | hexagonal port 反転(C3) + SRP 分割(I1) + dispatcher Arc<Mutex>(I2) | OSS 公開前必修 |
+| B0g (#148) | 第 2 回 review C4 / C5 / I7-I17 系の中期消化(silent failure / security / testing) | B0f 後着手 |
+| B0h (#149) | hexagonal port 反転(C3) + SRP 分割(I1) + dispatcher Arc<Mutex>(I2) + dispatch async 化(I3) + Hybrid 切出し(I4) + stub feature gate(I5) | OSS 公開前必修 |
 | B2 | IBus signal body marshalling | B0f 後着手 |
 | B3 | IBus signal listener loop + event loop | B0f / B2 後着手 |
 | B6 | L3 manual smoke | B2 / B3 後着手 |
