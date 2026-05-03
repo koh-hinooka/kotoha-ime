@@ -194,3 +194,104 @@ fn focus_out_cancels_active_request() {
         cancel_count.load(Ordering::SeqCst)
     );
 }
+
+// ------------------------------------------------------------------
+// Phase 3-B B0c (ISSUE #140): missing spec §8.1 cancel triggers
+// ------------------------------------------------------------------
+
+/// 共通 helper:CancelObservingRanker + StubWriter で engine 構築
+fn build_engine_for_cancel_test(delay_ms: u64) -> (KotohaEngine, Arc<AtomicU64>) {
+    let cancel_count = Arc::new(AtomicU64::new(0));
+    let ranker = Arc::new(CancelObservingRanker {
+        cancel_observed: cancel_count.clone(),
+        delay: Duration::from_millis(delay_ms),
+    });
+    let host = Box::new(MockHostBridge::new());
+    let writer = Arc::new(StubWriter);
+    let mut eng = KotohaEngine::new(host, ranker, writer).expect("engine spawn");
+    eng.enable();
+    eng.focus_in();
+    (eng, cancel_count)
+}
+
+/// spec §8.1 trigger 4: `Esc` key on LiveConverting で cancel 観測
+#[test]
+fn escape_on_live_cancels_active_request() {
+    let (mut eng, cancel_count) = build_engine_for_cancel_test(40);
+
+    eng.process_key_event(key('a'));
+    eng.process_key_event(key_special_for_cancel(
+        kotoha_engine_core::engine::transitions::keysyms::ESCAPE,
+    ));
+
+    sleep(Duration::from_millis(100));
+    assert!(
+        cancel_count.load(Ordering::SeqCst) >= 1,
+        "expected Esc to cancel active request, got {}",
+        cancel_count.load(Ordering::SeqCst)
+    );
+}
+
+/// spec §8.1 trigger 5: `IMEEngine::reset()` で cancel 観測
+#[test]
+fn reset_cancels_active_request() {
+    use kotoha_engine_core::ime_engine::IMEEngine as _;
+    let (mut eng, cancel_count) = build_engine_for_cancel_test(40);
+
+    eng.process_key_event(key('a'));
+    eng.reset();
+
+    sleep(Duration::from_millis(100));
+    assert!(
+        cancel_count.load(Ordering::SeqCst) >= 1,
+        "expected reset() to cancel active request, got {}",
+        cancel_count.load(Ordering::SeqCst)
+    );
+}
+
+/// spec §8.1 trigger 3: 連続 space(別 RankRequest 開始)で先 request の cancel
+#[test]
+fn consecutive_space_cancels_previous_request() {
+    let (mut eng, cancel_count) = build_engine_for_cancel_test(40);
+
+    eng.process_key_event(key('a'));
+    eng.process_key_event(key_special_for_cancel(
+        kotoha_engine_core::engine::transitions::keysyms::SPACE,
+    ));
+    eng.process_key_event(key_special_for_cancel(
+        kotoha_engine_core::engine::transitions::keysyms::SPACE,
+    ));
+
+    sleep(Duration::from_millis(100));
+    assert!(
+        cancel_count.load(Ordering::SeqCst) >= 1,
+        "expected consecutive space to cancel previous request, got {}",
+        cancel_count.load(Ordering::SeqCst)
+    );
+}
+
+/// spec §8.1 trigger 2 (backspace path): backspace で preedit を空にする際の cancel
+#[test]
+fn backspace_to_idle_cancels_active_request() {
+    let (mut eng, cancel_count) = build_engine_for_cancel_test(40);
+
+    eng.process_key_event(key('a'));
+    eng.process_key_event(key_special_for_cancel(
+        kotoha_engine_core::engine::transitions::keysyms::BACKSPACE,
+    ));
+
+    sleep(Duration::from_millis(100));
+    assert!(
+        cancel_count.load(Ordering::SeqCst) >= 1,
+        "expected backspace-to-idle to cancel active request, got {}",
+        cancel_count.load(Ordering::SeqCst)
+    );
+}
+
+fn key_special_for_cancel(keysym: u32) -> KeyEvent {
+    KeyEvent {
+        keysym,
+        keycode: 0,
+        modifiers: KeyModifiers::empty(),
+    }
+}

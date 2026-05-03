@@ -87,9 +87,15 @@ fn idle_typing_transitions_to_live() {
         .any(|o| matches!(o, HostOperation::ShowCandidateWindow)));
 }
 
-/// spec §5.2: LiveConverting + space → CandidatesShown
+/// spec §5.2 row 4: LiveConverting + space。即応 Ranker(MockRanker は同期 send)で
+/// dispatch_rank_request 内で候補が間に合えば最終 state = CandidatesShown。
+///
+/// なお spec §5.2 の正解 target は `CommitConverting`(候補未到着の中間状態)。
+/// 同期 Mock では中間状態が観測不能なため、対の遅延 Ranker test
+/// (`live_space_with_slow_ranker_stays_at_commit_converting`)で
+/// CommitConverting branch を assert する。
 #[test]
-fn live_space_transitions_to_candidates_shown() {
+fn live_space_with_fast_ranker_transitions_to_candidates_shown() {
     let (mut eng, _host, _w) = build_engine(vec![Candidate::new("琴葉", -1.0)]);
     eng.process_key_event(key_char('k'));
     eng.process_key_event(key_char('a'));
@@ -200,4 +206,133 @@ fn candidates_navigation_moves_highlight() {
     eng.process_key_event(key_special(keysyms::DOWN));
     // wrap around
     assert_eq!(eng.highlight_idx_for_test(), 0);
+}
+
+// ------------------------------------------------------------------
+// Phase 3-B B0c (ISSUE #140): missing spec §5.2 transition rows
+// ------------------------------------------------------------------
+
+/// spec §5.2 row 5: LiveConverting + Esc → Idle (preedit + 候補 全 clear)
+#[test]
+fn live_escape_clears_to_idle() {
+    let (mut eng, host, _w) = build_engine(vec![Candidate::new("か", -1.0)]);
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+    let r = eng.process_key_event(key_special(keysyms::ESCAPE));
+    assert_eq!(r, KeyEventResult::Consumed);
+    assert_eq!(eng.state_for_test(), EngineState::Idle);
+    assert!(eng.preedit_for_test().is_empty());
+    let ops = host.operations();
+    assert!(ops
+        .iter()
+        .any(|o| matches!(o, HostOperation::HideCandidateWindow)));
+    assert!(ops.iter().any(|o| matches!(
+        o,
+        HostOperation::UpdatePreedit { text, visible, .. }
+            if text.is_empty() && !*visible
+    )));
+}
+
+/// spec §5.2 row 3 non-empty path: LiveConverting + backspace → LiveConverting
+/// (kana が複数残るときは preedit 1 char 縮 + Live 再起動)
+#[test]
+fn live_backspace_keeps_live_when_preedit_remains() {
+    let (mut eng, _host, _w) = build_engine(vec![Candidate::new("かい", -1.0)]);
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+    eng.process_key_event(key_char('i'));
+    assert_eq!(eng.preedit_for_test(), "かい");
+    eng.process_key_event(key_special(keysyms::BACKSPACE));
+    assert_eq!(eng.state_for_test(), EngineState::LiveConverting);
+    assert_eq!(eng.preedit_for_test(), "か");
+}
+
+/// spec §5.2 row 11: CandidatesShown + 通常 typing → LiveConverting
+/// (候補ウィンドウ閉、新 preedit + Live RankRequest 再起動)
+#[test]
+fn candidates_typing_resumes_live() {
+    let (mut eng, host, _w) = build_engine(vec![Candidate::new("か", -1.0)]);
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+    eng.process_key_event(key_special(keysyms::SPACE));
+    assert_eq!(eng.state_for_test(), EngineState::CandidatesShown);
+    host.clear();
+    // typing 「i」を再開
+    eng.process_key_event(key_char('i'));
+    assert_eq!(eng.state_for_test(), EngineState::LiveConverting);
+    let ops = host.operations();
+    assert!(ops
+        .iter()
+        .any(|o| matches!(o, HostOperation::HideCandidateWindow)));
+}
+
+/// spec §5.2 row 13: CandidatesShown + backspace → LiveConverting
+/// (候補ウィンドウ閉、preedit 1 char 縮、Live 再起動)
+#[test]
+fn candidates_backspace_returns_to_live() {
+    let (mut eng, host, _w) = build_engine(vec![Candidate::new("かい", -1.0)]);
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+    eng.process_key_event(key_char('i'));
+    eng.process_key_event(key_special(keysyms::SPACE));
+    assert_eq!(eng.state_for_test(), EngineState::CandidatesShown);
+    host.clear();
+    eng.process_key_event(key_special(keysyms::BACKSPACE));
+    assert_eq!(eng.state_for_test(), EngineState::LiveConverting);
+    assert_eq!(eng.preedit_for_test(), "か");
+    let ops = host.operations();
+    assert!(ops
+        .iter()
+        .any(|o| matches!(o, HostOperation::HideCandidateWindow)));
+}
+
+/// spec §5.2 row 14: CandidatesShown + focus_out → Idle (全 clear)
+#[test]
+fn candidates_focus_out_clears() {
+    let (mut eng, host, _w) = build_engine(vec![Candidate::new("か", -1.0)]);
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+    eng.process_key_event(key_special(keysyms::SPACE));
+    assert_eq!(eng.state_for_test(), EngineState::CandidatesShown);
+    host.clear();
+    eng.focus_out();
+    assert_eq!(eng.state_for_test(), EngineState::Idle);
+    assert!(eng.preedit_for_test().is_empty());
+    assert_eq!(eng.candidate_count_for_test(), 0);
+    let ops = host.operations();
+    assert!(ops
+        .iter()
+        .any(|o| matches!(o, HostOperation::HideCandidateWindow)));
+}
+
+/// spec §5.2 row 2 explicit: LiveConverting + 連続通常 char → LiveConverting
+/// (preedit 伸長 + Live RankRequest 再発行)
+#[test]
+fn live_consecutive_typing_extends_preedit() {
+    let (mut eng, _host, _w) = build_engine(vec![Candidate::new("かい", -1.0)]);
+    eng.process_key_event(key_char('k'));
+    eng.process_key_event(key_char('a'));
+    assert_eq!(eng.preedit_for_test(), "か");
+    assert_eq!(eng.state_for_test(), EngineState::LiveConverting);
+    eng.process_key_event(key_char('i'));
+    assert_eq!(eng.preedit_for_test(), "かい");
+    assert_eq!(eng.state_for_test(), EngineState::LiveConverting);
+}
+
+/// spec §5.2 row 1 negative: Idle + 大文字(現状 ASCII graphic として扱う)
+/// が既存 path で Consumed になることを観測。Phase 6 input mode で再評価。
+#[test]
+fn idle_uppercase_is_consumed_via_typing_path() {
+    // 'A' (0x41) は ASCII graphic + ASCII uppercase のため
+    // handle_typing が char::from_u32 で受け入れ、ローマ字 trie で
+    // 該当 entry が無いため pending は invalid 扱いで dropped。
+    // 現状 spec では大文字の挙動は §13 Open Q 8 で「実装段階対応」。
+    // 本 test は「panic-free + Forwarded ではなく Consumed として吸収する」
+    // 現状 behavior を lock する(spec 確定後 expectations を更新)。
+    let (mut eng, _host, _w) = build_engine(vec![]);
+    let r = eng.process_key_event(key_char('A'));
+    assert_eq!(r, KeyEventResult::Consumed);
+    // 大文字単独では ローマ字 entry に hit しないため preedit は空のまま Idle 維持
+    assert!(eng.preedit_for_test().is_empty());
+    assert_eq!(eng.state_for_test(), EngineState::Idle);
 }
