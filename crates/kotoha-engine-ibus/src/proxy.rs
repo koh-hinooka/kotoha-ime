@@ -1,26 +1,46 @@
 //! IBus 1.x D-Bus interface proxy 定義(zbus 5.x blocking API 経由)。
 //!
-//! IBus engine が呼び出す host 側 method は `org.freedesktop.IBus.Engine`
-//! interface の subclass virtual method として送出される。実用的に Rust 側で
-//! IBus engine subclass を定義することは難しいため、本 module では engine
-//! object path を保持した上で zbus `Connection` に signal を emit する形を
-//! 取る。signal body の `IBusText` / `IBusLookupTable` 詳細 marshalling は
-//! Phase 3-A 実装段階の L3 manual smoke で empirical に詳細化する
+//! # 現状(Phase 3-B B0f 時点)
+//!
+//! signal body marshalling と emit 機構は **Phase 3-B B2 / B3 で実装する**。
+//! B0f までは 5 method すべて [`zbus::Error::Failure`] を返し fail-loud で
+//! 動く(spec §9.3「silent_failure 禁止」を守るため)。host_bridge 側は
+//! `Err` を `tracing::warn!` で観測する経路を既に持つ
+//! (`crates/kotoha-engine-ibus/src/host_bridge.rs`)。
+//!
+//! 旧版(B0e まで)は `Ok(())` を返して TRACE log 1 行のみ残す **silent
+//! no-op stub** で、production 起動成功 INFO log と組合わさって user に
+//! 「IBus 通信が動いていない」を伝えない構造的 silent failure を作っていた。
+//! 包括 review (2026-05-03) で Critical 1 として検出した(ISSUE #146)。
+//!
+//! 実 signal emit は Phase 3-B B3 で `connection.send_signal` 越しに
+//! `IBusText` / `IBusLookupTable` の D-Bus marshalling を含めて詳細化する
 //! (spec §13 Open Q 9)。
 
 use zbus::blocking::Connection;
 use zbus::Result;
 
+/// 5 method すべてに共通する「未実装である」error message。
+///
+/// caller(`host_bridge.rs`)は本 message を tracing::warn 経由で観測する。
+/// Phase 3-B B3 で実 signal emit に置き換わると本 message は廃止される。
+const NOT_YET_IMPLEMENTED: &str =
+    "IBus signal emit is not yet implemented; tracked in Phase 3-B B3";
+
 /// IBus engine が host(`InputContext`)に発する signal の helper 群。
 ///
-/// 本 PR (M5) では `Connection::session()` で session bus に接続し、object
-/// path を保持するところまでを実装する。signal body 構築 + emit は実装段階で
-/// `connection.send_signal` 越しに詳細化する(spec §13 Open Q 9)。
+/// # 現状
+///
+/// session bus 接続と object path 保持までは本 struct 内で完結するが、
+/// 各 signal emit は B0f 段階で fail-loud(`Err` を返す)。実 emit は
+/// Phase 3-B B3 で実装される。
 pub struct IBusEngineSignals {
-    /// zbus blocking connection(session bus)。
+    /// zbus blocking connection(session bus)。Phase 3-B B3 で
+    /// `connection.send_signal(...)` 越しに使用される。
     #[allow(dead_code)]
     connection: Connection,
     /// engine object path(`/org/freedesktop/IBus/Engine/Kotoha` 等)。
+    /// Phase 3-B B3 で signal の `path` field に使用される。
     #[allow(dead_code)]
     object_path: zbus::zvariant::OwnedObjectPath,
 }
@@ -43,44 +63,67 @@ impl IBusEngineSignals {
 
     /// `UpdatePreeditText(IBusText, u32 cursor_pos, bool visible)` signal emit。
     ///
-    /// IBus 規約上 `IBusText` は `(s a(uuv) v)` 互換の D-Bus type で、
-    /// attribute list と attachment dict を持つ struct。M5 段階では string-only の
-    /// 簡略 marshalling とし、attribute は Phase 3-A 実装段階で詳細化する
-    /// (spec §13 Open Q 9)。
+    /// # Errors
+    ///
+    /// 現状は常に [`zbus::Error::Failure`] を返す(Phase 3-B B3 まで未実装)。
     pub fn update_preedit(&self, text: &str, cursor: u32, visible: bool) -> Result<()> {
-        tracing::trace!(text, cursor, visible, "IBus update_preedit (zbus)");
-        Ok(())
+        tracing::warn!(
+            text_len = text.chars().count(),
+            cursor,
+            visible,
+            "IBus update_preedit not yet wired to D-Bus (Phase 3-B B3)"
+        );
+        Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED.to_string()))
     }
 
     /// `CommitText(IBusText)` signal emit。
+    ///
+    /// # Errors
+    ///
+    /// 現状は常に [`zbus::Error::Failure`] を返す(Phase 3-B B3 まで未実装)。
     pub fn commit_text(&self, text: &str) -> Result<()> {
-        tracing::trace!(text, "IBus commit_text (zbus)");
-        Ok(())
+        tracing::warn!(
+            text_len = text.chars().count(),
+            "IBus commit_text not yet wired to D-Bus (Phase 3-B B3)"
+        );
+        Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED.to_string()))
     }
 
     /// `UpdateLookupTable(IBusLookupTable, bool visible)` signal emit。
+    ///
+    /// # Errors
+    ///
+    /// 現状は常に [`zbus::Error::Failure`] を返す(Phase 3-B B3 まで未実装)。
     pub fn update_lookup_table(
         &self,
         candidates: &[kotoha_core::Candidate],
         visible: bool,
     ) -> Result<()> {
-        tracing::trace!(
+        tracing::warn!(
             count = candidates.len(),
             visible,
-            "IBus update_lookup_table (zbus)"
+            "IBus update_lookup_table not yet wired to D-Bus (Phase 3-B B3)"
         );
-        Ok(())
+        Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED.to_string()))
     }
 
     /// `ShowLookupTable` signal emit。
+    ///
+    /// # Errors
+    ///
+    /// 現状は常に [`zbus::Error::Failure`] を返す(Phase 3-B B3 まで未実装)。
     pub fn show_lookup_table(&self) -> Result<()> {
-        tracing::trace!("IBus show_lookup_table (zbus)");
-        Ok(())
+        tracing::warn!("IBus show_lookup_table not yet wired to D-Bus (Phase 3-B B3)");
+        Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED.to_string()))
     }
 
     /// `HideLookupTable` signal emit。
+    ///
+    /// # Errors
+    ///
+    /// 現状は常に [`zbus::Error::Failure`] を返す(Phase 3-B B3 まで未実装)。
     pub fn hide_lookup_table(&self) -> Result<()> {
-        tracing::trace!("IBus hide_lookup_table (zbus)");
-        Ok(())
+        tracing::warn!("IBus hide_lookup_table not yet wired to D-Bus (Phase 3-B B3)");
+        Err(zbus::Error::Failure(NOT_YET_IMPLEMENTED.to_string()))
     }
 }
