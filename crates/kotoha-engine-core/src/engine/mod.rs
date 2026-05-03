@@ -12,20 +12,22 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use kotoha_core::romaji::RomajiConverter;
-use kotoha_core::Candidate;
-
 use crate::cancel::{CancellationToken, StdCancellationToken};
 use crate::host_bridge::IMEHostBridge;
 use crate::ime_engine::IMEEngine;
 use crate::key_event::{KeyEvent, KeyEventResult};
 use crate::ranker::{CandidateUpdate, ConversionContext, ConversionMode, Ranker};
 
+mod candidates;
 mod commit_history;
 mod event;
+mod preedit;
 #[doc(hidden)]
 pub mod transitions;
 mod worker;
+
+use candidates::CandidateBuffer;
+use preedit::PreeditBuffer;
 
 pub use commit_history::CommitHistory;
 pub use worker::panic_message_from;
@@ -62,19 +64,31 @@ pub(crate) struct RequestHandle {
 ///
 /// # Invariants
 ///
-/// - `state == Idle` ⇒ `current_preedit.is_empty() && active_request.is_none()`
+/// - `state == Idle` ⇒ `preedit.current.is_empty() && active_request.is_none()`
 /// - `active_request.is_some()` ⇒ `cancel_token` が一意に存在
 /// - `commit_history.total_chars() <= 200`([`CommitHistory::push`] で維持)
+///
+/// # Phase 3-B B0h-c-i (ISSUE #149 / #161) field 整理
+///
+/// 旧 4 field を 2 sub-struct に集約:
+/// - `current_preedit: String` + `romaji: RomajiConverter` →
+///   [`preedit::PreeditBuffer`] (`engine.preedit.current` / `engine.preedit.romaji`)
+/// - `candidates: Vec<Candidate>` + `highlight_idx: usize` →
+///   [`candidates::CandidateBuffer`] (`engine.candidates.items` /
+///   `engine.candidates.highlight`)
+///
+/// 残 11 field (`state` / `host` / `ranker` / `learning_writer` /
+/// `commit_history` / `active_request` / `request_id_seed` / `last_commit_at` /
+/// `enabled` / `focused` / channel 群) は B0h-c-ii (`WorkerChannel`) と
+/// B0h-c-iii (`LearningSink` + transitions.rs method 化) で順次抽出する。
 pub struct KotohaEngine {
     pub(crate) state: EngineState,
     pub(crate) host: Box<dyn IMEHostBridge>,
     pub(crate) ranker: Arc<dyn Ranker>,
     pub(crate) learning_writer: Arc<dyn crate::learning_port::LearningRecorder>,
-    pub(crate) romaji: RomajiConverter,
-    pub(crate) current_preedit: String,
+    pub(crate) preedit: PreeditBuffer,
     pub(crate) commit_history: CommitHistory,
-    pub(crate) candidates: Vec<Candidate>,
-    pub(crate) highlight_idx: usize,
+    pub(crate) candidates: CandidateBuffer,
     pub(crate) active_request: Option<RequestHandle>,
     pub(crate) request_id_seed: u64,
     pub(crate) last_commit_at: Instant,
@@ -115,11 +129,9 @@ impl KotohaEngine {
             host,
             ranker,
             learning_writer,
-            romaji: RomajiConverter::new(),
-            current_preedit: String::new(),
+            preedit: PreeditBuffer::new(),
             commit_history: CommitHistory::new(),
-            candidates: Vec::new(),
-            highlight_idx: 0,
+            candidates: CandidateBuffer::new(),
             active_request: None,
             request_id_seed: 0,
             last_commit_at: Instant::now(),
@@ -167,7 +179,7 @@ impl KotohaEngine {
 
         let req = event::RankRequest {
             request_id,
-            kana: self.current_preedit.clone(),
+            kana: self.preedit.current.clone(),
             ctx,
             cancel_token,
             ranker: self.ranker.clone(),
@@ -190,7 +202,6 @@ impl KotohaEngine {
             );
             self.active_request = None;
             self.candidates.clear();
-            self.highlight_idx = 0;
             self.host.hide_candidate_window();
             self.state = EngineState::Idle;
             self.enabled = false;
@@ -215,10 +226,10 @@ impl KotohaEngine {
         // 発火しない。direct-call test (`apply_candidate_update_for_test`) が
         // 単体 API として apply boundary を assert するために apply 側の
         // 検出は維持する(両者の発火条件は排他、二重通知はしない)。
-        let had_displayed_before_dispatch = !self.candidates.is_empty();
+        let had_displayed_before_dispatch = !self.candidates.items.is_empty();
         self.candidates.clear();
         self.drain_events_blocking(max_wait, request_id);
-        if had_displayed_before_dispatch && self.candidates.is_empty() {
+        if had_displayed_before_dispatch && self.candidates.items.is_empty() {
             self.host.update_candidates(CandidateUpdate::Clear);
             self.host.hide_candidate_window();
         }
@@ -229,9 +240,9 @@ impl KotohaEngine {
     /// 呼び、CommitConverting 中で候補非空なら CandidatesShown へ遷移して
     /// `update_candidates` を host に発行する。
     fn maybe_promote_commit_to_candidates_shown(&mut self) {
-        if self.state == EngineState::CommitConverting && !self.candidates.is_empty() {
+        if self.state == EngineState::CommitConverting && !self.candidates.items.is_empty() {
             self.host
-                .update_candidates(CandidateUpdate::Replace(self.candidates.clone()));
+                .update_candidates(CandidateUpdate::Replace(self.candidates.items.clone()));
             self.state = EngineState::CandidatesShown;
         }
     }
@@ -240,7 +251,6 @@ impl KotohaEngine {
     fn degrade_to_idle(&mut self) {
         self.active_request = None;
         self.candidates.clear();
-        self.highlight_idx = 0;
         self.host.hide_candidate_window();
         self.state = EngineState::Idle;
     }
@@ -351,40 +361,39 @@ impl KotohaEngine {
     pub(crate) fn apply_candidate_update(&mut self, update: CandidateUpdate) {
         match update {
             CandidateUpdate::Replace(c) => {
-                let prior_was_nonempty = !self.candidates.is_empty();
+                let prior_was_nonempty = !self.candidates.items.is_empty();
                 let filtered = filter_safe_candidates(c);
-                self.candidates = filtered;
-                self.highlight_idx = 0;
-                if prior_was_nonempty && self.candidates.is_empty() {
+                self.candidates.items = filtered;
+                self.candidates.highlight = 0;
+                if prior_was_nonempty && self.candidates.items.is_empty() {
                     self.host.update_candidates(CandidateUpdate::Clear);
                     self.host.hide_candidate_window();
                 }
             }
             CandidateUpdate::Append(c) => {
-                // Append は self.candidates に extend するため:
+                // Append は self.candidates.items に extend するため:
                 // - prior=non-empty + extend(任意) → post=non-empty(Clear 不要)
                 // - prior=empty + extend(空) → post=empty(host も既に hide 状態のため通知不要)
                 // - prior=empty + extend(非空) → post=non-empty(caller transitions.rs が
-                //   `if !candidates.is_empty()` で host.update_candidates を出す経路が存在)
+                //   `if !candidates.items.is_empty()` で host.update_candidates を出す経路が存在)
                 // よって本 path 内に host.Clear + hide を fire する必要のある branch は
                 // 存在しない(self-review#3 で dead code 撤去、Replace path 限定の規約)。
                 let filtered = filter_safe_candidates(c);
-                self.candidates.extend(filtered);
+                self.candidates.items.extend(filtered);
             }
             CandidateUpdate::Remove(r) => {
-                let len = self.candidates.len();
+                let len = self.candidates.items.len();
                 let start = r.start.min(len);
                 let end = r.end.min(len);
                 if start < end {
-                    self.candidates.drain(start..end);
+                    self.candidates.items.drain(start..end);
                 }
-                if self.highlight_idx >= self.candidates.len() {
-                    self.highlight_idx = self.candidates.len().saturating_sub(1);
+                if self.candidates.highlight >= self.candidates.items.len() {
+                    self.candidates.highlight = self.candidates.items.len().saturating_sub(1);
                 }
             }
             CandidateUpdate::Clear => {
                 self.candidates.clear();
-                self.highlight_idx = 0;
             }
         }
     }
@@ -438,11 +447,9 @@ impl IMEEngine for KotohaEngine {
     fn focus_out(&mut self) {
         // spec §5.2: focus_out は cancel + clear + Idle
         self.cancel_active();
-        self.current_preedit.clear();
-        self.romaji.reset_pending();
+        self.preedit.clear();
         self.commit_history.clear();
         self.candidates.clear();
-        self.highlight_idx = 0;
         self.host.hide_candidate_window();
         self.host.update_preedit("", 0, false);
         self.state = EngineState::Idle;
@@ -452,11 +459,9 @@ impl IMEEngine for KotohaEngine {
     fn reset(&mut self) {
         // spec §5.2: reset は focus_out と同等処理
         self.cancel_active();
-        self.current_preedit.clear();
-        self.romaji.reset_pending();
+        self.preedit.clear();
         self.commit_history.clear();
         self.candidates.clear();
-        self.highlight_idx = 0;
         self.host.hide_candidate_window();
         self.host.update_preedit("", 0, false);
         self.state = EngineState::Idle;
@@ -468,10 +473,8 @@ impl IMEEngine for KotohaEngine {
 
     fn disable(&mut self) {
         self.cancel_active();
-        self.current_preedit.clear();
-        self.romaji.reset_pending();
+        self.preedit.clear();
         self.candidates.clear();
-        self.highlight_idx = 0;
         self.host.hide_candidate_window();
         self.host.update_preedit("", 0, false);
         self.state = EngineState::Idle;
@@ -499,15 +502,15 @@ impl Drop for KotohaEngine {
 impl KotohaEngine {
     /// Test-only inspector: 現在 preedit の clone を返す。
     pub fn preedit_for_test(&self) -> String {
-        self.current_preedit.clone()
+        self.preedit.current.clone()
     }
     /// Test-only inspector: 現在 candidate 数を返す。
     pub fn candidate_count_for_test(&self) -> usize {
-        self.candidates.len()
+        self.candidates.items.len()
     }
     /// Test-only inspector: 現在 highlight idx を返す。
     pub fn highlight_idx_for_test(&self) -> usize {
-        self.highlight_idx
+        self.candidates.highlight
     }
     /// Test-only inspector: 現在 state を返す。
     pub fn state_for_test(&self) -> EngineState {
@@ -525,7 +528,7 @@ impl KotohaEngine {
     /// B0g-b #148 / I8 sanitization filter が正しく Candidate を drop している
     /// か観測するための accessor。
     pub fn candidates_for_test(&self) -> Vec<kotoha_core::Candidate> {
-        self.candidates.clone()
+        self.candidates.items.clone()
     }
 
     /// Test-only: `drain_pending_events()` を直接呼んで rx_event の pending な

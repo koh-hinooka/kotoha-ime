@@ -50,30 +50,29 @@ fn handle_typing(engine: &mut KotohaEngine, key: KeyEvent) -> KeyEventResult {
     if engine.state == EngineState::CandidatesShown {
         engine.host.hide_candidate_window();
         engine.candidates.clear();
-        engine.highlight_idx = 0;
     }
 
     // RomajiConverter::push でストリーミング 1 char convert(state を蓄積)。
     // push 後に normalize_pending で sokuon/hatsuon edge を確定させる。
     let mut committed = String::new();
-    if let ConvertStep::Committed(s) = engine.romaji.push(ch) {
+    if let ConvertStep::Committed(s) = engine.preedit.romaji.push(ch) {
         committed.push_str(&s);
     }
-    committed.push_str(&engine.romaji.normalize_pending());
+    committed.push_str(&engine.preedit.romaji.normalize_pending());
     if !committed.is_empty() {
-        engine.current_preedit.push_str(&committed);
+        engine.preedit.current.push_str(&committed);
     }
 
     // preedit 更新
-    let cursor = engine.current_preedit.chars().count();
+    let cursor = engine.preedit.current.chars().count();
     engine.host.update_preedit(
-        &engine.current_preedit,
+        &engine.preedit.current,
         cursor,
-        !engine.current_preedit.is_empty(),
+        !engine.preedit.current.is_empty(),
     );
 
     // 状態遷移 → LiveConverting(preedit 非空時のみ)
-    if !engine.current_preedit.is_empty() {
+    if !engine.preedit.current.is_empty() {
         engine.cancel_active();
         engine.dispatch_rank_request(ConversionMode::Live);
         // B0g #148 / I16:dispatch_rank_request が worker channel disconnect を
@@ -84,10 +83,10 @@ fn handle_typing(engine: &mut KotohaEngine, key: KeyEvent) -> KeyEventResult {
         if !engine.enabled {
             return KeyEventResult::Consumed;
         }
-        if !engine.candidates.is_empty() {
+        if !engine.candidates.items.is_empty() {
             engine
                 .host
-                .update_candidates(CandidateUpdate::Replace(engine.candidates.clone()));
+                .update_candidates(CandidateUpdate::Replace(engine.candidates.items.clone()));
             engine.host.show_candidate_window();
         }
         engine.state = EngineState::LiveConverting;
@@ -110,31 +109,30 @@ fn handle_backspace(engine: &mut KotohaEngine) -> KeyEventResult {
             if engine.state == EngineState::CandidatesShown {
                 engine.host.hide_candidate_window();
                 engine.candidates.clear();
-                engine.highlight_idx = 0;
             }
 
             // spec §6.2: kana 末尾 1 char pop + romaji pending reset
-            engine.current_preedit.pop();
-            engine.romaji.reset_pending();
+            engine.preedit.current.pop();
+            engine.preedit.romaji.reset_pending();
 
-            let cursor = engine.current_preedit.chars().count();
+            let cursor = engine.preedit.current.chars().count();
             engine.host.update_preedit(
-                &engine.current_preedit,
+                &engine.preedit.current,
                 cursor,
-                !engine.current_preedit.is_empty(),
+                !engine.preedit.current.is_empty(),
             );
 
             engine.cancel_active();
 
-            if engine.current_preedit.is_empty() {
+            if engine.preedit.current.is_empty() {
                 engine.host.hide_candidate_window();
                 engine.state = EngineState::Idle;
             } else {
                 engine.dispatch_rank_request(ConversionMode::Live);
-                if !engine.candidates.is_empty() {
-                    engine
-                        .host
-                        .update_candidates(CandidateUpdate::Replace(engine.candidates.clone()));
+                if !engine.candidates.items.is_empty() {
+                    engine.host.update_candidates(CandidateUpdate::Replace(
+                        engine.candidates.items.clone(),
+                    ));
                     engine.host.show_candidate_window();
                 }
                 engine.state = EngineState::LiveConverting;
@@ -164,7 +162,6 @@ fn handle_space(engine: &mut KotohaEngine) -> KeyEventResult {
             engine.cancel_active();
             // spec §5.2 row 4: 即 CommitConverting + show_candidate_window
             engine.candidates.clear();
-            engine.highlight_idx = 0;
             engine.state = EngineState::CommitConverting;
             engine.host.show_candidate_window();
 
@@ -172,10 +169,10 @@ fn handle_space(engine: &mut KotohaEngine) -> KeyEventResult {
 
             // 候補が dispatch 内 drain で間に合っていれば row 7 遷移を即適用。
             // 間に合っていなければ後続 keystroke の drain_pending_events で対応。
-            if !engine.candidates.is_empty() {
+            if !engine.candidates.items.is_empty() {
                 engine
                     .host
-                    .update_candidates(CandidateUpdate::Replace(engine.candidates.clone()));
+                    .update_candidates(CandidateUpdate::Replace(engine.candidates.items.clone()));
                 engine.state = EngineState::CandidatesShown;
             }
             KeyEventResult::Consumed
@@ -189,11 +186,11 @@ fn handle_space(engine: &mut KotohaEngine) -> KeyEventResult {
 
 /// Return / Enter — commit 確定(spec §6.3)。
 fn handle_return(engine: &mut KotohaEngine) -> KeyEventResult {
-    if engine.state != EngineState::CandidatesShown || engine.candidates.is_empty() {
+    if engine.state != EngineState::CandidatesShown || engine.candidates.items.is_empty() {
         return KeyEventResult::Forwarded;
     }
-    let selected: Candidate = engine.candidates[engine.highlight_idx].clone();
-    let kana_at_request = engine.current_preedit.clone();
+    let selected: Candidate = engine.candidates.items[engine.candidates.highlight].clone();
+    let kana_at_request = engine.preedit.current.clone();
 
     // B0g-b #148 / 第 2 回 review I8: host 出力の trust boundary で sanitization。
     // 改ざん辞書 / 悪意ある LLM 出力 / Phase 5 custom model から来た候補が ANSI
@@ -219,10 +216,8 @@ fn handle_return(engine: &mut KotohaEngine) -> KeyEventResult {
         // F2 cleanup:UI 状態を Idle に戻して user が次操作できるようにする。
         engine.host.hide_candidate_window();
         engine.host.update_preedit("", 0, false);
-        engine.current_preedit.clear();
-        engine.romaji.reset_pending();
+        engine.preedit.clear();
         engine.candidates.clear();
-        engine.highlight_idx = 0;
         engine.cancel_active();
         engine.state = EngineState::Idle;
         return KeyEventResult::Consumed;
@@ -240,10 +235,8 @@ fn handle_return(engine: &mut KotohaEngine) -> KeyEventResult {
 
     engine.host.hide_candidate_window();
     engine.host.update_preedit("", 0, false);
-    engine.current_preedit.clear();
-    engine.romaji.reset_pending();
+    engine.preedit.clear();
     engine.candidates.clear();
-    engine.highlight_idx = 0;
     engine.cancel_active();
     engine.state = EngineState::Idle;
     KeyEventResult::Consumed
@@ -255,10 +248,8 @@ fn handle_escape(engine: &mut KotohaEngine) -> KeyEventResult {
         EngineState::Idle => KeyEventResult::Forwarded,
         EngineState::LiveConverting | EngineState::CommitConverting => {
             engine.cancel_active();
-            engine.current_preedit.clear();
-            engine.romaji.reset_pending();
+            engine.preedit.clear();
             engine.candidates.clear();
-            engine.highlight_idx = 0;
             engine.host.update_preedit("", 0, false);
             engine.host.hide_candidate_window();
             engine.state = EngineState::Idle;
@@ -268,16 +259,15 @@ fn handle_escape(engine: &mut KotohaEngine) -> KeyEventResult {
             // spec §5.2: CandidatesShown で Esc は候補閉、preedit kana 維持で Live 復帰
             engine.host.hide_candidate_window();
             engine.candidates.clear();
-            engine.highlight_idx = 0;
             engine.cancel_active();
-            if engine.current_preedit.is_empty() {
+            if engine.preedit.current.is_empty() {
                 engine.state = EngineState::Idle;
             } else {
                 engine.dispatch_rank_request(ConversionMode::Live);
-                if !engine.candidates.is_empty() {
-                    engine
-                        .host
-                        .update_candidates(CandidateUpdate::Replace(engine.candidates.clone()));
+                if !engine.candidates.items.is_empty() {
+                    engine.host.update_candidates(CandidateUpdate::Replace(
+                        engine.candidates.items.clone(),
+                    ));
                     engine.host.show_candidate_window();
                 }
                 engine.state = EngineState::LiveConverting;
@@ -289,21 +279,21 @@ fn handle_escape(engine: &mut KotohaEngine) -> KeyEventResult {
 
 /// 候補 navigation(↑↓←→ / Tab、CandidatesShown で highlight 移動)。
 fn handle_navigation(engine: &mut KotohaEngine, keysym: u32) -> KeyEventResult {
-    if engine.state != EngineState::CandidatesShown || engine.candidates.is_empty() {
+    if engine.state != EngineState::CandidatesShown || engine.candidates.items.is_empty() {
         return KeyEventResult::Forwarded;
     }
-    let n = engine.candidates.len();
+    let n = engine.candidates.items.len();
     match keysym {
         keysyms::DOWN | keysyms::TAB | keysyms::RIGHT => {
-            engine.highlight_idx = (engine.highlight_idx + 1) % n;
+            engine.candidates.highlight = (engine.candidates.highlight + 1) % n;
         }
         keysyms::UP | keysyms::LEFT => {
-            engine.highlight_idx = (engine.highlight_idx + n - 1) % n;
+            engine.candidates.highlight = (engine.candidates.highlight + n - 1) % n;
         }
         _ => return KeyEventResult::Forwarded,
     }
     engine
         .host
-        .update_candidates(CandidateUpdate::Replace(engine.candidates.clone()));
+        .update_candidates(CandidateUpdate::Replace(engine.candidates.items.clone()));
     KeyEventResult::Consumed
 }
