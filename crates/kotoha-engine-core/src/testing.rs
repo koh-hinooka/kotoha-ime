@@ -165,11 +165,10 @@ impl Ranker for MockRanker {
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             return Ok(());
         }
-        // request_id は engine 主 thread 採番ではなく、Mock では 0 固定とし、
-        // M3 で `RankerWorker` 経由になった時に worker が `request_id` を
-        // `RankerOutput.request_id` に上書きする設計。
+        // `RankerOutput.request_id` field は B0e (ISSUE #140 / Important 10)で撤去済。
+        // Stale response の discard は engine 主 thread 側で `RankRequest`/`active_request`
+        // ベースの id 照合 + per-request channel 不変条件で成立する(spec §7.5)。
         let _ = sink.send(RankerOutput {
-            request_id: 0,
             update: CandidateUpdate::Replace(self.candidates.clone()),
         });
         Ok(())

@@ -28,13 +28,22 @@ use crate::cancel::CancellationToken;
 /// - `cancel.is_cancelled() == true` を検出したら以降の `sink.send()` を停止する。
 /// - backend 個別の cancel propagation:
 ///   - SudachiDict / UserVocab / LearningCache: μs オーダーで完結のため cancel
-///     check は不要(完了時に request_id mismatch なら engine 側で discard)。
+///     check は不要。stale response の discard は engine 主 thread 側 `request_id`
+///     照合(spec §7.5)で行う。Ranker 側は engine の `request_id` を知らない設計。
 ///   - LLM: 10 token 毎に `cancel.is_cancelled()` を check、true なら inference 中断。
 ///
 /// # Thread safety
 ///
 /// `Send + Sync` を要求(engine の `RankerWorker` thread と engine 主 thread の
 /// 双方から `Arc<dyn Ranker>` で参照される)。
+///
+/// # Per-request channel invariant (Phase 3-B B0e)
+///
+/// `sink` は **request 毎に新規作成された** mpsc channel である(`RankerWorker`
+/// が `worker_loop` 各 iteration で `(tx_ranker, rx_ranker) = mpsc::channel()`
+/// を生成し、本 `sink` を Ranker に渡す)。本 channel に届く output はすべて
+/// current request のものとして worker が受け取る。Ranker 側は出力を識別する
+/// id を持たない(以前の `RankerOutput.request_id` field は撤去済、I10)。
 pub trait Ranker: Send + Sync {
     /// 候補生成の起動。同期 return、heavy work は impl 内 thread に dispatch。
     ///
@@ -52,12 +61,17 @@ pub trait Ranker: Send + Sync {
 }
 
 /// Ranker から engine への通知 message。
+///
+/// # Phase 3-B B0e (ISSUE #140 / Important 10)
+///
+/// `request_id` field は撤去済。`Ranker::rank` の trait signature が engine
+/// 側 `request_id` を引数で受けない設計のため、Ranker impl 側で stamp しても
+/// engine 側で意味のある照合は不可能だった(B5 で worker レベルの id 照合を
+/// 撤去した時点で `request_id` field は dead surface 化)。
+/// Stale response の discard は engine 主 thread 側の `RankRequest` ベース
+/// id 照合 + per-request channel 不変条件で十分に成立する(spec §7.5)。
 #[derive(Debug, Clone)]
 pub struct RankerOutput {
-    /// engine 主 thread 側で active_request.id と mismatch なら discard する識別子。
-    /// engine が `RankRequest` 発行時に採番した値を Ranker 内部で保持し送出する
-    /// (Phase 3-A spec §7.5)。
-    pub request_id: u64,
     /// 差分通知本体。
     pub update: CandidateUpdate,
 }

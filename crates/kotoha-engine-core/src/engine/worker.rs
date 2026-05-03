@@ -176,12 +176,11 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
 /// 指定 window 内に Ranker から届いた `RankerOutput` を `buffer` に集約する。
 /// cancel detect で即時 break。
 ///
-/// `RankerOutput.request_id` は Ranker impl 側の内部 counter であって engine の
-/// `request_id` と一致する保証はない(`Ranker::rank` の trait signature は engine
-/// の id を受け取らない)。従って本 `rx_ranker` channel は **request 毎に新規作成**
-/// される(worker_loop 参照)前提で、ここに来る output はすべて current request の
-/// ものとして受け入れる。stale response の discard は engine 主 thread 側の
-/// `request_id` 照合(spec §7.5)で実施する。
+/// 本 `rx_ranker` channel は **request 毎に新規作成** される(worker_loop 参照)
+/// 前提で、ここに来る output はすべて current request のものとして受け入れる。
+/// `RankerOutput` 自体に id は持たない設計(B0e で `request_id` field を撤去)。
+/// Stale response の discard は engine 主 thread 側の `RankRequest`/`active_request`
+/// ベース id 照合(spec §7.5)で実施する。
 fn drain_window(
     rx_ranker: &mpsc::Receiver<RankerOutput>,
     cancel: &Arc<dyn CancellationToken>,

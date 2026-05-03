@@ -349,7 +349,6 @@ impl kotoha_engine_core::ranker::Ranker for SlowRanker {
                 return;
             }
             let _ = sink.send(kotoha_engine_core::ranker::RankerOutput {
-                request_id: 0,
                 update: kotoha_engine_core::ranker::CandidateUpdate::Replace(cands),
             });
         });

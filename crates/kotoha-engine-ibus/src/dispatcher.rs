@@ -71,3 +71,116 @@ impl<E: IMEEngine> IBusEventDispatcher<E> {
         &mut self.engine
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Phase 3-B B0e (ISSUE #140 / Important 11): dispatcher の 6 method を
+    //! `MockEngine` 注入で網羅する unit test。
+
+    use super::*;
+    use kotoha_engine_core::ime_engine::IMEEngine;
+    use kotoha_engine_core::key_event::{KeyEvent, KeyEventResult};
+
+    /// dispatcher 単体 test 専用の最小 IMEEngine 実装。
+    ///
+    /// 各 method 呼び出しを名前文字列として `lifecycle` Vec に記録する。
+    /// `process_key_event` の戻り値は `key_result` で制御可能。
+    struct MockEngine {
+        lifecycle: Vec<&'static str>,
+        last_key: Option<KeyEvent>,
+        key_result: KeyEventResult,
+    }
+
+    impl MockEngine {
+        fn new(key_result: KeyEventResult) -> Self {
+            Self {
+                lifecycle: Vec::new(),
+                last_key: None,
+                key_result,
+            }
+        }
+    }
+
+    impl IMEEngine for MockEngine {
+        fn process_key_event(&mut self, key: KeyEvent) -> KeyEventResult {
+            self.lifecycle.push("process_key_event");
+            self.last_key = Some(key);
+            self.key_result
+        }
+        fn focus_in(&mut self) {
+            self.lifecycle.push("focus_in");
+        }
+        fn focus_out(&mut self) {
+            self.lifecycle.push("focus_out");
+        }
+        fn reset(&mut self) {
+            self.lifecycle.push("reset");
+        }
+        fn enable(&mut self) {
+            self.lifecycle.push("enable");
+        }
+        fn disable(&mut self) {
+            self.lifecycle.push("disable");
+        }
+    }
+
+    #[test]
+    fn dispatch_key_consumed_returns_true_and_decodes_state() {
+        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Consumed));
+        // SHIFT_MASK (1 << 0) | CONTROL_MASK (1 << 2) = 0b101 = 5
+        let consumed = d.dispatch_key(0x6b, 45, 5);
+        assert!(consumed);
+        let ev = d.engine_mut().last_key.expect("key recorded");
+        assert_eq!(ev.keysym, 0x6b);
+        assert_eq!(ev.keycode, 45);
+        assert!(ev
+            .modifiers
+            .contains(kotoha_engine_core::KeyModifiers::SHIFT));
+        assert!(ev
+            .modifiers
+            .contains(kotoha_engine_core::KeyModifiers::CTRL));
+        assert_eq!(d.engine_mut().lifecycle, vec!["process_key_event"]);
+    }
+
+    #[test]
+    fn dispatch_key_forwarded_returns_false() {
+        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        let consumed = d.dispatch_key(0x6b, 0, 0);
+        assert!(!consumed);
+    }
+
+    #[test]
+    fn dispatch_focus_in_invokes_focus_in() {
+        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        d.dispatch_focus_in();
+        assert_eq!(d.engine_mut().lifecycle, vec!["focus_in"]);
+    }
+
+    #[test]
+    fn dispatch_focus_out_invokes_focus_out() {
+        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        d.dispatch_focus_out();
+        assert_eq!(d.engine_mut().lifecycle, vec!["focus_out"]);
+    }
+
+    #[test]
+    fn dispatch_enable_invokes_enable() {
+        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        d.dispatch_enable();
+        assert_eq!(d.engine_mut().lifecycle, vec!["enable"]);
+    }
+
+    #[test]
+    fn dispatch_disable_invokes_disable() {
+        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        d.dispatch_disable();
+        assert_eq!(d.engine_mut().lifecycle, vec!["disable"]);
+    }
+
+    #[test]
+    fn dispatch_reset_invokes_reset() {
+        let mut d = IBusEventDispatcher::new(MockEngine::new(KeyEventResult::Forwarded));
+        d.dispatch_reset();
+        assert_eq!(d.engine_mut().lifecycle, vec!["reset"]);
+    }
+}
