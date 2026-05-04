@@ -1,11 +1,11 @@
 ---
-title: Kotoha Phase 2 P2-A 設計書 — Dictionary layer (Sudachi-based)
-date: 2026-04-25
-status: draft
-phase: 2
-milestone: P2-A
-parent-spec: docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md
-revision: 1
+feature: p2-a-dictionary-layer
+status: implemented
+bounded_context: _uncategorized
+related_issues: ["#92", "#94", "#100"]
+related_prs: []
+glossary_refs: ["sudachi-dict", "backend-trait"]
+last_reviewed: 2026-05-05
 ---
 
 # Kotoha Phase 2 P2-A (Dictionary layer) 設計書
@@ -565,9 +565,9 @@ P2-A 実装と同一 PR に以下 4 件の docs 更新を含める。
 | 対象 | 内容 | 行数目安 |
 |---|---|---|
 | `docs/adr/0014-phase-2-dictionary-layer-architecture.md` D4 改訂 | 「P2-A kick-off で候補 1 / 候補 2 を選択」→「Phase 2 で 2 variants 追加(集約型 P2-A + Hybrid 再帰 wrap 型 P2-D)」 | +30 |
-| `docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md` 同期更新 | §3.4 / §4.2 / §6.3 / §7.3 を P2-A 確定方針に同期 | +95 |
+| `docs/specs/_uncategorized/kotoha-phase-2.md` 同期更新 | §3.4 / §4.2 / §6.3 / §7.3 を P2-A 確定方針に同期 | +95 |
 | `README.md` SudachiDict-core 取得手順 | manual placement 手順 + `KOTOHA_SYSTEM_DICT_PATH` 設定例 | +30 |
-| `docs/wiki/glossary.md` 用語追加 | MorphologicalEngine / VocabularyLookup / SudachiDict / 形態素解析 | +10 |
+| `$OBSIDIAN_VAULT_DIR/glossary/` 用語追加 | MorphologicalEngine / VocabularyLookup / SudachiDict / 形態素解析 | +10 |
 
 ADR 0014 と Phase 2 spec の改訂は本 P2-A PR の最後の commit にまとめ、設計判断の根拠として spec / ADR と実装が同一 PR で同期する構造とする。
 
@@ -605,7 +605,7 @@ P2-A 着手時点で未確定の論点を以下に列挙する。
 
 ### 11.1 上位 spec / ADR
 
-- 上位 spec(parent-spec): [`docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md`](./2026-04-25-kotoha-phase-2-design.md)
+- 上位 spec(parent-spec): [`docs/specs/_uncategorized/kotoha-phase-2.md`](./2026-04-25-kotoha-phase-2-design.md)
 - ADR 0014(Phase 2 dictionary layer architecture、本 P2-A で D4 改訂): [`docs/adr/0014-phase-2-dictionary-layer-architecture.md`](../../adr/0014-phase-2-dictionary-layer-architecture.md)
 - ADR 0011(`#[non_exhaustive]` enum 拡張の根拠): [`docs/adr/0011-kanji-backend-trait-design.md`](../../adr/0011-kanji-backend-trait-design.md)
 - ADR 0012(`default = []` feature flag 方針): [`docs/adr/0012-feature-flag-design-for-llama-cpp.md`](../../adr/0012-feature-flag-design-for-llama-cpp.md)

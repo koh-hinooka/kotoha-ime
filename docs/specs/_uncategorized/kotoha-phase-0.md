@@ -1,9 +1,11 @@
 ---
-title: Kotoha Phase 0 設計書 — ローマ字→かな変換コアと入力モード管理 + CLI
-date: 2026-04-22
-status: draft
-phase: 0
-revision: 2
+feature: kotoha-phase-0
+status: implemented
+bounded_context: _uncategorized
+related_issues: ["#1"]
+related_prs: []
+glossary_refs: []
+last_reviewed: 2026-05-05
 ---
 
 # Kotoha Phase 0 設計書
@@ -487,7 +489,7 @@ particle の位置を見て `wa` → `は` に変換する heuristic は、か�
 #### 9.3.5 関連セクション
 
 - §11.3 プロパティテスト: 本節で規定した pending 安定性は property test `prop_idempotence_on_committed` および convert 結合性 property の前提である。
-- 実装計画 Task M3b-2(`docs/superpowers/plans/2026-04-23-kotoha-phase-0-m3.md`): 本節の契約を検証する pending-tails fixture 行(`kon` / `koh` / `kos` / `kyak` / `tsuk` / `fuk` など 10 行)を定義する。
+- 実装計画 Task M3b-2(`docs/plans/2026-04-23-kotoha-phase-0-m3.md`): 本節の契約を検証する pending-tails fixture 行(`kon` / `koh` / `kos` / `kyak` / `tsuk` / `fuk` など 10 行)を定義する。
 
 ## 10. CLI 仕様
 

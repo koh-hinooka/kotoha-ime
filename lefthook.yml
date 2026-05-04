@@ -10,11 +10,16 @@
 pre-commit:
   parallel: true
   commands:
+    # シークレットスキャン (gitleaks): staged 差分の即時ブロック
+    secrets-scan:
+      run: gitleaks git --pre-commit --staged --redact --no-banner --verbose .
     fmt-check:
       glob: "*.rs"
       run: cargo fmt --all --check
+    # doc-naming script は canonical (~/.claude/templates/scripts/pre-commit-doc-naming.sh) で上書き済。
+    # script 内部で `git diff --cached --name-only --diff-filter=ACMR` で staged files を再取得するため
+    # lefthook の glob は不要 (二重責務回避)。
     doc-naming:
-      glob: "{docs/**/*.md,CLAUDE.md,**/CLAUDE.md}"
       run: ./scripts/pre-commit-doc-naming.sh
     # pre-commit-doc-naming.sh の awk ロジック (特に mawk での exit code 挙動) が
     # サイレントに壊れていた経緯があるため、常時自己テストを走らせて再発を防ぐ。
@@ -79,3 +84,7 @@ pre-push:
         else
           echo "lefthook: skip test-dict-persist (no crates/ yet; enforced from M2)"
         fi
+    # Obsidian vault 同期検証: spec frontmatter 厳密 + glossary 突合 + symlink 解決 + adr-index 反映
+    # OBSIDIAN_VAULT_DIR 未設定時は silent skip (exit 0)
+    obsidian-sync:
+      run: bash scripts/pre-push-obsidian-sync.sh

@@ -2,6 +2,31 @@
 
 Kotoha プロジェクトの開発フェーズと、各フェーズの到達目標を記録する。
 
+> **規約**: 本 ROADMAP は **常に 1 つ以上の Active マイルストーン** を持つ (Active 0 状態は禁止)。詳細: `~/.claude/CLAUDE.md` §Milestone Specification
+
+## Active マイルストーン
+
+### v0.3.0 — Phase 3 IBus integration
+
+**目標日**: 2026-08-31
+**開始日**: 2026-05-02
+
+#### 含まれる ISSUE と spec
+
+| ISSUE | spec | 状態 |
+|---|---|---|
+| [#174](https://github.com/std-koh-hinooka/kotoha-ime/issues/174) docs 構造改修と Obsidian vault 連携 | `docs/specs/_uncategorized/*` (8 spec frontmatter 整備) | [ ] |
+| [#149](https://github.com/std-koh-hinooka/kotoha-ime/issues/149) P3-B B0h-f: I3 dispatch_rank_request async-ification | `docs/specs/_uncategorized/p3-a-ibus-engine.md` | [ ] |
+| [#136](https://github.com/std-koh-hinooka/kotoha-ime/issues/136) P3-B B3 + B6: signal listener loop + L3 manual smoke | `docs/specs/_uncategorized/p3-a-ibus-engine.md` | [ ] |
+
+<!--
+更新ルール: ~/.claude/CLAUDE.md §post-merge follow-up checklist 参照
+- 機能完了 PR merge 後: 該当行の `[ ]` を `[x]` に更新
+- 仕様変更 (scope/粒度/遅延/前倒し/キャンセル): 該当行を直接編集
+- ISSUE/spec 追加: 行追加 (PR で commit)
+- 全行 [x] 達成: §Milestone Specification の完了条件 を実施し本セクションを「完了済」へ mv
+-->
+
 ## Phase 一覧
 
 ADR 0010 (`docs/adr/0010-kotoha-custom-romaji-base-model.md`) の決定により、2026-04-25 に旧 Phase 5 (Advanced features) を Phase 6 に、旧 Phase 6 (UX polish) を Phase 7 に後ろ倒しし、新 Phase 5「Kotoha custom romaji-base model」を挿入した。
@@ -19,7 +44,7 @@ ADR 0010 (`docs/adr/0010-kotoha-custom-romaji-base-model.md`) の決定により
 
 ## Phase 0 マイルストーン
 
-Phase 0 の詳細マイルストーン分割は `docs/superpowers/plans/2026-04-22-kotoha-phase-0-implementation.md` を参照。
+Phase 0 の詳細マイルストーン分割は `docs/plans/2026-04-22-kotoha-phase-0-implementation.md` を参照。
 
 ## Phase 0 → Phase 1 への申し送り
 
@@ -37,7 +62,7 @@ P1-4 (PR #84, merge `95e7df9`) での Phase 1 close 後、Phase 2 foundation doc
 
 ## Phase 2 マイルストーン分割
 
-Phase 2「Dictionary and learning」は 4 milestone に分割する。詳細は `docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md` および ADR 0014 を参照。各 milestone の exact スコープは P2-A kick-off で確定する。
+Phase 2「Dictionary and learning」は 4 milestone に分割する。詳細は `docs/specs/_uncategorized/kotoha-phase-2.md` および ADR 0014 を参照。各 milestone の exact スコープは P2-A kick-off で確定する。
 
 ### P2-A: Dictionary layer (完了、PR #97 / #99)
 
@@ -50,7 +75,7 @@ Phase 2「Dictionary and learning」は 4 milestone に分割する。詳細は 
 ### P2-B: User dictionary (完了、PR #98 / #102 / #104)
 
 - User dict entry 追加 / 削除 / 列挙 / 詳細取得の API
-- SQLite 永続化 (`kotoha-storage` 新 crate、共用 DB `kotoha.db`、ADR 0015 / P2-B spec `docs/superpowers/specs/2026-04-25-p2-b-user-dictionary-design.md` 参照)
+- SQLite 永続化 (`kotoha-storage` 新 crate、共用 DB `kotoha.db`、ADR 0015 / P2-B spec `docs/specs/_uncategorized/p2-b-user-dictionary.md` 参照)
 - CLI サブコマンド `kotoha-dict {add, remove, list, show}` の実装 (`update` / `import` / `export` / `init` は Phase 6+ で扱う、P2-B spec §3.8 参照)
 
 ### P2-C: Learning cache (完了、PR #106 + hardening #109/#111/#113/#115)
@@ -71,7 +96,7 @@ Phase 2「Dictionary and learning」は 4 milestone に分割する。詳細は 
 
 ## Phase 3 マイルストーン分割
 
-Phase 3「IBus integration」は P3-A(設計 + skeleton)と P3-B(production wiring + L3 manual smoke)の 2 段階に分割する。詳細は `docs/superpowers/specs/2026-05-02-p3-a-ibus-engine-design.md` および `docs/wbs/2026-05-02-phase3a-implementation.md` を参照。Phase 1 / Phase 2 と異なり、P3-A は「draft 完成」段階で 2 度の包括レビューにより機能完成宣言を取り下げ、P3-B B0g(silent-failure / security / testing residuals)+ B0h(architectural rework)で resolved した経緯を持つ。
+Phase 3「IBus integration」は P3-A(設計 + skeleton)と P3-B(production wiring + L3 manual smoke)の 2 段階に分割する。詳細は `docs/specs/_uncategorized/p3-a-ibus-engine.md` および `docs/wbs/2026-05-02-phase3a-implementation.md` を参照。Phase 1 / Phase 2 と異なり、P3-A は「draft 完成」段階で 2 度の包括レビューにより機能完成宣言を取り下げ、P3-B B0g(silent-failure / security / testing residuals)+ B0h(architectural rework)で resolved した経緯を持つ。
 
 ### P3-A: Design + skeleton (完了 draft、ISSUE #128 / PR #129〜#135)
 
@@ -112,7 +137,7 @@ Phase 3「IBus integration」は P3-A(設計 + skeleton)と P3-B(production wiri
 
 ## Phase 5 マイルストーン分割
 
-Phase 5「Kotoha custom romaji-base model」は 4 milestone に分割する。詳細は `docs/superpowers/specs/2026-04-25-kotoha-phase-5-custom-model.md` および ADR 0010 を参照。各 milestone の exact スコープは Phase 4 完了時の Phase 5 kick-off で確定する。
+Phase 5「Kotoha custom romaji-base model」は 4 milestone に分割する。詳細は `docs/specs/_uncategorized/kotoha-phase-5-custom-model.md` および ADR 0010 を参照。各 milestone の exact スコープは Phase 4 完了時の Phase 5 kick-off で確定する。
 
 ### P5-A: Data pipeline (工数目安 2〜4 週)
 
@@ -161,12 +186,40 @@ Data pipeline は kana→kanji ペアの大規模コーパス構築を担う。�
 ## 注記
 
 - Phase 5 への restructure (ADR 0010) により、旧 Phase 5 (Advanced features) は Phase 6 へ、旧 Phase 6 (UX polish) は Phase 7 へ後ろ倒しされた
-- 旧 Phase 5 の「Shift 挙動設定」は、Phase 0 設計書 (`docs/superpowers/specs/2026-04-22-kotoha-phase-0-design.md`) revision 2 の判断により Phase 0 に前倒し済み。新 Phase 6 の内容は「タイポ訂正 + 文脈リランキング」のみ
-- 各 Phase の設計書は `docs/superpowers/specs/` に配置する
+- 旧 Phase 5 の「Shift 挙動設定」は、Phase 0 設計書 (`docs/specs/_uncategorized/kotoha-phase-0.md`) revision 2 の判断により Phase 0 に前倒し済み。新 Phase 6 の内容は「タイポ訂正 + 文脈リランキング」のみ
+- 各 Phase の設計書は `docs/specs/_uncategorized/` に配置する
+
+## 完了済 (SemVer マッピング)
+
+### v0.0.0 — Phase 0 Foundation (完了 2026-04-23)
+
+| ISSUE | spec | 状態 |
+|---|---|---|
+| [#1](https://github.com/std-koh-hinooka/kotoha-ime/issues/1) Project setup + Phase 0 implementation | `docs/specs/_uncategorized/kotoha-phase-0.md` | [x] |
+
+### v0.1.0 — Phase 1 Kana→Kanji conversion (完了 2026-04-25 P1-4 close)
+
+| ISSUE | spec | 状態 |
+|---|---|---|
+| [#75](https://github.com/std-koh-hinooka/kotoha-ime/issues/75) P1-2.5 follow-up: Layer 3 smoke 14/15 達成 | `docs/specs/_uncategorized/kotoha-phase-1.md` | [x] |
+| [#83](https://github.com/std-koh-hinooka/kotoha-ime/issues/83) P1-4 phase1 wrap (ADR 0011〜0013 起票) | `docs/specs/_uncategorized/kotoha-phase-1.md` | [x] |
+
+### v0.2.0 — Phase 2 Dictionary and learning (完了 2026-05-02、test 416 PASS、`be0fae9`)
+
+| ISSUE | spec | 状態 |
+|---|---|---|
+| [#85](https://github.com/std-koh-hinooka/kotoha-ime/issues/85) Phase 2 foundation docs | `docs/specs/_uncategorized/kotoha-phase-2.md` | [x] |
+| P2-A〜P2-D 全 milestone | `docs/specs/_uncategorized/p2-a-dictionary-layer.md`、`p2-b-user-dictionary.md`、`p2-c-learning-cache.md` | [x] |
+
+<!--
+注: v0.0.0 / v0.1.0 / v0.2.0 の遡及 SemVer mapping waiver は ADR 0019 §D 参照。
+v0.3.0 以降は §Milestone Specification 完了条件 (annotated tag + リリース ADR) を厳密適用する。
+-->
 
 ## 改訂履歴
 
 | 日付 | 改訂内容 |
 |------|----------|
+| 2026-05-05 | docs 構造移行 (PR #174): Active マイルストーン v0.3.0 table 化、完了済 v0.0.0/v0.1.0/v0.2.0 を SemVer マッピングで table 化、spec 参照を新パス (`docs/specs/_uncategorized/`) に更新 |
 | 2026-05-04 | Phase 2 を「完了」に、Phase 3 を「進行中」に更新。Phase 3 マイルストーン分割 section を新設(P3-A draft + P3-B B0/B0g/B0h-a〜e/B1/B2/B4/B5 完了、B0h-f / B3 / B6 残)。Phase 2 各 milestone entry に merge PR 番号を追記(ISSUE #172 / PR 後続) |
 | 2026-04-25 | ADR 0010 で旧 Phase 5/6 を 6/7 に後ろ倒し、新 Phase 5「Kotoha custom romaji-base model」を挿入(初版) |
