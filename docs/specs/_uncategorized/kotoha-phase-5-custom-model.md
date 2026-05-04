@@ -4,7 +4,7 @@ status: draft
 bounded_context: _uncategorized
 related_issues: []
 related_prs: []
-glossary_refs: ["kotoha-native", "data-pipeline", "distillation", "gguf"]
+glossary_refs: ["distillation", "gguf"]
 last_reviewed: 2026-05-05
 ---
 
@@ -446,7 +446,7 @@ P5-A kick-off 前の empirical PoC で baseline を測定し、本 Open question
 
 - ADR 0010 (Phase 5 方針決定): `docs/adr/0010-kotoha-custom-romaji-base-model.md`
 - ROADMAP restructure 反映先: `docs/ROADMAP.md` Phase 一覧 + Phase 5 マイルストーン分割節
-- Phase 1 設計書 (14/15 baseline の根拠): `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md`
+- Phase 1 設計書 (14/15 baseline の根拠): `docs/specs/_uncategorized/kotoha-phase-1.md`
 - Phase 1 P1-2.5 follow-up 実装ログ (row 3 ICL 限界の empirical 記録): `docs/wbs/2026-04-24-feature-75-prompt-optimization-15-row-fixture.md`
 - ADR 0009 prep note (Gemma-2-2B-jpn-it pivot): `docs/adr/0009-kanji-backend-model-selection-prep.md`
 - Karukan (参照設計): <https://github.com/akaza-im/karukan> (jinen-v1-small の PUA special tokens + 外部 HuggingFace tokenizer 実装)

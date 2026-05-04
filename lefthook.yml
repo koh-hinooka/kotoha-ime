@@ -12,7 +12,6 @@ pre-commit:
   commands:
     # シークレットスキャン (gitleaks): staged 差分の即時ブロック
     secrets-scan:
-      tags: security
       run: gitleaks git --pre-commit --staged --redact --no-banner --verbose .
     fmt-check:
       glob: "*.rs"
@@ -88,5 +87,4 @@ pre-push:
     # Obsidian vault 同期検証: spec frontmatter 厳密 + glossary 突合 + symlink 解決 + adr-index 反映
     # OBSIDIAN_VAULT_DIR 未設定時は silent skip (exit 0)
     obsidian-sync:
-      tags: docs
       run: bash scripts/pre-push-obsidian-sync.sh

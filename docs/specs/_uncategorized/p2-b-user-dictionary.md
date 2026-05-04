@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: []
 related_prs: []
-glossary_refs: ["user-dict", "kotoha-storage"]
+glossary_refs: ["user-dictionary", "kotoha-storage"]
 last_reviewed: 2026-05-05
 ---
 
@@ -986,8 +986,8 @@ ROADMAP §P2-B は工数目安 3〜5 day としていたが、本 spec で 6.5 d
 
 ### 12.1 上位 spec / ADR
 
-- 上位 spec(parent-spec): [`docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md`](./2026-04-25-kotoha-phase-2-design.md)
-- 兄弟 spec(P2-A、`VocabularyLookup` trait の先出し根拠): [`docs/superpowers/specs/2026-04-25-p2-a-dictionary-layer-design.md`](./2026-04-25-p2-a-dictionary-layer-design.md)
+- 上位 spec(parent-spec): [`docs/specs/_uncategorized/kotoha-phase-2.md`](./2026-04-25-kotoha-phase-2-design.md)
+- 兄弟 spec(P2-A、`VocabularyLookup` trait の先出し根拠): [`docs/specs/_uncategorized/p2-a-dictionary-layer.md`](./2026-04-25-p2-a-dictionary-layer-design.md)
 - ADR 0014(Phase 2 dictionary layer architecture、本 P2-B docs PR で D7 改訂): [`docs/adr/0014-phase-2-dictionary-layer-architecture.md`](../../adr/0014-phase-2-dictionary-layer-architecture.md)
 - ADR 0015(`kotoha-storage` SQLite 採用、本 P2-B docs PR で新規起票): [`docs/adr/0015-kotoha-storage-sqlite-adoption.md`](../../adr/0015-kotoha-storage-sqlite-adoption.md)
 - ADR 0011(`#[non_exhaustive]` enum 拡張、`DictionaryConfig` field 追加の根拠): [`docs/adr/0011-kanji-backend-trait-design.md`](../../adr/0011-kanji-backend-trait-design.md)

@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#75", "#83"]
 related_prs: []
-glossary_refs: ["llama-cpp", "gemma-2-jpn-it", "kana-to-kanji", "layer-3-smoke"]
+glossary_refs: ["llama-cpp-backend", "gemma-2-2b-jpn-it", "kana-kanji-conversion", "layer-3-smoke"]
 last_reviewed: 2026-05-05
 ---
 
@@ -908,8 +908,8 @@ Phase 2 (Dictionary and learning) kick-off 可能。
 
 ## 15. 参照
 
-- Phase 0 spec: `docs/superpowers/specs/2026-04-22-kotoha-phase-0-design.md` §16 (Phase 1 への橋渡し)
-- Phase 0 overall plan: `docs/superpowers/plans/2026-04-22-kotoha-phase-0-implementation.md`
+- Phase 0 spec: `docs/specs/_uncategorized/kotoha-phase-0.md` §16 (Phase 1 への橋渡し)
+- Phase 0 overall plan: `docs/plans/2026-04-22-kotoha-phase-0-implementation.md`
 - ADR 0002 (input mode Transient vs Sticky): `docs/adr/0002-input-mode-transient-vs-sticky.md`
 - ADR 0005 (romaji Trie over HashMap): `docs/adr/0005-romaji-trie-over-hashmap.md`
 - ADR 0008 (canonical romaji Phase 1 判断 = 選択肢 1 採用): `docs/adr/0008-canonical-romaji-and-partial-invertibility.md`

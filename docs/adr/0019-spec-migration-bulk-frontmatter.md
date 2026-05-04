@@ -40,7 +40,26 @@ The 35 entries under `docs/wbs/` are kept as historical artifacts of the project
 - Existing entries remain as reference material. They are not migrated to any other location (they are implementation logs, not specs).
 - The project `CLAUDE.md` `WBS 直接 push の例外` clause is preserved for **edits to existing WBS files only** (typo fixes and post-merge log updates), not for new file creation.
 
-The exception expires when the legacy WBS material is no longer being referenced from active spec / plan / commit message bodies. A cleanup PR may then move `docs/wbs/` to `docs/_archive/wbs/` or remove it entirely.
+#### Exit conditions (machine-checkable)
+
+The exception expires when **both** conditions hold:
+
+1. **No active reference**: `grep -rE 'docs/wbs/[0-9]' docs/specs/ docs/plans/ docs/adr/` returns 0 lines (no spec / plan / ADR body references the legacy WBS files).
+2. **No new entries since the deadline**: `git log --oneline --since='2026-12-31' -- docs/wbs/` returns 0 lines (no commit added or modified WBS files past 2026-12-31).
+
+When both hold, a cleanup PR moves `docs/wbs/` to `docs/_archive/wbs/` (preserving git history) and removes the `WBS 直接 push の例外` clause from `CLAUDE.md`. The cleanup PR is the **owner: project lead** action item; if condition (1) is satisfied earlier than 2026-12-31, the cleanup may be advanced.
+
+#### Mechanical enforcement of "no new WBS entries"
+
+Enforcement of the new-entry ban is **not yet machine-checked** in this PR. A follow-up ISSUE will add to the canonical `scripts/pre-commit-doc-naming.sh`:
+
+```bash
+# Block addition of NEW files under docs/wbs/ (allow modification of existing files)
+NEW_WBS=$(git diff --cached --name-only --diff-filter=A | grep '^docs/wbs/.*\.md$' || true)
+[ -n "$NEW_WBS" ] && ERRORS+=("WBS 新規起票禁止 (global rule + ADR 0019): $NEW_WBS — TaskCreate を使用してください")
+```
+
+This is deferred to a separate PR because it is canonical-script scope (affects all 12 projects).
 
 ### C. Glossary partial migration (canonical relocation, no content rewrite)
 
@@ -63,8 +82,20 @@ The original `docs/wiki/glossary.md` file is removed after migration. The `docs/
   - Cross-link `glossary_refs` in spec frontmatter to vault concept files
   - Avoid creating new WBS entries (use in-conversation `TaskCreate` instead)
 
+### D. Retroactive SemVer mapping waiver
+
+This PR back-fills SemVer milestones into `docs/ROADMAP.md` "完了済" section: `v0.0.0` (Phase 0 Foundation), `v0.1.0` (Phase 1 Kana→Kanji conversion), and `v0.2.0` (Phase 2 Dictionary and learning). The global `~/.claude/CLAUDE.md` §Milestone Specification completion criteria require, for each milestone, an annotated git tag (`vX.Y.Z`) AND a release ADR (`docs/adr/NNNN-release-vX.Y.Z.md`).
+
+For these three back-filled milestones, the requirements are **waived** with the following rationale:
+
+1. The original tag-time HEAD cannot be reconstructed reliably (the SemVer label was not in use when the milestones merged; choosing a commit retroactively would introduce a release marker that diverges from the actual deploy boundary)
+2. A retroactive release ADR would describe historical decisions reconstructed after the fact and would not benefit the current codebase
+3. The follow-up enforcement value (audit trail, traceability) is satisfied by ROADMAP entries and the existing per-Phase ADRs (0001〜0018)
+
+The §Milestone Specification completion criteria are **strictly enforced from `v0.3.0` onward** (the active milestone in this PR). This waiver follows the precedent of `koh-hinooka/infrastructure#30` ADR 0002 §"v1.0.0 / v1.1.0 リリース ADR の遡及不要決定" with the same three-point rationale.
+
 ## References
 
 - Pilot ADR lineage: `MitraDataScience/MITRA_X#1212` ADR 0001 (bulk frontmatter); `koh-hinooka/infrastructure#30` ADR 0002 (bulk frontmatter + cloud-sql exit strategy + retroactive release ADR waiver)
-- Global rules: `~/.claude/CLAUDE.md` §Documentation Structure / §Spec Frontmatter / §Spec Clustering / §Persistent Memory ("What Goes Where")
+- Global rules: `~/.claude/CLAUDE.md` §Documentation Structure / §Spec Frontmatter / §Spec Clustering / §Persistent Memory ("What Goes Where") / §Milestone Specification
 - Project rules: `CLAUDE.md` `Language 例外` (English doc convention) and `WBS 直接 push の例外` (now narrowed to existing-file edits only)

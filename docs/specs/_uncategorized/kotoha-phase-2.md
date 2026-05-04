@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#85", "#172"]
 related_prs: []
-glossary_refs: ["dictionary-backend", "user-dict", "learning-cache", "hybrid-ranker"]
+glossary_refs: ["backend-trait", "user-dictionary", "learning-cache", "hybrid-ranker"]
 last_reviewed: 2026-05-05
 ---
 
@@ -104,7 +104,7 @@ Learning cache は ユーザが選択した変換履歴を保持する。
   - `chosen_kanji`: ユーザが確定した surface (漢字交じり)
   - `frequency`: 選択回数の累積 (u32)
   - `last_used_at`: 最終選択時刻 (UNIX epoch seconds)
-- **persistence**: P2-B で SQLite を採用する (ADR 0015、2026-04-25 確定)。Phase 2 全体で単一 DB ファイル `kotoha.db` を共用し、Learning cache は `learning_cache` table に格納する。table schema は P2-B 着地時に v001 migration として同梱し、insert / update / lookup / eviction の実装は P2-C で行う。詳細は ADR 0015 / P2-B spec (`docs/superpowers/specs/2026-04-25-p2-b-user-dictionary-design.md`) §5 を参照
+- **persistence**: P2-B で SQLite を採用する (ADR 0015、2026-04-25 確定)。Phase 2 全体で単一 DB ファイル `kotoha.db` を共用し、Learning cache は `learning_cache` table に格納する。table schema は P2-B 着地時に v001 migration として同梱し、insert / update / lookup / eviction の実装は P2-C で行う。詳細は ADR 0015 / P2-B spec (`docs/specs/_uncategorized/p2-b-user-dictionary.md`) §5 を参照
 - **load/save timing**: SQLite WAL モード採用により、起動時 / shutdown 時の bulk load / save は不要となる。各 user 操作 ごとに `INSERT OR REPLACE` で永続化する設計を P2-C で確定する。Phase 3 IBus 統合では plugin life cycle hook で `Database::open` / `Drop` の境界を扱う
 - **eviction / pruning policy**: LRU 上限 (例: 10,000 entry) を超過した場合、`last_used_at` が最古の entry を `DELETE` する。上限値は P2-C で empirical 確定する。`idx_learning_cache_last_used` index は v002 schema (P2-C) で追加予定
 
@@ -135,7 +135,7 @@ Phase 2 は ADR 0011 で確定した `BackendConfig` enum の `#[non_exhaustive]
 
 Phase 1 の `BackendConfig::LlamaCpp { model_path, prompt_template }` と `BackendConfig::Mock` は変更しない。
 
-P2-A 範囲の詳細(`DictionaryConfig` の正式 schema、`MorphologicalEngine` / `VocabularyLookup` trait 構成、feature flag 命名)は子 spec `docs/superpowers/specs/2026-04-25-kotoha-phase-2-p2-a-dictionary-foundation.md` §3.3 / §4.2 に委譲する。P2-D 範囲の `Hybrid { llm, dict, learning }` 詳細(Ranker 重み確定、Learning cache integration)は P2-D 着手時に追補 spec で確定する。
+P2-A 範囲の詳細(`DictionaryConfig` の正式 schema、`MorphologicalEngine` / `VocabularyLookup` trait 構成、feature flag 命名)は子 spec `docs/specs/_uncategorized/kotoha-phase-2-p2-a-dictionary-foundation.md` §3.3 / §4.2 に委譲する。P2-D 範囲の `Hybrid { llm, dict, learning }` 詳細(Ranker 重み確定、Learning cache integration)は P2-D 着手時に追補 spec で確定する。
 
 ## 4. Dictionary 設計
 
@@ -170,7 +170,7 @@ Phase 2 P2-A は形態素解析と vocabulary lookup の責務分離のため、
 - **`MorphologicalEngine`**: 形態素解析 engine の抽象境界 trait。`tokenize(reading) -> Vec<EngineCandidate>` と `engine_id() -> &str` を提供する。P2-A は `SudachiAdapter` 実装のみを伴うが、Phase 5 以降で vibrato / lindera 等の差し替え余地を確保する目的で先出しする
 - **`VocabularyLookup`**: user / custom vocabulary lookup の抽象境界 trait。`lookup(reading) -> Vec<VocabEntry>` と `vocab_id() -> &str` を提供する。P2-A は `CustomVocab`(TSV reader)実装のみを伴い、P2-B で `UserVocab` が同 trait を実装する extension path を確保する
 
-両 trait の正式 signature、実装 struct (`SudachiAdapter` / `CustomVocab`)、resources 配置、feature flag 命名は子 spec `docs/superpowers/specs/2026-04-25-kotoha-phase-2-p2-a-dictionary-foundation.md` §4.2 に委譲する。本 spec は親 spec として方針整合のみを保つ。
+両 trait の正式 signature、実装 struct (`SudachiAdapter` / `CustomVocab`)、resources 配置、feature flag 命名は子 spec `docs/specs/_uncategorized/kotoha-phase-2-p2-a-dictionary-foundation.md` §4.2 に委譲する。本 spec は親 spec として方針整合のみを保つ。
 
 ### 4.3 bundling vs runtime download
 
@@ -271,10 +271,10 @@ Dictionary layer の配置方針は 2 案ある。
 
 default 案は「案 1 の kotoha-core 内配置 + feature flag `dict` で隔離」とする。Phase 2 の実装量が案 1 の想定を超えた場合、P2-D で案 2 への migration を検討する。
 
-P2-A 子 spec で確定済の feature flag 構成は以下のとおり (子 spec `docs/superpowers/specs/2026-04-25-kotoha-phase-2-p2-a-dictionary-foundation.md` §7.3 から同期)。
+P2-A 子 spec で確定済の feature flag 構成は以下のとおり (子 spec `docs/specs/_uncategorized/kotoha-phase-2-p2-a-dictionary-foundation.md` §7.3 から同期)。
 
 - **`dict`** feature: 形態素解析 + vocabulary lookup を有効化する。SudachiDict-core を runtime load する `SudachiAdapter` と `CustomVocab` (TSV reader) を expose する。`default = []` 方針 (ADR 0012 D5) に従い opt-in
-- **`dict-smoke`** feature: 530-case golden fixture を実 SudachiDict 辞書で end-to-end 評価する Layer 3 経路を有効化する。Phase 2 P2-A 範囲では runner 本体を実装せず、ISSUE #92 で別 PR にて活用する (`docs/wiki/glossary.md` で参照する Opt-in smoke パターンに従う)。`KOTOHA_SYSTEM_DICT_PATH` 環境変数を必須前提とする
+- **`dict-smoke`** feature: 530-case golden fixture を実 SudachiDict 辞書で end-to-end 評価する Layer 3 経路を有効化する。Phase 2 P2-A 範囲では runner 本体を実装せず、ISSUE #92 で別 PR にて活用する (`$OBSIDIAN_VAULT_DIR/glossary/` で参照する Opt-in smoke パターンに従う)。`KOTOHA_SYSTEM_DICT_PATH` 環境変数を必須前提とする
 
 Phase 2 P2-A 段階では `dict` feature のみが活性であり、`dict-smoke` feature gate 自体は将来用に予約する位置付けとする。詳細は ISSUE #92 で扱う。
 
@@ -301,7 +301,7 @@ Layer 2 (GGUF なし) で完結し、`llama-cpp` feature 非依存で動作す�
 
 ### 7.3 golden fixture
 
-Phase 2 P2-A の golden fixture は **2 段構成 (targeted 30 + bulk 500)、合計 530 cases** を整備する (子 spec `docs/superpowers/specs/2026-04-25-kotoha-phase-2-p2-a-dictionary-foundation.md` §6.3 から同期)。
+Phase 2 P2-A の golden fixture は **2 段構成 (targeted 30 + bulk 500)、合計 530 cases** を整備する (子 spec `docs/specs/_uncategorized/kotoha-phase-2-p2-a-dictionary-foundation.md` §6.3 から同期)。
 
 - **targeted 30**: Layer 1 / Layer 2 unit / integration テスト用の手作りケース。以下 4 カテゴリで構成する
   - 敬称: 「たなか さん → 田中 さん」「すずき さま → 鈴木 様」等、10+ cases
@@ -373,8 +373,8 @@ Q6 は Phase 5 spec §9 Q6 と相互参照する。Phase 2 で Dictionary / Lear
 - ADR 0013 (latency policy): `docs/adr/0013-phase-1-latency-target.md`
 - ADR 0010 (Phase 5 custom model 方針): `docs/adr/0010-kotoha-custom-romaji-base-model.md`
 - ADR 0009 (Phase 1 default model): `docs/adr/0009-phase-1-default-model-selection.md`
-- Phase 1 設計書 (14/15 baseline の根拠): `docs/superpowers/specs/2026-04-24-kotoha-phase-1-design.md`
-- Phase 5 設計書 (stub): `docs/superpowers/specs/2026-04-25-kotoha-phase-5-custom-model.md`
+- Phase 1 設計書 (14/15 baseline の根拠): `docs/specs/_uncategorized/kotoha-phase-1.md`
+- Phase 5 設計書 (stub): `docs/specs/_uncategorized/kotoha-phase-5-custom-model.md`
 - Phase 1 P1-2.5 follow-up 実装ログ (row 3 ICL 限界の empirical 記録): `docs/wbs/2026-04-24-feature-75-prompt-optimization-15-row-fixture.md`
 - Phase 1 close 記録: `docs/wbs/2026-04-25-docs-83-p1-4-phase1-wrap.md`
 - ROADMAP restructure 反映先: `docs/ROADMAP.md` Phase 一覧 + Phase 2 マイルストーン分割節

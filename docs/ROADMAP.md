@@ -44,7 +44,7 @@ ADR 0010 (`docs/adr/0010-kotoha-custom-romaji-base-model.md`) の決定により
 
 ## Phase 0 マイルストーン
 
-Phase 0 の詳細マイルストーン分割は `docs/superpowers/plans/2026-04-22-kotoha-phase-0-implementation.md` を参照。
+Phase 0 の詳細マイルストーン分割は `docs/plans/2026-04-22-kotoha-phase-0-implementation.md` を参照。
 
 ## Phase 0 → Phase 1 への申し送り
 
@@ -62,7 +62,7 @@ P1-4 (PR #84, merge `95e7df9`) での Phase 1 close 後、Phase 2 foundation doc
 
 ## Phase 2 マイルストーン分割
 
-Phase 2「Dictionary and learning」は 4 milestone に分割する。詳細は `docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md` および ADR 0014 を参照。各 milestone の exact スコープは P2-A kick-off で確定する。
+Phase 2「Dictionary and learning」は 4 milestone に分割する。詳細は `docs/specs/_uncategorized/kotoha-phase-2.md` および ADR 0014 を参照。各 milestone の exact スコープは P2-A kick-off で確定する。
 
 ### P2-A: Dictionary layer (完了、PR #97 / #99)
 
@@ -75,7 +75,7 @@ Phase 2「Dictionary and learning」は 4 milestone に分割する。詳細は 
 ### P2-B: User dictionary (完了、PR #98 / #102 / #104)
 
 - User dict entry 追加 / 削除 / 列挙 / 詳細取得の API
-- SQLite 永続化 (`kotoha-storage` 新 crate、共用 DB `kotoha.db`、ADR 0015 / P2-B spec `docs/superpowers/specs/2026-04-25-p2-b-user-dictionary-design.md` 参照)
+- SQLite 永続化 (`kotoha-storage` 新 crate、共用 DB `kotoha.db`、ADR 0015 / P2-B spec `docs/specs/_uncategorized/p2-b-user-dictionary.md` 参照)
 - CLI サブコマンド `kotoha-dict {add, remove, list, show}` の実装 (`update` / `import` / `export` / `init` は Phase 6+ で扱う、P2-B spec §3.8 参照)
 
 ### P2-C: Learning cache (完了、PR #106 + hardening #109/#111/#113/#115)
@@ -96,7 +96,7 @@ Phase 2「Dictionary and learning」は 4 milestone に分割する。詳細は 
 
 ## Phase 3 マイルストーン分割
 
-Phase 3「IBus integration」は P3-A(設計 + skeleton)と P3-B(production wiring + L3 manual smoke)の 2 段階に分割する。詳細は `docs/superpowers/specs/2026-05-02-p3-a-ibus-engine-design.md` および `docs/wbs/2026-05-02-phase3a-implementation.md` を参照。Phase 1 / Phase 2 と異なり、P3-A は「draft 完成」段階で 2 度の包括レビューにより機能完成宣言を取り下げ、P3-B B0g(silent-failure / security / testing residuals)+ B0h(architectural rework)で resolved した経緯を持つ。
+Phase 3「IBus integration」は P3-A(設計 + skeleton)と P3-B(production wiring + L3 manual smoke)の 2 段階に分割する。詳細は `docs/specs/_uncategorized/p3-a-ibus-engine.md` および `docs/wbs/2026-05-02-phase3a-implementation.md` を参照。Phase 1 / Phase 2 と異なり、P3-A は「draft 完成」段階で 2 度の包括レビューにより機能完成宣言を取り下げ、P3-B B0g(silent-failure / security / testing residuals)+ B0h(architectural rework)で resolved した経緯を持つ。
 
 ### P3-A: Design + skeleton (完了 draft、ISSUE #128 / PR #129〜#135)
 
@@ -137,7 +137,7 @@ Phase 3「IBus integration」は P3-A(設計 + skeleton)と P3-B(production wiri
 
 ## Phase 5 マイルストーン分割
 
-Phase 5「Kotoha custom romaji-base model」は 4 milestone に分割する。詳細は `docs/superpowers/specs/2026-04-25-kotoha-phase-5-custom-model.md` および ADR 0010 を参照。各 milestone の exact スコープは Phase 4 完了時の Phase 5 kick-off で確定する。
+Phase 5「Kotoha custom romaji-base model」は 4 milestone に分割する。詳細は `docs/specs/_uncategorized/kotoha-phase-5-custom-model.md` および ADR 0010 を参照。各 milestone の exact スコープは Phase 4 完了時の Phase 5 kick-off で確定する。
 
 ### P5-A: Data pipeline (工数目安 2〜4 週)
 
@@ -186,8 +186,8 @@ Data pipeline は kana→kanji ペアの大規模コーパス構築を担う。�
 ## 注記
 
 - Phase 5 への restructure (ADR 0010) により、旧 Phase 5 (Advanced features) は Phase 6 へ、旧 Phase 6 (UX polish) は Phase 7 へ後ろ倒しされた
-- 旧 Phase 5 の「Shift 挙動設定」は、Phase 0 設計書 (`docs/superpowers/specs/2026-04-22-kotoha-phase-0-design.md`) revision 2 の判断により Phase 0 に前倒し済み。新 Phase 6 の内容は「タイポ訂正 + 文脈リランキング」のみ
-- 各 Phase の設計書は `docs/superpowers/specs/` に配置する
+- 旧 Phase 5 の「Shift 挙動設定」は、Phase 0 設計書 (`docs/specs/_uncategorized/kotoha-phase-0.md`) revision 2 の判断により Phase 0 に前倒し済み。新 Phase 6 の内容は「タイポ訂正 + 文脈リランキング」のみ
+- 各 Phase の設計書は `docs/specs/_uncategorized/` に配置する
 
 ## 完了済 (SemVer マッピング)
 
@@ -212,10 +212,8 @@ Data pipeline は kana→kanji ペアの大規模コーパス構築を担う。�
 | P2-A〜P2-D 全 milestone | `docs/specs/_uncategorized/p2-a-dictionary-layer.md`、`p2-b-user-dictionary.md`、`p2-c-learning-cache.md` | [x] |
 
 <!--
-注: v0.0.0 / v0.1.0 / v0.2.0 は本 PR (#174) で SemVer マッピングを後付けした。
-git tag (annotated) とリリース ADR の遡及対応は不要 (詳細: docs/adr/0019-spec-migration-bulk-frontmatter.md と同方針、
-infrastructure#30 ADR 0002 で確立した「事後 SemVer は遡及 tag/ADR 不要」運用に従う)。
-v0.3.0 以降は §Milestone Specification 完了条件を厳密適用する。
+注: v0.0.0 / v0.1.0 / v0.2.0 の遡及 SemVer mapping waiver は ADR 0019 §D 参照。
+v0.3.0 以降は §Milestone Specification 完了条件 (annotated tag + リリース ADR) を厳密適用する。
 -->
 
 ## 改訂履歴

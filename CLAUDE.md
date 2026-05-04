@@ -68,9 +68,10 @@ global CLAUDE.md は「commit message / PR / ISSUE は日本語」だが、**Kot
 現在の Phase、完了条件、マイルストーン分割は以下を参照:
 
 - `docs/ROADMAP.md` — Phase 全体像 + Active マイルストーン (v0.3.0 = Phase 3) 含む SemVer マッピング
-- `docs/specs/_uncategorized/` — 各 Phase の設計書 (kotoha-phase-{0,1,2,5}, p2-{a,b,c}, p3-a-ibus-engine)
+- `docs/specs/_uncategorized/` — 各 Phase の設計書 (kotoha-phase-{0,1,2,5}, p2-{a,b,c}, p3-a-ibus-engine、将来 cluster 化は global §Spec Clustering 参照)
 - `docs/plans/` — マイルストーン単位の実装計画 (Branch-scoped: `<yyyy-MM-dd>-<branch>.md`)
-- `docs/wbs/` — 実装ログ (本 project 例外、ADR 0019 参照)
+- `docs/wbs/` — 過去の実装ログ (本 project 例外、ADR 0019 参照)
+- post-merge 必須項目: global §post-merge follow-up checklist 参照 (Spec status / Glossary 同期 / ROADMAP / Vault 同期 / マイルストーン完了判定)
 
 ## Obsidian vault
 
@@ -84,7 +85,7 @@ global CLAUDE.md は「commit message / PR / ISSUE は日本語」だが、**Kot
 WBS ログ(`docs/wbs/*.md`)は本 project 例外として保持される (ADR 0019)。global rules では WBS は廃止だが、Kotoha は 35 件の歴史的実装ログを抱えるため以下を許容する:
 
 - **既存 WBS ファイルへの軽微編集** (typo fix、merge 後の log 追記等): 対象 PR の merge 後に develop へ直接 push 可
-- **新規 WBS 起票は禁止**: 全ての per-task 状態追跡は in-conversation `TaskCreate` (global rule §Persistent Memory) を使用
+- **新規 WBS 起票は禁止**: 既存 WBS file は過去ログとして保持、新規の進行中作業の追跡は in-conversation `TaskCreate` (global rule §Persistent Memory) を使用
 
 例外解消時期: 既存 WBS が active spec / plan / commit message から参照されなくなった時点で `docs/_archive/wbs/` へ移動または削除 (cleanup PR)。
 

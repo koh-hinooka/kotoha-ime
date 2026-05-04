@@ -4,7 +4,7 @@ status: draft
 bounded_context: _uncategorized
 related_issues: ["#128", "#136", "#149"]
 related_prs: []
-glossary_refs: ["ibus-engine", "ranker-worker", "ibus-host-bridge", "kotoha-engine-core"]
+glossary_refs: ["phase3-ibus-engine-terms", "ranker-worker", "ime-host-bridge", "kotoha-engine"]
 last_reviewed: 2026-05-05
 ---
 
@@ -17,7 +17,7 @@ last_reviewed: 2026-05-05
 | 起票日 | 2026-05-02 |
 | Status | Draft |
 | 関連 ADR(候補) | 0017(IBus engine API surface and async modality)、0018(Ranker invocation contract) |
-| 前提 spec | `docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md` §3.3 / §11、`docs/superpowers/specs/2026-04-26-p2-c-learning-cache-design.md` |
+| 前提 spec | `docs/specs/_uncategorized/kotoha-phase-2.md` §3.3 / §11、`docs/specs/_uncategorized/p2-c-learning-cache.md` |
 | 関連 handoff | `.claude/projects/-home-kohshiro-develops-student-kotoha-ime/memory/project_session_handoff_2026-04-28.md` |
 
 ## 目次
@@ -758,7 +758,7 @@ Phase 3-A 本番実装完了時、以下を baseline とする:
 
 ## §11 implementation roadmap(高レベル sequence)
 
-本 spec は spec-only PR として merge し、後続 milestone を以下の順で進める。詳細 plan は本 spec merge 後に `docs/superpowers/plans/` で別途起票する。
+本 spec は spec-only PR として merge し、後続 milestone を以下の順で進める。詳細 plan は本 spec merge 後に `docs/plans/` で別途起票する。
 
 ```text
 [本 spec PR(small tier、code change 0)]
@@ -864,13 +864,13 @@ Task A と Task B は実装規模が小さく(各 1 PR)、統合 PR にしても
 
 - handoff: `.claude/projects/-home-kohshiro-develops-student-kotoha-ime/memory/project_session_handoff_2026-04-28.md`
 - ROADMAP: `docs/ROADMAP.md` Phase 3 entry
-- Phase 2 design spec: `docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md` §3.3 / §11
-- P2-C design spec: `docs/superpowers/specs/2026-04-26-p2-c-learning-cache-design.md`
+- Phase 2 design spec: `docs/specs/_uncategorized/kotoha-phase-2.md` §3.3 / §11
+- P2-C design spec: `docs/specs/_uncategorized/p2-c-learning-cache.md`
 - ADR 0005: `docs/adr/0005-romaji-trie-over-hashmap.md`
 - ADR 0011: `docs/adr/0011-kanji-backend-trait-design.md`
 - ADR 0014: `docs/adr/0014-phase-2-dictionary-layer-architecture.md`
 - ADR 0015: `docs/adr/0015-kotoha-storage-sqlite-adoption.md`
-- glossary: `docs/wiki/glossary.md`
+- glossary: `$OBSIDIAN_VAULT_DIR/glossary/`
 - IBus protocol: https://github.com/ibus/ibus/wiki/IBusEngine
 - fcitx5(future ref): https://github.com/fcitx/fcitx5/wiki
 

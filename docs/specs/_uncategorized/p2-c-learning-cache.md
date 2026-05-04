@@ -522,7 +522,7 @@ impl Database {
 
 ```sql
 -- crates/kotoha-storage/migrations/v002_learning_cache_index.sql
--- spec: docs/superpowers/specs/2026-04-26-p2-c-learning-cache-design.md §4.1
+-- spec: docs/specs/_uncategorized/p2-c-learning-cache.md §4.1
 
 CREATE INDEX idx_learning_cache_last_used ON learning_cache(last_used_at);
 ```
@@ -1006,8 +1006,8 @@ P2-D(Hybrid backend / Ranker 統合)の着手前に LearningCache の本実装 +
 
 - `docs/adr/0014-phase-2-dictionary-layer-architecture.md` — Phase 2 dictionary layer の全体 ADR
 - `docs/adr/0015-kotoha-storage-sqlite-adoption.md` — kotoha-storage SQLite 採用根拠
-- `docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md` §3.2 / §5.2 / §6.3 — Phase 2 全体 spec の LearningCache 関連節
-- `docs/superpowers/specs/2026-04-25-p2-b-user-dictionary-design.md` §5.2 / §6.3 — P2-B の schema 設計と trait 定義
+- `docs/specs/_uncategorized/kotoha-phase-2.md` §3.2 / §5.2 / §6.3 — Phase 2 全体 spec の LearningCache 関連節
+- `docs/specs/_uncategorized/p2-b-user-dictionary.md` §5.2 / §6.3 — P2-B の schema 設計と trait 定義
 - `docs/wbs/2026-04-25-feature-98-p2-b-user-dictionary.md` — P2-B 実装ログ(cap override / proptest / validation パターンの根拠)
 - session handoff memory `project_session_handoff_2026-04-25.md` — P2-C 着手前の状態確認
 - `crates/kotoha-storage/migrations/v001_initial.sql` — `learning_cache` table schema(本設計書が前提とする schema)
