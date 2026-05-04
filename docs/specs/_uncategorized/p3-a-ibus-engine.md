@@ -1,3 +1,13 @@
+---
+feature: p3-a-ibus-engine
+status: draft
+bounded_context: _uncategorized
+related_issues: ["#128", "#136", "#149"]
+related_prs: []
+glossary_refs: ["ibus-engine", "ranker-worker", "ibus-host-bridge", "kotoha-engine-core"]
+last_reviewed: 2026-05-05
+---
+
 # Phase 3-A: IBus engine integration design spec
 
 | 項目 | 値 |

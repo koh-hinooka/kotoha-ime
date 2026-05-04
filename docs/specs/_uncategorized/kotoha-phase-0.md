@@ -1,9 +1,11 @@
 ---
-title: Kotoha Phase 0 設計書 — ローマ字→かな変換コアと入力モード管理 + CLI
-date: 2026-04-22
-status: draft
-phase: 0
-revision: 2
+feature: kotoha-phase-0
+status: implemented
+bounded_context: _uncategorized
+related_issues: ["#1"]
+related_prs: []
+glossary_refs: []
+last_reviewed: 2026-05-05
 ---
 
 # Kotoha Phase 0 設計書

@@ -17,8 +17,8 @@
 
 - GNOME Wayland ネイティブに動作する自作日本語 IME
 - Rust で実装、Cargo workspace 構成
-- 設計書: `docs/superpowers/specs/`
-- 実装計画: `docs/superpowers/plans/`
+- 設計書: `docs/specs/{_uncategorized,<bounded-context>}/<feature-slug>.md` (frontmatter は global §Spec Frontmatter 参照)
+- 実装計画: `docs/plans/<yyyy-MM-dd>-<branch>.md`
 
 ## Language 例外
 
@@ -36,10 +36,10 @@ global CLAUDE.md は「commit message / PR / ISSUE は日本語」だが、**Kot
 
 日本語を維持する対象:
 
-- 設計書 (`docs/superpowers/specs/`)
-- 実装計画 (`docs/superpowers/plans/`)
+- 設計書 (`docs/specs/`)
+- 実装計画 (`docs/plans/`)
 - ADR (`docs/adr/`)
-- WBS (`docs/wbs/`)
+- WBS (`docs/wbs/`、本 project の例外として保持。詳細は ADR 0019 参照)
 - コード内コメント(ドメイン説明など、日本語のほうが意味が通じる箇所)
 - Claude Code との対話
 
@@ -67,18 +67,29 @@ global CLAUDE.md は「commit message / PR / ISSUE は日本語」だが、**Kot
 
 現在の Phase、完了条件、マイルストーン分割は以下を参照:
 
-- `docs/ROADMAP.md` — Phase 全体像
-- `docs/superpowers/specs/` — 各 Phase の設計書
-- `docs/superpowers/plans/` — マイルストーン単位の実装計画
-- `docs/wbs/` — 実装ログ
+- `docs/ROADMAP.md` — Phase 全体像 + Active マイルストーン (v0.3.0 = Phase 3) 含む SemVer マッピング
+- `docs/specs/_uncategorized/` — 各 Phase の設計書 (kotoha-phase-{0,1,2,5}, p2-{a,b,c}, p3-a-ibus-engine)
+- `docs/plans/` — マイルストーン単位の実装計画 (Branch-scoped: `<yyyy-MM-dd>-<branch>.md`)
+- `docs/wbs/` — 実装ログ (本 project 例外、ADR 0019 参照)
 
-## WBS 直接 push の例外
+## Obsidian vault
 
-WBS ログ(`docs/wbs/*.md`)は、対象 PR の merge 後に develop へ直接 push して OK とする。
-理由: 実装内容に影響しない純粋なメタデータ記録であり、PR レビューの対象ではないため。
+- **scope**: `kotoha-ime`
+- **vault**: `$OBSIDIAN_VAULT_DIR` (`.envrc` で export、`/check-direnv` で検証)
+- **用語集**: `$OBSIDIAN_VAULT_DIR/glossary/<concept>.md` (project canonical、101 用語、本 PR で `docs/wiki/glossary.md` から migration)
+- **vault → spec symlink**: `$OBSIDIAN_VAULT_DIR/specs/kotoha-ime/`
+
+## WBS 直接 push の例外 (狭域化)
+
+WBS ログ(`docs/wbs/*.md`)は本 project 例外として保持される (ADR 0019)。global rules では WBS は廃止だが、Kotoha は 35 件の歴史的実装ログを抱えるため以下を許容する:
+
+- **既存 WBS ファイルへの軽微編集** (typo fix、merge 後の log 追記等): 対象 PR の merge 後に develop へ直接 push 可
+- **新規 WBS 起票は禁止**: 全ての per-task 状態追跡は in-conversation `TaskCreate` (global rule §Persistent Memory) を使用
+
+例外解消時期: 既存 WBS が active spec / plan / commit message から参照されなくなった時点で `docs/_archive/wbs/` へ移動または削除 (cleanup PR)。
 
 ## Glossary
 
-ドメイン固有語彙は `docs/wiki/glossary.md` に集約する。新規ドメイン用語を specs / plans / コードで導入する際は、同ファイルにも追記して用語の一貫性を保つ。
+ドメイン固有語彙は `$OBSIDIAN_VAULT_DIR/glossary/<concept>.md` (1 用語 1 ファイル) に集約する。本 PR (#174) で旧 `docs/wiki/glossary.md` から 101 用語を vault へ migration 済 (cluster: `japanese-input-basic` / `input-mode` / `romaji` / `kana-kanji` / `llm` / `testing` / `phase5-custom` / `reference-impl` / `tool-env`)。
 
-現時点(Phase 0)では用語セットが確定していないため、glossary.md は stub の状態にある。M3(romaji 変換)以降で用語が固まり次第、順次追加する。
+新規ドメイン用語を specs / plans / コードで導入する際は、対応する vault concept ファイルを追加し、spec frontmatter `glossary_refs` に slug を追加する。global rule `~/.claude/rules/glossary-consistency.md` に準拠 (本 project では vault 経由で参照)。

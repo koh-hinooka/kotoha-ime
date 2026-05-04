@@ -1,9 +1,11 @@
 ---
-title: Kotoha Phase 2 設計書 (draft) — Dictionary and learning
-date: 2026-04-25
-status: draft
-phase: 2
-revision: 1
+feature: kotoha-phase-2
+status: implemented
+bounded_context: _uncategorized
+related_issues: ["#85", "#172"]
+related_prs: []
+glossary_refs: ["dictionary-backend", "user-dict", "learning-cache", "hybrid-ranker"]
+last_reviewed: 2026-05-05
 ---
 
 # Kotoha Phase 2 (Dictionary and learning) 設計書 — draft

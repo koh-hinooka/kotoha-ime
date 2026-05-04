@@ -1,27 +1,38 @@
 #!/usr/bin/env bash
 # pre-commit-doc-naming.sh
-# ドキュメント命名規則を検証するpre-commitフック
+# ドキュメント命名・配置・frontmatter 規約を検証する pre-commit フック
 #
-# 検証対象:
-#   - docs/wbs/, docs/superpowers/plans/, docs/superpowers/specs/
-#     → yyyy-MM-dd-<ブランチ名>.md 形式
-#   - docs/adr/
-#     → NNNN-<タイトル>.md 形式
-#   - CLAUDE.md（ルート・サブディレクトリ）
-#     → 進捗情報の直接記載がないこと
+# 検証対象 (本 hook の責務):
+#   - docs/plans/                  : <yyyy-MM-dd>-<branch>.md (現行維持)
+#   - docs/specs/                  : 配置・命名 + frontmatter 必須 7 キー存在
+#                                  + feature/bounded_context のファイル名/dir 名一致
+#                                  + status enum + last_reviewed 形式
+#   - docs/adr/                    : NNNN-<title>.md (現行維持)
+#   - CLAUDE.md (ルート/サブ)      : 進捗情報の直接記載がないこと (現行維持)
+#   - docs/superpowers/ 配下       : ファイル残存禁止 (廃止検証)
 #
-# 使用方法:
+# 検証範囲外 (pre-push hook `pre-push-obsidian-sync.sh` の責務):
+#   - related_issues / related_prs 形式 (#NNN または owner/repo#NNN)
+#   - glossary_refs と Obsidian vault 内 concept の突合
+#   - vault → spec symlink の解決可能性
+#   - ADR 新規追加時の vault adr-index.md 反映
+#   - YAML 厳密構文検証 (yq parse)
+#
+# 詳細仕様: ~/.claude/CLAUDE.md §Documentation Structure
+#
+# Invocation:
+#   - lefthook pre-commit から自動実行 (lefthook.yml で配線)
+#   - 手動実行: bash scripts/pre-commit-doc-naming.sh
+#
+# 配布:
 #   cp ~/.claude/templates/scripts/pre-commit-doc-naming.sh scripts/
-#   ln -sf ../../scripts/pre-commit-doc-naming.sh .git/hooks/pre-commit
-#   chmod +x scripts/pre-commit-doc-naming.sh
+#   lefthook install
 
 set -euo pipefail
 
 ERRORS=()
 STAGED_FILES=""
 
-# grepのマッチなし(終了コード1)は許容し、エラー(終了コード2)は検出するヘルパー
-# 使用法: safe_grep <args...>
 safe_grep() {
   local output rc=0
   output=$(grep "$@") || rc=$?
@@ -33,7 +44,6 @@ safe_grep() {
   exit 1
 }
 
-# 必須コマンドの存在確認
 check_requirements() {
   local cmds=(git grep awk basename)
   for cmd in "${cmds[@]}"; do
@@ -44,7 +54,6 @@ check_requirements() {
   done
 }
 
-# ステージされたファイル一覧を取得（追加・変更のみ）
 get_staged_files() {
   STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM) || {
     echo "エラー: ステージされたファイル一覧の取得に失敗しました" >&2
@@ -52,55 +61,196 @@ get_staged_files() {
   }
 }
 
-# 日付+ブランチ名の命名規則チェック (docs/wbs, docs/superpowers/plans, docs/superpowers/specs)
-check_date_branch_naming() {
+check_plan_naming() {
   [[ -z "$STAGED_FILES" ]] && return 0
-
-  local date_branch_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}-.+\.md$'
-  local dirs=("docs/wbs" "docs/superpowers/plans" "docs/superpowers/specs")
+  local pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}-.+\.md$'
   local filtered_files
-
-  for dir in "${dirs[@]}"; do
-    filtered_files=$(echo "$STAGED_FILES" | safe_grep "^${dir}/")
-    while IFS= read -r file; do
-      [ -z "$file" ] && continue
-      local fname
-      fname=$(basename "$file")
-      [[ "$fname" == ".gitkeep" ]] && continue
-      if [[ ! "$fname" =~ $date_branch_pattern ]]; then
-        ERRORS+=("命名規則違反: $file (期待: yyyy-MM-dd-<ブランチ名>.md)")
-      fi
-    done <<< "$filtered_files"
-  done
+  filtered_files=$(echo "$STAGED_FILES" | safe_grep '^docs/plans/')
+  while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    local fname
+    fname=$(basename "$file")
+    [[ "$fname" == ".gitkeep" ]] && continue
+    if [[ ! "$fname" =~ $pattern ]]; then
+      ERRORS+=("Plan 命名違反: $file (期待: yyyy-MM-dd-<branch>.md)")
+    fi
+  done <<< "$filtered_files"
 }
 
-# ADR命名規則チェック (docs/adr)
+_iter_spec_files() {
+  echo "$STAGED_FILES" | safe_grep '^docs/specs/.*\.md$'
+}
+
+_skip_special_spec_file() {
+  local fname="$1" dir_path="$2"
+  [[ "$fname" == ".gitkeep" ]] && return 0
+  [[ "$fname" == "README.md" && "$dir_path" == "docs/specs" ]] && return 0
+  return 1
+}
+
+check_spec_placement() {
+  [[ -z "$STAGED_FILES" ]] && return 0
+  local spec_files
+  spec_files=$(_iter_spec_files)
+  while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    local fname dir_path depth
+    fname=$(basename "$file")
+    dir_path=$(dirname "$file")
+    _skip_special_spec_file "$fname" "$dir_path" && continue
+    # 配置検証 (path depth ベース):
+    #   - depth=3 (docs/specs/foo.md): 直下配置 → 禁止
+    #   - depth=4 (docs/specs/<bc>/foo.md): 正常 (_uncategorized/ 含む)
+    #   - depth>4 (docs/specs/<bc>/sub/foo.md): bounded-context 配下の subdirectory → 禁止
+    depth=$(awk -F'/' '{print NF}' <<< "$file")
+    if [[ "$dir_path" == "docs/specs" ]]; then
+      ERRORS+=("Spec 配置違反: $file (期待: docs/specs/{_uncategorized,<bounded-context>}/<feature-slug>.md, 直下配置禁止)")
+      continue
+    fi
+    if [[ $depth -gt 4 ]]; then
+      ERRORS+=("Spec 配置違反: $file (bounded-context dir 配下の subdirectory 禁止, 期待 depth=4)")
+    fi
+  done <<< "$spec_files"
+}
+
+check_spec_dir_name() {
+  [[ -z "$STAGED_FILES" ]] && return 0
+  local spec_files
+  spec_files=$(_iter_spec_files)
+  while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    local fname dir_path bc_dir
+    fname=$(basename "$file")
+    dir_path=$(dirname "$file")
+    _skip_special_spec_file "$fname" "$dir_path" && continue
+    [[ "$dir_path" == "docs/specs" ]] && continue
+    bc_dir=$(basename "$dir_path")
+    if [[ "$bc_dir" != "_uncategorized" ]] && [[ ! "$bc_dir" =~ ^[a-z][a-z0-9-]*$ ]]; then
+      ERRORS+=("Bounded context dir 命名違反: $dir_path (期待: kebab-case ^[a-z][a-z0-9-]*\$ または _uncategorized)")
+    fi
+  done <<< "$spec_files"
+}
+
+check_spec_filename() {
+  [[ -z "$STAGED_FILES" ]] && return 0
+  local spec_files
+  spec_files=$(_iter_spec_files)
+  while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    local fname dir_path
+    fname=$(basename "$file")
+    dir_path=$(dirname "$file")
+    _skip_special_spec_file "$fname" "$dir_path" && continue
+    [[ "$dir_path" == "docs/specs" ]] && continue
+    if [[ ! "$fname" =~ ^[a-z][a-z0-9-]*\.md$ ]]; then
+      ERRORS+=("Spec 命名違反: $file (期待: kebab-case ^[a-z][a-z0-9-]*\\.md\$, アンダースコア prefix は予約)")
+    fi
+  done <<< "$spec_files"
+}
+
+_extract_frontmatter() {
+  local file="$1"
+  awk '/^---$/{n++; if(n==2)exit; next} n==1' "$file"
+}
+
+_validate_required_keys() {
+  local file="$1" fm="$2"
+  local required_keys=("feature" "status" "bounded_context" "related_issues" "related_prs" "glossary_refs" "last_reviewed")
+  local missing=()
+  local key
+  for key in "${required_keys[@]}"; do
+    if ! echo "$fm" | grep -qF "${key}:"; then
+      missing+=("$key")
+    fi
+  done
+  if [ ${#missing[@]} -gt 0 ]; then
+    ERRORS+=("Frontmatter 必須項目欠落: $file (欠落キー: ${missing[*]})")
+    return 1
+  fi
+  return 0
+}
+
+_validate_field_consistency() {
+  local file="$1" fm="$2" slug="$3" bc_dir="$4"
+  local valid_status=("draft" "reviewed" "implemented" "deprecated")
+  local feature_value bc_value status_value last_reviewed_value
+  feature_value=$(echo "$fm" | awk -F': *' '/^feature:/{print $2; exit}')
+  bc_value=$(echo "$fm" | awk -F': *' '/^bounded_context:/{print $2; exit}')
+  status_value=$(echo "$fm" | awk -F': *' '/^status:/{print $2; exit}')
+  last_reviewed_value=$(echo "$fm" | awk -F': *' '/^last_reviewed:/{print $2; exit}')
+
+  if [[ "$feature_value" != "$slug" ]]; then
+    ERRORS+=("Frontmatter 値不整合: $file (feature='$feature_value' ≠ ファイル名 '$slug')")
+  fi
+  if [[ "$bc_value" != "$bc_dir" ]]; then
+    ERRORS+=("Frontmatter 値不整合: $file (bounded_context='$bc_value' ≠ ディレクトリ名 '$bc_dir')")
+  fi
+  local is_valid_status=0 v
+  for v in "${valid_status[@]}"; do
+    [[ "$status_value" == "$v" ]] && is_valid_status=1 && break
+  done
+  if [[ $is_valid_status -eq 0 ]]; then
+    ERRORS+=("Frontmatter status 値違反: $file (status='$status_value', 期待: draft|reviewed|implemented|deprecated)")
+  fi
+  if [[ ! "$last_reviewed_value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    ERRORS+=("Frontmatter last_reviewed 形式違反: $file (期待: yyyy-MM-dd)")
+  fi
+}
+
+check_spec_frontmatter() {
+  [[ -z "$STAGED_FILES" ]] && return 0
+  local spec_files
+  spec_files=$(echo "$STAGED_FILES" | safe_grep '^docs/specs/.*/.*\.md$')
+  while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    local fname dir_path bc_dir slug
+    fname=$(basename "$file")
+    dir_path=$(dirname "$file")
+    [[ "$fname" == ".gitkeep" ]] && continue
+    [[ "$fname" == "README.md" ]] && continue
+    bc_dir=$(basename "$dir_path")
+    slug="${fname%.md}"
+    [ -f "$file" ] || continue
+
+    local fm
+    fm=$(_extract_frontmatter "$file")
+    [ -z "$fm" ] && { ERRORS+=("Frontmatter 不在: $file"); continue; }
+
+    _validate_required_keys "$file" "$fm" || continue
+    _validate_field_consistency "$file" "$fm" "$slug" "$bc_dir"
+  done <<< "$spec_files"
+}
+
+check_no_superpowers_dir() {
+  [[ -z "$STAGED_FILES" ]] && return 0
+  local filtered_files
+  filtered_files=$(echo "$STAGED_FILES" | safe_grep '^docs/superpowers/')
+  while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    ERRORS+=("Spec/plan 配置違反: $file (docs/superpowers/ ディレクトリは廃止されました。docs/specs/ または docs/plans/ へ移動してください)")
+  done <<< "$filtered_files"
+}
+
 check_adr_naming() {
   [[ -z "$STAGED_FILES" ]] && return 0
-
-  local adr_pattern='^[0-9]{4}-.+\.md$'
+  local pattern='^[0-9]{4}-.+\.md$'
   local filtered_files
-
   filtered_files=$(echo "$STAGED_FILES" | safe_grep '^docs/adr/')
   while IFS= read -r file; do
     [ -z "$file" ] && continue
     local fname
     fname=$(basename "$file")
     [[ "$fname" == ".gitkeep" ]] && continue
-    if [[ ! "$fname" =~ $adr_pattern ]]; then
-      ERRORS+=("ADR命名規則違反: $file (期待: NNNN-<タイトル>.md)")
+    if [[ ! "$fname" =~ $pattern ]]; then
+      ERRORS+=("ADR 命名違反: $file (期待: NNNN-<title>.md)")
     fi
   done <<< "$filtered_files"
 }
 
-# CLAUDE.mdに進捗情報が含まれていないかチェック
-# 追加行のみを対象にし、パス参照（`docs/wbs/`等）は除外する
 check_claude_md_progress() {
   [[ -z "$STAGED_FILES" ]] && return 0
-
   local filtered_files
   filtered_files=$(echo "$STAGED_FILES" | safe_grep 'CLAUDE\.md$')
-
   while IFS= read -r file; do
     [ -z "$file" ] && continue
     local diff_output
@@ -108,27 +258,19 @@ check_claude_md_progress() {
       echo "エラー: git diff --cached -- $file が失敗しました" >&2
       exit 1
     }
-    # mawk (Ubuntu/Debian 標準) では、ブロック内の `exit 0` の後でも END ブロックが
-    # 実行され、その END が `exit 1` を返すと違反シグナルが上書きされてしまう。
-    # gawk / mawk 双方で同じ挙動になる `found=1 ... exit !found` パターンを採用する。
-    #
-    # TOC 除外: 目次やインラインリンクの行 `- [ラベル](#アンカー)` は進捗情報では
-    # ないためフィルタで弾く。括弧内がちょうど `[...](#...)` の形をとる場合に限定し、
-    # `[x]` / `[ ]` のチェックボックス検出を壊さないよう注意する。
     if echo "$diff_output" | LC_ALL=C.UTF-8 awk '
-      /^\+/ && !/^\+\+\+/ && !/→/ && !/^\+[[:space:]]*-?[[:space:]]*\[[^][]+\]\(#[^()]+\)[[:space:]]*$/ {
+      /^\+/ && !/^\+\+\+/ && !/→/ {
         gsub(/`[^`]*`/, "")
         line = tolower($0)
-        if (line ~ /(todo|wbs|進捗|タスク一覧|完了率|[0-9]+%|■|□|☑|☐|\[x\]|\[ \])/) found = 1
+        if (line ~ /(todo|進捗|タスク一覧|完了率|[0-9]+%|■|□|☑|☐|\[x\]|\[ \])/) { found = 1; exit }
       }
-      END { exit !found }
+      END { if (!found) exit 1 }
     '; then
-      ERRORS+=("CLAUDE.mdに進捗情報の疑い: $file (進捗管理はdocs/wbs/を使用してください)")
+      ERRORS+=("CLAUDE.md に進捗情報の疑い: $file (進捗管理は ROADMAP.md または TaskCreate を使用してください)")
     fi
   done <<< "$filtered_files"
 }
 
-# 結果出力
 report_errors() {
   if [ ${#ERRORS[@]} -gt 0 ]; then
     echo "========================================"
@@ -138,17 +280,25 @@ report_errors() {
       echo "  - $err"
     done
     echo ""
-    echo "規約の詳細は ~/.claude/CLAUDE.md を参照してください。"
+    echo "規約の詳細は ~/.claude/CLAUDE.md §Documentation Structure / §Spec Frontmatter を参照してください。"
     exit 1
   fi
-
+  # 成功時 hint: pre-push で別途厳密検証が走ることを明示する。
+  # pre-commit は軽量検証のため、push 時に YAML 厳密構文 / glossary 突合 / symlink 解決等が
+  # 追加実施される (scripts/pre-push-obsidian-sync.sh)。pre-commit PASS = "push まで安全" ではない。
+  echo "[doc-naming] OK (pre-push で YAML 厳密検証 + glossary 突合 + symlink 解決を実施)"
   exit 0
 }
 
 main() {
   check_requirements
   get_staged_files
-  check_date_branch_naming
+  check_plan_naming
+  check_spec_placement
+  check_spec_dir_name
+  check_spec_filename
+  check_spec_frontmatter
+  check_no_superpowers_dir
   check_adr_naming
   check_claude_md_progress
   report_errors

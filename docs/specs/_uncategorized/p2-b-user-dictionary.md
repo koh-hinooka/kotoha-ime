@@ -1,12 +1,11 @@
 ---
-title: Kotoha Phase 2 P2-B 設計書 — User dictionary (SQLite-backed)
-date: 2026-04-25
-status: draft
-phase: 2
-milestone: P2-B
-parent-spec: docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md
-sibling-spec: docs/superpowers/specs/2026-04-25-p2-a-dictionary-layer-design.md
-revision: 1
+feature: p2-b-user-dictionary
+status: implemented
+bounded_context: _uncategorized
+related_issues: []
+related_prs: []
+glossary_refs: ["user-dict", "kotoha-storage"]
+last_reviewed: 2026-05-05
 ---
 
 # Kotoha Phase 2 P2-B (User dictionary) 設計書

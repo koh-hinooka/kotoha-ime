@@ -1,9 +1,11 @@
 ---
-title: Kotoha Phase 1 設計書 — かな→漢字変換 (Gemma-2-2B-jpn-it + llama.cpp)
-date: 2026-04-24
-status: draft
-phase: 1
-revision: 1
+feature: kotoha-phase-1
+status: implemented
+bounded_context: _uncategorized
+related_issues: ["#75", "#83"]
+related_prs: []
+glossary_refs: ["llama-cpp", "gemma-2-jpn-it", "kana-to-kanji", "layer-3-smoke"]
+last_reviewed: 2026-05-05
 ---
 
 # Kotoha Phase 1 (Kana → Kanji Conversion) 設計書

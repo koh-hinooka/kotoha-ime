@@ -1,0 +1,116 @@
+# .gitleaks.toml
+# ----------------------------------------------------------------
+# gitleaks 設定テンプレート (v8.19.0+ 形式)
+#
+# 役割:
+#   - gitleaks デフォルトルールを継承し、プロジェクト共通の allowlist を上書き
+#   - lefthook pre-commit から `gitleaks git --pre-commit --staged` で参照される
+#
+# カスタマイズ指針:
+#   - 誤検知が出たら、まず allowlist.regexes か allowlist.stopwords に追記
+#   - パス全体を除外する場合は allowlist.paths を使う
+#   - プロジェクト固有のルールを足したい場合は [[rules]] セクションを追加
+#
+# 参考: https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+# ================================================================
+
+[extend]
+# gitleaks 同梱のデフォルトルール (AWS / GCP / GitHub / Slack 等 100+ 種類) を継承
+useDefault = true
+
+# ----------------------------------------------------------------
+# Allowlist: 検出対象から除外したいパス / 正規表現 / プレースホルダ
+# ----------------------------------------------------------------
+[allowlist]
+description = "Project-wide allowlist (lock files, fixtures, common placeholders)"
+
+# パス除外: 機械生成ファイル / テストフィクスチャ / バイナリ
+paths = [
+    # 依存関係ロックファイル (内部ハッシュが秘密値と誤判定されやすい)
+    '''package-lock\.json''',
+    '''pnpm-lock\.yaml''',
+    '''bun\.lock''',
+    '''bun\.lockb''',
+    '''yarn\.lock''',
+    '''Cargo\.lock''',
+    '''uv\.lock''',
+    '''poetry\.lock''',
+    '''Gemfile\.lock''',
+    '''composer\.lock''',
+    '''go\.sum''',
+
+    # テストフィクスチャ (ダミー値が大量に存在する)
+    '''__fixtures__/''',
+    '''testdata/''',
+    '''test/fixtures/''',
+    '''tests?/.*/fixtures/''',
+
+    # バイナリ / アセット
+    '''.*?\.(jpg|jpeg|png|gif|webp|svg|ico|pdf|bin|woff2?|ttf|eot)$''',
+
+    # IDE / Claude Code 内部状態
+    # .claude/ 配下全体を除外 (settings.json / mcp-token-bindings.json 等の
+    # project-local 設定ファイルが gitleaks に巻き込まれないように)
+    '''\.claude/''',
+
+    # 依存パッケージ・ビルド成果物 (機械生成、サンプル secret 混入の可能性あり)
+    '''node_modules/''',
+    '''\.next/''',
+    '''\.turbo/''',
+    '''\.venv/''',
+    '''venv/''',
+    '''__pycache__/''',
+    '''dist/''',
+    '''build/''',
+    '''target/''',
+    '''\.cargo/''',
+]
+
+# 正規表現除外: 一般的なプレースホルダ / サンプル値
+# 注意: gitleaks は Go の RE2 エンジン (wasilibs/go-re2) を使うため、
+#       backreference (\1, \2, ...) や lookahead/lookbehind は使えない。
+regexes = [
+    # 明示的プレースホルダ (your_xxx_here / example_xxx / <your_xxx>)
+    '''(?i)your[_-]?(api[_-]?key|token|secret|password)[_-]?here''',
+    '''(?i)example[_-]?(api[_-]?key|token|secret|password)''',
+    '''(?i)<your[_-][a-z0-9_-]+>''',
+    '''\$\{?[A-Z_]+_KEY\}?''',  # ${API_KEY} 形式の環境変数参照
+    '''(?i)REPLACE[_-]?WITH[_-]?[A-Z_]+''',
+
+    # 反復文字のみで構成されるダミー (xxxxxxxx, 00000000, AAAAAAAA 等)
+    # RE2 は backreference 非対応のため、よく使われる文字種を明示列挙
+    '''^x{16,}$''',
+    '''^X{16,}$''',
+    '''^0{16,}$''',
+    '''^A{16,}$''',
+    '''^a{16,}$''',
+]
+
+# キーワード除外: これらの単語を含む行は false positive 扱い
+# 注意: stopwords はサブストリングマッチ。"test" や "mock" のような汎用語を入れると、
+#       行中に "test_" を含む実 secret (例: test_api_key = "ghp_...") が誤って除外される。
+#       明示的にプレースホルダ性が高い単語のみに絞ること。
+stopwords = [
+    "example",
+    "sample",
+    "placeholder",
+    "dummy",
+    "fake",
+    "fixture",
+    "lorem",
+    "ipsum",
+    "your-",
+    "<your",
+    "REPLACE_WITH",
+]
+
+# ----------------------------------------------------------------
+# プロジェクト固有ルール (必要に応じて追加)
+# ----------------------------------------------------------------
+# [[rules]]
+# id = "internal-api-token"
+# description = "Internal API token format (prefix: itk_)"
+# regex = '''itk_[A-Za-z0-9]{32}'''
+# tags = ["api", "internal"]
+# entropy = 3.5
+# secretGroup = 0

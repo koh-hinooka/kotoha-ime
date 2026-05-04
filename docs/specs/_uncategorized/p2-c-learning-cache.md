@@ -1,15 +1,11 @@
 ---
-title: Phase 2-C — LearningCache 本実装 + arch-M-2 ISP split 設計
-phase: 2
-sub-phase: C
-status: draft
-related-adr:
-  - 0014  # phase-2 dictionary layer architecture
-  - 0015  # kotoha-storage SQLite adoption
-related-spec:
-  - 2026-04-25-kotoha-phase-2-design.md
-  - 2026-04-25-p2-b-user-dictionary-design.md
-created-at: 2026-04-26
+feature: p2-c-learning-cache
+status: implemented
+bounded_context: _uncategorized
+related_issues: ["#107"]
+related_prs: []
+glossary_refs: ["learning-cache", "kotoha-storage"]
+last_reviewed: 2026-05-05
 ---
 
 # Phase 2-C — LearningCache 本実装 + arch-M-2 ISP split 設計書

@@ -1,11 +1,11 @@
 ---
-title: Kotoha Phase 2 P2-A 設計書 — Dictionary layer (Sudachi-based)
-date: 2026-04-25
-status: draft
-phase: 2
-milestone: P2-A
-parent-spec: docs/superpowers/specs/2026-04-25-kotoha-phase-2-design.md
-revision: 1
+feature: p2-a-dictionary-layer
+status: implemented
+bounded_context: _uncategorized
+related_issues: ["#92", "#94", "#100"]
+related_prs: []
+glossary_refs: ["sudachidict-core", "dictionary-backend"]
+last_reviewed: 2026-05-05
 ---
 
 # Kotoha Phase 2 P2-A (Dictionary layer) 設計書

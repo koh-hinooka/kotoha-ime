@@ -1,9 +1,11 @@
 ---
-title: Kotoha Phase 5 設計書 (stub) — Kotoha 専用 romaji-base かな→漢字モデル
-date: 2026-04-25
-status: stub
-phase: 5
-revision: 1
+feature: kotoha-phase-5-custom-model
+status: draft
+bounded_context: _uncategorized
+related_issues: []
+related_prs: []
+glossary_refs: ["kotoha-native", "data-pipeline", "distillation", "gguf"]
+last_reviewed: 2026-05-05
 ---
 
 # Kotoha Phase 5 (Kotoha custom romaji-base model) 設計書 — stub
