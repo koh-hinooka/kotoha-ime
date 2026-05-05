@@ -1,11 +1,12 @@
 ---
 feature: docs-20-romaji-design-adrs
-status: implemented
+status: deprecated
+deprecated_reason: "Phase E migration で旧 docs/wbs/ から spec 化した実装ログ性質の文書。Global CLAUDE.md §Development Flow legacy spec 取扱いルール (実装ログ性質 → status: deprecated、本文 14-section restructure 不要) に基づき deprecated 扱い。git history は参照点として保持 (2026-05-06)。"
 bounded_context: _uncategorized
 related_issues: ["#20"]
 related_prs: []
 glossary_refs: ["lefthook","romaji"]
-last_reviewed: 2026-05-05
+last_reviewed: 2026-05-06
 ---
 
 # ISSUE #20: romaji design decisions を ADR 0005 / 0006 として記録

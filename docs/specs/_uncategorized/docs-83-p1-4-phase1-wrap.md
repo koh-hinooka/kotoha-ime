@@ -1,11 +1,12 @@
 ---
 feature: docs-83-p1-4-phase1-wrap
-status: implemented
+status: deprecated
+deprecated_reason: "Phase E migration で旧 docs/wbs/ から spec 化した実装ログ性質の文書。Global CLAUDE.md §Development Flow legacy spec 取扱いルール (実装ログ性質 → status: deprecated、本文 14-section restructure 不要) に基づき deprecated 扱い。git history は参照点として保持 (2026-05-06)。"
 bounded_context: _uncategorized
 related_issues: ["#83"]
 related_prs: []
 glossary_refs: ["backend-trait","candidate","gemma-2-2b-jpn-it","hiragana","katakana","layer-3-smoke","lefthook","romaji","row-3","zenz"]
-last_reviewed: 2026-05-05
+last_reviewed: 2026-05-06
 ---
 
 # P1-4 — Phase 1 最終 wrap (ADR 0009 promote + 0011/0012/0013 新規 + spec §14 完了宣言)
