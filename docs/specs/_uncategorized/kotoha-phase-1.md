@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#75", "#83"]
 related_prs: []
-glossary_refs: ["llama-cpp-backend", "gemma-2-2b-jpn-it", "kana-kanji-conversion", "layer-3-smoke"]
+glossary_refs: ["azookey","backend-trait","candidate","canonical-romaji","chat-template","gemma-2-2b-jpn-it","gguf","hiragana","ime-engine","kana","kana-kanji-conversion","katakana","layer-3-smoke","learning-cache","lefthook","llama-cpp-backend","mock-backend","prompt-template","romaji","romaji-trie","row-3","system-dictionary","user-dictionary","zenz","zenzai"]
 last_reviewed: 2026-05-05
 ---
 

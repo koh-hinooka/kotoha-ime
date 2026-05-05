@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#73"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["azookey","gemma-2-2b-jpn-it","gguf","hiragana","kana","katakana","mock-backend","prompt-template","zenz","zenzai"]
 last_reviewed: 2026-05-05
 ---
 

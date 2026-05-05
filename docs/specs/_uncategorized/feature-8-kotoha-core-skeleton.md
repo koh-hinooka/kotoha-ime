@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#8"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["hiragana","kana","katakana","lefthook","romaji"]
 last_reviewed: 2026-05-05
 ---
 

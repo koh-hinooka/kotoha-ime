@@ -4,7 +4,7 @@ status: draft
 bounded_context: _uncategorized
 related_issues: ["#128", "#136", "#149"]
 related_prs: []
-glossary_refs: ["phase3-ibus-engine-terms", "ranker-worker", "ime-host-bridge", "kotoha-engine"]
+glossary_refs: ["candidate","coalescing-window","hexagonal-architecture","hybrid-ranker","ime-engine","ime-host-bridge","kana","kotoha-engine","kotoha-storage","layer-3-smoke","lefthook","partial-input","phase3-ibus-engine-terms","preedit","ranker-worker","romaji"]
 last_reviewed: 2026-05-05
 ---
 

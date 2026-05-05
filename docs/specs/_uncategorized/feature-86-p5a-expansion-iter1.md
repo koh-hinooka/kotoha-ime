@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#86"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["bias-sampling","karukan","partial-input","romaji","sudachipy","uv"]
 last_reviewed: 2026-05-05
 ---
 

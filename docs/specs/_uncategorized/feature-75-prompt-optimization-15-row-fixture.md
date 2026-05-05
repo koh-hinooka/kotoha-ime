@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#75"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["distillation","gemma-2-2b-jpn-it","gguf","icl","kana","karukan","layer-3-smoke","romaji","row-3","scratch-training"]
 last_reviewed: 2026-05-05
 ---
 

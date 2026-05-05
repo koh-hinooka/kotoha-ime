@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: []
 related_prs: []
-glossary_refs: ["user-dictionary", "kotoha-storage"]
+glossary_refs: ["backend-trait","edit-distance","hiragana","kana","karukan","kotoha-dict","kotoha-storage","learning-cache","lefthook","pua-tokens","romaji","user-dictionary","user-vocab"]
 last_reviewed: 2026-05-05
 ---
 

@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#92", "#94", "#100"]
 related_prs: []
-glossary_refs: ["sudachi-dict", "backend-trait"]
+glossary_refs: ["backend-trait","candidate","gguf","hiragana","kana","kotoha-dict","layer-3-smoke","learning-cache","lefthook","sudachi-dict","user-dictionary","user-vocab","uv"]
 last_reviewed: 2026-05-05
 ---
 
