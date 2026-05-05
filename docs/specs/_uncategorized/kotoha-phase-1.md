@@ -93,7 +93,7 @@ Phase 1 では `llama-cpp-2` を第一候補として採用し、採用事由と
 - Default: **Gemma-2-2B-jpn-it Q5_K_M** (`bartowski/gemma-2-2b-jpn-it-GGUF`, ファイル名 `gemma-2-2b-jpn-it-Q5_K_M.gguf`, 約 1.92 GB)
 - License: Gemma License (再配布可、attribution 必須。Kotoha repo に同梱はしない — 利用者が HuggingFace から download する。手順は `crates/kotoha-core/tests/kanji_llama_cpp_smoke.rs` の module docstring 参照)
 - Tokenizer: SentencePiece (Gemma 2 family), chat template は GGUF metadata の `tokenizer.chat_template` に埋め込み済
-- 採用根拠: P1-2-9 empirical verification (WBS `docs/wbs/2026-04-24-feature-69-zenz-backend-layer3-smoke.md` commit `718fd8e`) で Qwen2.5-1.5B-Instruct / Gemma-2-2B-jpn-it / Gemma-3-1B-it の 3-way 比較を実施し、Gemma-2-2B-jpn-it が 5/5 (敬称 `やまださん` → `山田さん` を含む) を達成した唯一のモデル
+- 採用根拠: P1-2-9 empirical verification (WBS `docs/specs/_uncategorized/feature-69-zenz-backend-layer3-smoke.md` commit `718fd8e`) で Qwen2.5-1.5B-Instruct / Gemma-2-2B-jpn-it / Gemma-3-1B-it の 3-way 比較を実施し、Gemma-2-2B-jpn-it が 5/5 (敬称 `やまださん` → `山田さん` を含む) を達成した唯一のモデル
 - Phase 1 latency: cold load 約 10.6 秒 + warm inference 約 3 秒 / case。P1-2.5 follow-up (PR #76) で fixture が 15 行に復元され、row 3 skip で有効 14 件が約 52 秒 (cold load 約 10.6 秒 + 14 件 × 約 3 秒) で実行される。spec §8.3 の当初 "30 秒以内" target は ADR 0013 で empirical 実測に合わせて緩和済 (詳細は ADR 0013 を参照)
 - Quantization 選択肢: Q4_K_M (品質劣化あり、Phase 1 default としては不適) / Q5_K_M (本採用) / Q6_K / Q8_0 (size 3.3 GB 超、Phase 1 budget 逼迫)
 
@@ -132,7 +132,7 @@ AzooKey は Swift 実装の日本語 IME であり、Zenz 系 GGUF を使う pro
 
 - URL: <https://github.com/azooKey/AzooKeyKanaKanjiConverter/blob/main/Docs/zenzai.md>
 - P1-2 着手時点では「Zenz 系 GGUF の PUA token 利用 / context / input / output 分離 / EOS 扱い」が 1 次情報源として必須
-- P1-2-9 pivot により、Zenz 系 GGUF は本 Phase では採用しないため、上記解析ログは `docs/wbs/2026-04-24-feature-69-zenz-backend-layer3-smoke.md` に記録したまま残し、コードからは削除した (`crates/kotoha-core/src/kanji/llama_cpp.rs` からは PUA token / AzooKey 由来の実装は P1-2.5 で撤去済)
+- P1-2-9 pivot により、Zenz 系 GGUF は本 Phase では採用しないため、上記解析ログは `docs/specs/_uncategorized/feature-69-zenz-backend-layer3-smoke.md` に記録したまま残し、コードからは削除した (`crates/kotoha-core/src/kanji/llama_cpp.rs` からは PUA token / AzooKey 由来の実装は P1-2.5 で撤去済)
 
 Phase 2 以降で Zenz 系 GGUF が再評価された際、または upstream llama.cpp が `gpt2-small-japanese-char` pre-tokenizer を allow-list に追加した際には、本 section の内容を再度一次情報化するかを ADR で判断する。
 
@@ -856,7 +856,7 @@ Phase 1 終了時に以下 3 本の ADR を作成する。番号は Phase 0 ま�
 
 いずれも P1-4 で作成し、本設計書と相互参照する (本書 → ADR、ADR → 本書)。
 
-**注 (P1-4 実施時の結果)**: 上記は Phase 1 早期計画時点の ADR 番号想定である。実際は ADR 0010 が Phase 5 方針で先に確定した (PR #78) ため、P1-4 で作成した ADR は 0009 (promote) / 0011 / 0012 / 0013 に繰り上がった。詳細経緯は `docs/wbs/2026-04-25-docs-83-p1-4-phase1-wrap.md` §背景を参照。
+**注 (P1-4 実施時の結果)**: 上記は Phase 1 早期計画時点の ADR 番号想定である。実際は ADR 0010 が Phase 5 方針で先に確定した (PR #78) ため、P1-4 で作成した ADR は 0009 (promote) / 0011 / 0012 / 0013 に繰り上がった。詳細経緯は `docs/specs/_uncategorized/docs-83-p1-4-phase1-wrap.md` §背景を参照。
 
 ## 13. Open Questions (spec 執筆中 / 実装中に解消)
 
@@ -886,7 +886,7 @@ Phase 1 終了時に以下 3 本の ADR を作成する。番号は Phase 0 ま�
 - [ ] 10. CLI `kotoha-kanji` が `--model <path>` required、option `--top-k / --show-scores / --show-model-id / --temperature / --seed` を受け付ける
 - [ ] 11. CLI の exit code 仕様 (0 / 1 / 2) が Phase 0 `kotoha-romaji` と整合している
 - [ ] 12. `scripts/lib/assert.sh` が `assert_equal` / `assert_contains` / `assert_summary` を提供し、Phase 0 smoke が refactor 後も pass する
-- [ ] 13. ADR 0009 / 0011 / 0012 / 0013 が作成され、本設計書と相互参照している (ADR 0010 は Phase 5 方針 ADR、番号競合の経緯は `docs/wbs/2026-04-25-docs-83-p1-4-phase1-wrap.md` §背景を参照)
+- [ ] 13. ADR 0009 / 0011 / 0012 / 0013 が作成され、本設計書と相互参照している (ADR 0010 は Phase 5 方針 ADR、番号競合の経緯は `docs/specs/_uncategorized/docs-83-p1-4-phase1-wrap.md` §背景を参照)
 - [ ] 14. `README.md` に Gemma-2-2B-jpn-it Q5_K_M の GGUF 入手コマンドと配置先、`kotoha-kanji --model` の使い方が記載されている
 - [ ] 15. `cargo fmt --all --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` が CI / lefthook pre-push で warning なく pass する
 

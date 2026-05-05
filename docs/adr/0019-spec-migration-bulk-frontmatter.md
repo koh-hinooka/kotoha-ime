@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-05-05)
+Accepted (2026-05-05) — Amended 2026-05-05: §B repealed (PR #180)
 
 ## Context
 
@@ -32,34 +32,28 @@ This PR performs only **mechanical processing** for the Phase C-5 migration. Thr
 - Status is inferred from ROADMAP completion state and ISSUE state; `related_issues` is taken from ROADMAP cross-references
 - 14-section spec body restructure is **deferred** to feature PRs (the same line as `MITRA_X#1212` ADR 0001 and `infrastructure#30` ADR 0002)
 
-### B. WBS retention exception
+### B. WBS retention exception (REPEALED 2026-05-05)
 
-The 35 entries under `docs/wbs/` are kept as historical artifacts of the project. The global retirement of `docs/wbs/` is **partially adopted**:
+> **Status**: REPEALED in PR #180 (2026-05-05). All 36 WBS entries migrated to `docs/specs/_uncategorized/` as `status: implemented` specs. The `docs/wbs/` directory has been removed. Project now fully aligned with global `~/.claude/CLAUDE.md` §Documentation Structure.
 
-- **New WBS entries are forbidden.** All future per-task tracking uses in-conversation `TaskCreate` (per global rule).
-- Existing entries remain as reference material. They are not migrated to any other location (they are implementation logs, not specs).
-- The project `CLAUDE.md` `WBS 直接 push の例外` clause is preserved for **edits to existing WBS files only** (typo fixes and post-merge log updates), not for new file creation.
+#### Original decision (historical record, no longer in effect)
 
-#### Exit conditions (machine-checkable)
+The 35 entries under `docs/wbs/` were originally kept as historical artifacts with new-entry ban + machine-enforced exit conditions deferred to 2026-12-31. See git history for full original wording.
 
-The exception expires when **both** conditions hold:
+#### Repeal rationale
 
-1. **No active reference**: `grep -rE 'docs/wbs/[0-9]' docs/specs/ docs/plans/ docs/adr/` returns 0 lines (no spec / plan / ADR body references the legacy WBS files).
-2. **No new entries since the deadline**: `git log --oneline --since='2026-12-31' -- docs/wbs/` returns 0 lines (no commit added or modified WBS files past 2026-12-31).
+User direction (2026-05-05): "Global CLAUDE.md 規約を優先" — the partial-adoption exception was lifted in favor of full alignment with the global rule. WBS files were treated as eligible for spec migration (despite being implementation logs by nature), accepting the looser interpretation of "spec" to encompass post-hoc implementation records with `status: implemented`.
 
-When both hold, a cleanup PR moves `docs/wbs/` to `docs/_archive/wbs/` (preserving git history) and removes the `WBS 直接 push の例外` clause from `CLAUDE.md`. The cleanup PR is the **owner: project lead** action item; if condition (1) is satisfied earlier than 2026-12-31, the cleanup may be advanced.
+#### Migration outcome (PR #180)
 
-#### Mechanical enforcement of "no new WBS entries"
-
-Enforcement of the new-entry ban is **not yet machine-checked** in this PR. A follow-up ISSUE will add to the canonical `scripts/pre-commit-doc-naming.sh`:
-
-```bash
-# Block addition of NEW files under docs/wbs/ (allow modification of existing files)
-NEW_WBS=$(git diff --cached --name-only --diff-filter=A | grep '^docs/wbs/.*\.md$' || true)
-[ -n "$NEW_WBS" ] && ERRORS+=("WBS 新規起票禁止 (global rule + ADR 0019): $NEW_WBS — TaskCreate を使用してください")
-```
-
-This is deferred to a separate PR because it is canonical-script scope (affects all 12 projects).
+- 36 WBS files (35 actual + `template.md` excluded) migrated to `docs/specs/_uncategorized/<slug>.md`
+- spec slug derived from WBS filename minus leading `<yyyy-MM-dd>-` prefix
+- `feature: <slug>`, `status: implemented`, `bounded_context: _uncategorized`, `related_issues: ["#NNN"]` (from filename), `last_reviewed: 2026-05-05`
+- Original WBS body preserved verbatim under `## 元 WBS 内容 (実装ログ由来)` section
+- 14-section restructure deferred to per-spec follow-up (project-deep curation work)
+- `docs/wbs/` directory deleted entirely
+- Project `CLAUDE.md` `WBS 直接 push の例外` clause removed
+- Mechanical enforcement of "no new WBS entries" now redundant (directory does not exist; would have to be re-created intentionally)
 
 ### C. Glossary partial migration (canonical relocation, no content rewrite)
 
@@ -76,11 +70,11 @@ The original `docs/wiki/glossary.md` file is removed after migration. The `docs/
 
 - After merge, 8 specs hold only frontmatter; their bodies are unchanged
 - 101 concept files exist under `~/Obsidian/kotoha-ime/glossary/`
-- 35 WBS files remain under `docs/wbs/` and are subject to the project-level exception clause in `CLAUDE.md`
+- ~~35 WBS files remain under `docs/wbs/` and are subject to the project-level exception clause in `CLAUDE.md`~~ → REPEALED 2026-05-05: 36 WBS migrated to `docs/specs/_uncategorized/` as `status: implemented`, `docs/wbs/` directory deleted, `CLAUDE.md` exception clause removed (PR #180). Project fully aligned with global rule.
 - Future feature PRs for Phase 3-B residuals (B0h-f / B3 / B6), Phase 5, and beyond will be expected to:
   - Restructure the relevant spec body to the 14-section global format (one spec at a time)
   - Cross-link `glossary_refs` in spec frontmatter to vault concept files
-  - Avoid creating new WBS entries (use in-conversation `TaskCreate` instead)
+  - Use in-conversation `TaskCreate` for per-task tracking (global rule, no project exception)
 
 ### D. Retroactive SemVer mapping waiver
 
