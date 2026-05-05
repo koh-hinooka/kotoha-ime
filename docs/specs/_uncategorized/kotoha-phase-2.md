@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#85", "#172"]
 related_prs: []
-glossary_refs: ["backend-trait", "user-dictionary", "learning-cache", "hybrid-ranker"]
+glossary_refs: ["backend-trait","candidate","gemma-2-2b-jpn-it","gguf","hiragana","hybrid-ranker","icl","kana","kotoha-dict","kotoha-storage","layer-3-smoke","learning-cache","preedit","row-3","system-dictionary","user-dictionary","vocabulary-lookup"]
 last_reviewed: 2026-05-05
 ---
 

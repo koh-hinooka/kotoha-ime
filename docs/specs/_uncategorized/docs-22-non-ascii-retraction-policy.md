@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#22"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["romaji"]
 last_reviewed: 2026-05-05
 ---
 

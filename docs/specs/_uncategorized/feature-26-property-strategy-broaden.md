@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#26"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["lefthook","romaji"]
 last_reviewed: 2026-05-05
 ---
 

@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#91"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["hiragana","kotoha-dict","mock-backend","romaji","sudachipy"]
 last_reviewed: 2026-05-05
 ---
 

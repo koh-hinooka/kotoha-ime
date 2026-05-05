@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#46"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["romaji","romaji-trie"]
 last_reviewed: 2026-05-05
 ---
 

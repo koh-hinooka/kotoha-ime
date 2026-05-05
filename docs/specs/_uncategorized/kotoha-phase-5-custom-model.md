@@ -4,7 +4,7 @@ status: draft
 bounded_context: _uncategorized
 related_issues: []
 related_prs: []
-glossary_refs: ["distillation", "gguf"]
+glossary_refs: ["candidate","distillation","edit-distance","gemma-2-2b-jpn-it","gguf","icl","kana","karukan","katakana","layer-3-smoke","learning-cache","lora","partial-input","romaji","row-3","scratch-training","zenz"]
 last_reviewed: 2026-05-05
 ---
 

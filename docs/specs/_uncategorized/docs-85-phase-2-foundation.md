@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#85"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["backend-trait","candidate","gemma-2-2b-jpn-it","learning-cache","lefthook","row-3","system-dictionary","user-dictionary"]
 last_reviewed: 2026-05-05
 ---
 

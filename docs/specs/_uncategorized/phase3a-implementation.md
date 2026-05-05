@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: []
 related_prs: []
-glossary_refs: []
+glossary_refs: ["candidate","kana","kotoha-engine","kotoha-storage","lefthook","preedit","romaji","row-3"]
 last_reviewed: 2026-05-05
 ---
 

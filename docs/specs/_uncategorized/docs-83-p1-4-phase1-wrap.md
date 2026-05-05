@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#83"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["backend-trait","candidate","gemma-2-2b-jpn-it","hiragana","katakana","layer-3-smoke","lefthook","romaji","row-3","zenz"]
 last_reviewed: 2026-05-05
 ---
 

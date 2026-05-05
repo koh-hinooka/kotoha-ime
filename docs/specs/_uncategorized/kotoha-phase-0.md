@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#1"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["azookey","canonical-romaji","gguf","hatsuon","hiragana","kana","karukan","katakana","lefthook","preedit","romaji","sokuon","zenz"]
 last_reviewed: 2026-05-05
 ---
 

@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#107"]
 related_prs: []
-glossary_refs: ["learning-cache", "kotoha-storage"]
+glossary_refs: ["hiragana","kana","kotoha-dict","kotoha-storage","learning-cache","lefthook"]
 last_reviewed: 2026-05-05
 ---
 

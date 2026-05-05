@@ -4,7 +4,7 @@ status: implemented
 bounded_context: _uncategorized
 related_issues: ["#69"]
 related_prs: []
-glossary_refs: []
+glossary_refs: ["azookey","backend-trait","candidate","chat-template","distillation","gemma-2-2b-jpn-it","gguf","greedy-decoding","hiragana","kana","katakana","layer-3-smoke","lefthook","mock-backend","pua-tokens","uv","zenz","zenzai"]
 last_reviewed: 2026-05-05
 ---
 
