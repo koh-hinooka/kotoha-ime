@@ -15,7 +15,7 @@ Kotoha プロジェクトの開発フェーズと、各フェーズの到達目�
 
 | ISSUE | spec | 状態 |
 |---|---|---|
-| [#174](https://github.com/std-koh-hinooka/kotoha-ime/issues/174) docs 構造改修と Obsidian vault 連携 | `docs/specs/_uncategorized/*` (8 spec frontmatter 整備) | [ ] |
+| [#174](https://github.com/std-koh-hinooka/kotoha-ime/issues/174) docs 構造改修と Obsidian vault 連携 | `docs/specs/_uncategorized/*` (8 spec frontmatter 整備) | [x] |
 | [#149](https://github.com/std-koh-hinooka/kotoha-ime/issues/149) P3-B B0h-f: I3 dispatch_rank_request async-ification | `docs/specs/_uncategorized/p3-a-ibus-engine.md` | [ ] |
 | [#136](https://github.com/std-koh-hinooka/kotoha-ime/issues/136) P3-B B3 + B6: signal listener loop + L3 manual smoke | `docs/specs/_uncategorized/p3-a-ibus-engine.md` | [ ] |
 
