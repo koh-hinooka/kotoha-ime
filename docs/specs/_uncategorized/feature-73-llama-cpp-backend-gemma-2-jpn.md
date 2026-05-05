@@ -1,11 +1,12 @@
 ---
 feature: feature-73-llama-cpp-backend-gemma-2-jpn
-status: implemented
+status: deprecated
+deprecated_reason: "Phase E migration で旧 docs/wbs/ から spec 化した実装ログ性質の文書。Global CLAUDE.md §Development Flow legacy spec 取扱いルール (実装ログ性質 → status: deprecated、本文 14-section restructure 不要) に基づき deprecated 扱い。git history は参照点として保持 (2026-05-06)。"
 bounded_context: _uncategorized
 related_issues: ["#73"]
 related_prs: []
 glossary_refs: ["azookey","gemma-2-2b-jpn-it","gguf","hiragana","kana","katakana","mock-backend","prompt-template","zenz","zenzai"]
-last_reviewed: 2026-05-05
+last_reviewed: 2026-05-06
 ---
 
 # P1-2.5 — LlamaCppBackend 汎用化 + Gemma-2-2B-jpn-it 採用 (実装ログ)
