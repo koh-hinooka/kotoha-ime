@@ -995,7 +995,7 @@ P2-D(Hybrid backend / Ranker 統合)の着手前に LearningCache の本実装 +
 - [ ] v002 migration(`v002_learning_cache_index.sql`)が新規 DB 初期化と既存 v001 DB の auto-upgrade の双方で正常に動作する
 - [ ] `SqliteLearningCacheStore` が UPSERT / auto eviction / LRU 削除 / lookup ordering の本実装を持ち、stub でないことを 23 件の L1 test が証明する
 - [ ] proptest 3 invariant が `PROPTEST_CASES=64` で全 PASS
-- [ ] WBS 記録(`docs/wbs/2026-04-26-feature-105-p2-c-learning-cache.md`)が作成されている
+- [ ] WBS 記録(`docs/specs/_uncategorized/feature-105-p2-c-learning-cache.md`)が作成されている
 - [ ] Medium tier team-review(security / performance / architecture / testing の 4 dimension)で Critical / High finding が全消化されている(Medium / Low finding は新規 follow-up Issue に移管)
 
 ---
@@ -1008,7 +1008,7 @@ P2-D(Hybrid backend / Ranker 統合)の着手前に LearningCache の本実装 +
 - `docs/adr/0015-kotoha-storage-sqlite-adoption.md` — kotoha-storage SQLite 採用根拠
 - `docs/specs/_uncategorized/kotoha-phase-2.md` §3.2 / §5.2 / §6.3 — Phase 2 全体 spec の LearningCache 関連節
 - `docs/specs/_uncategorized/p2-b-user-dictionary.md` §5.2 / §6.3 — P2-B の schema 設計と trait 定義
-- `docs/wbs/2026-04-25-feature-98-p2-b-user-dictionary.md` — P2-B 実装ログ(cap override / proptest / validation パターンの根拠)
+- `docs/specs/_uncategorized/feature-98-p2-b-user-dictionary.md` — P2-B 実装ログ(cap override / proptest / validation パターンの根拠)
 - session handoff memory `project_session_handoff_2026-04-25.md` — P2-C 着手前の状態確認
 - `crates/kotoha-storage/migrations/v001_initial.sql` — `learning_cache` table schema(本設計書が前提とする schema)
 - `crates/kotoha-storage/src/learning_cache/mod.rs` — P2-B 着地時の `LearningCacheStore` trait skeleton
