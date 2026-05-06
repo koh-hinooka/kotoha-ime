@@ -41,3 +41,5 @@ kotoha-core = { path = "../kotoha-core" }
 # Phase 3-B B0h-f + B3 (ADR 0020):engine-loop / dbus-listener thread 間の
 # channel + shutdown signal で利用。
 crossbeam-channel = { workspace = true }
+# Phase 3-B B3 (ADR 0020):listener thread に session bus connection を渡すため。
+zbus = { workspace = true }

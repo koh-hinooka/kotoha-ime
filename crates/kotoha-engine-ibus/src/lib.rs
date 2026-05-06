@@ -9,7 +9,12 @@
 //!
 //! - [`host_bridge::IBusHostBridge`] — `IMEHostBridge` の IBus 実装(driven port)
 //! - [`lookup_table::LookupTable`] — `Mutex<Vec<Candidate>>` 内部 buffer + IBus mapping
-//! - `dispatcher::IBusEventDispatcher` — D-Bus event 受信 + `IMEEngine` 呼び出し(M5 で追加)
+//! - [`listener::run`] — D-Bus method call → `Event::IBusKey` / `Event::IBusReset`
+//!   decode + bridge channel forward(B0h-f + B3 / ADR 0020、driving listener thread)
+//! - `dispatcher::IBusEventDispatcher` — Phase 3-A M5 / B0h-d で導入された
+//!   `Arc<Mutex<dyn IMEEngine>>` 経由 dispatcher。Phase 3-B B0h-f + B3(ADR 0020)
+//!   で 4-thread topology に移行したため production からは未使用となった。
+//!   keysym decode 経路の test 資産として一時残置、follow-up で削除予定。
 //! - `keysym` — IBus keysym → `KeyEvent` 変換 helper(M5 で追加)
 //!
 //! # Boundary 原則
@@ -21,6 +26,7 @@
 pub mod dispatcher;
 pub mod host_bridge;
 pub mod keysym;
+pub mod listener;
 pub mod lookup_table;
 pub(crate) mod proxy;
 pub(crate) mod types;

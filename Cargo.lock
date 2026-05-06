@@ -814,6 +814,7 @@ dependencies = [
  "kotoha-storage",
  "tracing",
  "tracing-subscriber",
+ "zbus",
 ]
 
 [[package]]
@@ -868,6 +869,8 @@ dependencies = [
 name = "kotoha-engine-ibus"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "crossbeam-channel",
  "kotoha-core",
  "kotoha-engine-core",
  "thiserror 1.0.69",

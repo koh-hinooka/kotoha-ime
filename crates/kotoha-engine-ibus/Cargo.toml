@@ -14,3 +14,9 @@ tracing = { workspace = true }
 zbus = { workspace = true }
 kotoha-engine-core = { path = "../kotoha-engine-core" }
 kotoha-core = { path = "../kotoha-core" }
+# Phase 3-B B0h-f + B3 (ADR 0020):listener thread が bridge channel に
+# `Event::IBusKey` / `Event::IBusReset` を流すため。
+crossbeam-channel = { workspace = true }
+# listener::run の戻り値 `anyhow::Result` 用。kotoha-bin から spawn 時に
+# `with_context` で wrap して propagate する経路に揃える。
+anyhow = { workspace = true }

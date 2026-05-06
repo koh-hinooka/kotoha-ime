@@ -36,6 +36,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use tracing_subscriber::EnvFilter;
 
+mod engine_loop;
 mod host_detect;
 
 const ENGINE_OBJECT_PATH: &str = "/org/freedesktop/IBus/Engine/Kotoha";
@@ -259,12 +260,13 @@ fn run_ibus() -> anyhow::Result<()> {
 
     // 9. reactor (Phase 3-B B0h-f + B3 / ADR 0020):4-thread topology の core。
     //    main は `ReactorHandles` を保持し、bridge_tx / worker_tx を各 thread に
-    //    move、shutdown_tx を SIGTERM/SIGINT handler 経由で発火させる。
+    //    move、shutdown_tx を `Drop` で発火させる(ctrlc::set_handler 等の
+    //    SIGTERM/SIGINT integration は B6 manual smoke で完成)。
     let kotoha_engine_reactor_linux::ReactorHandles {
         reactor,
-        bridge_tx: _bridge_tx,
+        bridge_tx,
         worker_tx,
-        shutdown_tx: _shutdown_tx,
+        shutdown_tx,
     } = kotoha_engine_reactor_linux::start();
 
     // 10. engine(spec §9.1 row 5: spawn 失敗は Result 経由 propagate)
@@ -278,22 +280,73 @@ fn run_ibus() -> anyhow::Result<()> {
     )
     .context("spawn ranker worker thread")?;
 
-    // 11. dispatcher / engine-loop / dbus-listener の thread 起動は Phase D / E で
-    //     完成させる(本 commit は Phase C scope のため、B3 listener / engine_loop
-    //     の wiring は未実施)。fail-loud で起動失敗を user に通知する。
-    let _ = engine; // engine は thread 移動前は drop すると worker が exit するため hold。
-    let _ = reactor;
+    // 11. listener thread 用の session bus connection を別途 open する
+    //     (IBusHostBridge は内部で別 connection を持つため独立)。
+    let listener_connection = zbus::blocking::Connection::session()
+        .context("open session bus for D-Bus listener thread")?;
+    let listener_shutdown = kotoha_engine_ibus::listener::ListenerShutdown::new();
+    let listener_observer = listener_shutdown.observer();
 
-    tracing::error!(
+    // 12. thread spawn(ADR 0020 §採択 Q4 4-thread topology)
+    //     順序:dbus-listener → engine-loop。engine_loop に engine + reactor を
+    //     move し、engine 状態を完全所有させる。
+    let listener_handle = std::thread::Builder::new()
+        .name("kotoha-dbus-listener".into())
+        .spawn(move || {
+            kotoha_engine_ibus::listener::run(listener_connection, bridge_tx, listener_observer)
+        })
+        .context("spawn dbus-listener thread")?;
+
+    let engine_loop_handle = std::thread::Builder::new()
+        .name("kotoha-engine-loop".into())
+        .spawn(move || engine_loop::run(engine, reactor))
+        .context("spawn engine-loop thread")?;
+
+    tracing::info!(
         ranker_backend,
         host_bridge_backend,
-        "kotoha engine + reactor wired up but the IBus event loop is not yet implemented \
-         (Phase 3-B B3 / ISSUE #136); refusing to silently exit"
+        "kotoha-bin event loop entered (4-thread topology: main / dbus-listener / engine-loop / ranker-worker)"
     );
-    anyhow::bail!(
-        "IBus event loop not yet implemented (tracked in Phase 3-B B3 / ISSUE #136); \
-         kotoha-bin cannot serve as an IME yet"
+
+    // 13. join 順は engine-loop → dbus-listener。
+    //     - engine-loop は `Event::Shutdown` 受信または `EventReactor::recv` Err
+    //       (全 Sender drop)で抜ける。
+    //     - dbus-listener は `ListenerShutdown::request()` または engine-loop drop
+    //       による bridge_tx close で抜ける。
+    //     現状 SIGTERM hook は未配線(B6 manual smoke で `ctrlc` crate で対応)。
+    //     開発時は engine-loop / listener が自然に exit する path を取らない限り
+    //     join は永続 block する。spec §9.3 fail-loud 原則に従い、shutdown hook
+    //     未完成は warning log で明示する。
+    tracing::warn!(
+        "SIGTERM/SIGINT shutdown handler not yet wired (B6 manual smoke follow-up). \
+         kotoha-bin will block on join until threads exit naturally."
     );
+
+    let engine_result = engine_loop_handle
+        .join()
+        .map_err(panic_to_anyhow)
+        .context("engine-loop thread panicked")?;
+    // engine-loop が exit したら listener にも shutdown を伝え、listener join。
+    listener_shutdown.request();
+    drop(shutdown_tx); // reactor 側の shutdown 経路も明示閉鎖
+    let listener_result = listener_handle
+        .join()
+        .map_err(panic_to_anyhow)
+        .context("dbus-listener thread panicked")?;
+
+    engine_result.context("engine-loop returned an error")?;
+    listener_result.context("dbus-listener returned an error")?;
+
+    Ok(())
+}
+
+/// thread が panic した際の `Box<dyn Any + Send>` を `anyhow::Error` に変換する。
+///
+/// `panic_message` (本 file 上部の helper) の wrapper version。
+/// `Send` 境界の都合で別関数として抽出している。
+fn panic_to_anyhow(payload: Box<dyn std::any::Any + Send>) -> anyhow::Error {
+    let msg = panic_message(&payload);
+    anyhow::anyhow!("thread panicked: {msg}")
 }
 
 /// `HybridRanker` を構築する production helper。
