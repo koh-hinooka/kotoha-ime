@@ -4,8 +4,8 @@ status: draft
 bounded_context: _uncategorized
 related_issues: ["#128", "#136", "#149"]
 related_prs: []
-glossary_refs: ["candidate","coalescing-window","hexagonal-architecture","hybrid-ranker","ime-engine","ime-host-bridge","kana","kotoha-engine","kotoha-storage","layer-3-smoke","lefthook","partial-input","phase3-ibus-engine-terms","preedit","ranker-worker","romaji"]
-last_reviewed: 2026-05-05
+glossary_refs: ["candidate","coalescing-window","event-reactor","event-loop","fan-in","hexagonal-architecture","hybrid-ranker","ime-engine","ime-host-bridge","kana","kotoha-engine","kotoha-storage","layer-3-smoke","lefthook","partial-input","phase3-ibus-engine-terms","preedit","ranker-worker","romaji"]
+last_reviewed: 2026-05-06
 ---
 
 # Phase 3-A: IBus engine integration design spec
@@ -446,6 +446,19 @@ impl CancellationToken for StdCancellationToken {
 
 ## §6 data flow
 
+### §6.0 アーキテクチャ note (rev3, 2026-05-06)
+
+Phase 3-B B0h-f + B3 一体化(ADR 0020)で、本 §6 / §7 の処理は以下の **4-thread lock-free topology** で実装される。本節以下の data flow trace は概念上の sequence を表し、実装は `EventReactor` 経由で fan-in された `Event` sum 型を engine-loop thread が単独 dispatch する。
+
+| Thread | 役割 | 既存 spec 参照 |
+|---|---|---|
+| `main` | DI wiring、thread spawn、SIGTERM/SIGINT 受領、join 順制御 | §3.3 |
+| `kotoha-dbus-listener` | zbus `blocking::MessageStream` で IBus method を受信、`Event::IBusKey` / `Event::IBusReset` に decode して bridge channel に送る | §6.1 step [1] / §6.4 入口 |
+| `kotoha-engine-loop` | `KotohaEngine` を単独所有、`EventReactor::recv()` で multiplex、apply_candidate_update を実行 | §6 全体の dispatch 主体 |
+| `kotoha-ranker-worker` | 既存 `RankerWorker` パターン継承、`Event::WorkerOutput` で送信 | §7 worker 仕様 |
+
+`KotohaEngine::drain_events_blocking` および `Arc<Mutex<dyn IMEEngine>>`(B0h-d 導入)は本 rev3 で撤去される。詳細は ADR 0020 を参照。
+
 ### §6.1 typing path(Live 変換 first)
 
 ```text
@@ -573,22 +586,49 @@ struct RequestHandle {
     cancel_token: Arc<dyn CancellationToken>,
 }
 
-/// worker thread から engine 主 thread への通知 channel message。
-enum EngineEvent {
-    Candidates { request_id: u64, update: CandidateUpdate },
-    /// worker 内部 panic 検出時に engine が thread 再生成判断するための signal
-    WorkerError { request_id: u64, error: String },
+/// 全 event source(D-Bus / worker / shutdown / 将来 notification)の sum 型。
+///
+/// rev3 (ADR 0020) で fan-in 化:dbus-listener / ranker-worker / main thread
+/// が `Sender<Event>::clone()` を持ち、engine-loop thread が単一
+/// `EventReactor` 経由で multiplex する。
+#[non_exhaustive]
+enum Event {
+    /// IBus session bus で受信した key event(dbus-listener thread → bridge channel)。
+    IBusKey(KeyEvent),
+    /// IBus focus_out / reset / disable 系。
+    IBusReset(IBusResetKind),
+    /// ranker-worker thread が生成した候補 update + worker error。
+    /// 旧 rev2 までの `EngineEvent::Candidates` / `EngineEvent::WorkerError` を統合。
+    WorkerOutput { request_id: u64, payload: WorkerPayload },
+    /// 全 thread に shutdown を通知する sentinel。Sender drop でも同等に伝搬する。
+    Shutdown,
+}
+
+enum WorkerPayload {
+    Candidates(CandidateUpdate),
+    /// worker 内部 panic 検出時に engine が thread 再生成判断するための signal。
+    Error(String),
 }
 ```
 
-### §7.2 worker thread モデル
+### §7.2 worker thread モデル(rev3、ADR 0020 で 4-thread topology に拡張)
 
-`RankerWorker` は engine 構築時に 1 個 spawn される dedicated background thread である。engine 主 thread は `RankRequest` を mpsc channel で worker に送る。worker は内部で以下の責務を持つ:
+`RankerWorker` は engine 構築時に 1 個 spawn される dedicated background thread である。rev2 まで「engine 主 thread」は engine state owner かつ event dispatcher を兼ねていたが、rev3(ADR 0020)以降は engine state を **`engine-loop` thread が単独所有**し、worker / dbus-listener とは独立 thread として動作する(§6.0 参照)。
 
-- `Ranker::rank()` を呼び出す(同期 return、heavy work は Ranker 内部の更に下位 thread / async に dispatch される想定)
+engine-loop thread は `EventReactor::recv()` で以下を multiplex する:
+
+- `Event::IBusKey(KeyEvent)`(dbus-listener から bridge channel 経由)
+- `Event::IBusReset(IBusResetKind)`(同上)
+- `Event::WorkerOutput { request_id, payload }`(ranker-worker から)
+- `Event::Shutdown`(main から / 全 Sender drop で伝搬)
+
+`RankerWorker` の責務は rev2 から不変:
+
+- engine-loop は `RankRequest` を crossbeam mpsc channel で worker に送る(send-only、blocking 撤去)
+- worker は `Ranker::rank()` を呼び出す(同期 return、heavy work は Ranker 内部の更に下位 thread / async に dispatch される想定)
 - Ranker からの `RankerOutput` を受け取る intermediate channel(`mpsc::Receiver<RankerOutput>`)を保持
-- Coalescing buffer に蓄積し、window 経過後または閾値到達で `EngineEvent::Candidates` を engine 主 thread に送る
-- request_id mismatch を検出して engine 側で discard(§7.5)
+- Coalescing buffer に蓄積し、window 経過後または閾値到達で `Event::WorkerOutput` を engine-loop に送る
+- request_id mismatch は engine-loop 側で discard(§7.5)
 
 ### §7.3 Coalescing window(動的)
 
@@ -602,18 +642,20 @@ window の正確な値は §13 Open Q 2 で empirical 確定する。
 ### §7.4 worker 主 loop(疑似 code)
 
 ```rust
-fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_engine: mpsc::Sender<EngineEvent>) {
+// rev3 (ADR 0020):tx_engine の型は crossbeam_channel::Sender<Event>。
+// 旧 rev2 の EngineEvent は Event enum の WorkerOutput variant に統合された。
+fn worker_loop(rx_request: Receiver<RankRequest>, tx_engine: Sender<Event>) {
     while let Ok(req) = rx_request.recv() {
-        let (tx_ranker, rx_ranker) = mpsc::channel();
+        let (tx_ranker, rx_ranker) = crossbeam_channel::unbounded();
         let _ = req.ranker.rank(&req.kana, &req.ctx, req.cancel_token.clone(), tx_ranker);
-        
+
         let window = match req.ctx.mode {
             ConversionMode::Live   => Duration::from_millis(7),
             ConversionMode::Commit => Duration::from_millis(30),
         };
         let deadline = Instant::now() + window;
         let mut buffer: Vec<Candidate> = Vec::new();
-        
+
         loop {
             let timeout = deadline.saturating_duration_since(Instant::now());
             match rx_ranker.recv_timeout(timeout) {
@@ -625,18 +667,18 @@ fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_engine: mpsc::Sender<
                 Err(RecvTimeoutError::Disconnected) => break,
             }
         }
-        
+
         if !req.cancel_token.is_cancelled() && !buffer.is_empty() {
-            let _ = tx_engine.send(EngineEvent::Candidates {
+            let _ = tx_engine.send(Event::WorkerOutput {
                 request_id: req.request_id,
-                update: CandidateUpdate::Replace(buffer.clone()),
+                payload: WorkerPayload::Candidates(CandidateUpdate::Replace(buffer.clone())),
             });
         }
-        
+
         // commit-mode の場合は LLM 後続結果が来る可能性、second window で待機
         if req.ctx.mode == ConversionMode::Commit {
             let second_deadline = Instant::now() + Duration::from_millis(150);
-            // 同様の loop で追加 update を engine に送る、cancel 時は break
+            // 同様の loop で追加 Event::WorkerOutput を engine-loop に送る、cancel 時は break
         }
     }
 }
@@ -835,7 +877,9 @@ Task A と Task B は実装規模が小さく(各 1 PR)、統合 PR にしても
 | 6(prerequisite)| Phase 0 RomajiConverter trie が kunrei/Hepburn/waapuro 3 方式並立か | §12.2 Task B | 別 ISSUE 起票 |
 | 7 | typing 中 LLM invocation を投げるか / dict only にするか | 投げる(best-effort、cancel propagation 受容)| Phase 3-A 本番実装 + Phase 1 Gemma で empirical、Phase 5 custom model 来たら再評価 |
 | 8 | `KeyModifiers` の IBus 完全 mapping | bitflags 暫定 4 種(Shift/Ctrl/Alt/Super)| IBus IBusModifierType 全列挙を実装段階で対応 |
-| 9 | adapter 内 Mutex<Vec<Candidate>> internal buffer の同時編集競合 | Phase 3-B B0h-d で `Arc<Mutex<dyn IMEEngine>>` 化済(dispatcher + engine 両方が thread-safe)。adapter 側 buffer も `Mutex<Vec<Candidate>>` 保持で thread-safe | **closure**(B0h-d, B2):"best-effort 単一thread 想定" は撤回。multi-thread D-Bus signal listener(B3)に対応した lock 設計済 |
+| 9 | adapter 内 Mutex<Vec<Candidate>> internal buffer の同時編集競合 | Phase 3-B B0h-d で `Arc<Mutex<dyn IMEEngine>>` 化済(dispatcher + engine 両方が thread-safe)。adapter 側 buffer も `Mutex<Vec<Candidate>>` 保持で thread-safe | **closure**(B0h-d, B2):"best-effort 単一thread 想定" は撤回。multi-thread D-Bus signal listener(B3)に対応した lock 設計済。**注 #10 参照**:engine state 自体の `Arc<Mutex<dyn IMEEngine>>` は rev3(ADR 0020)で撤去されたが、adapter 内部 buffer の `Mutex<Vec<Candidate>>`(IBusHostBridge 側、複数 caller から呼ばれる)は維持される |
+| 10 | engine state の lock 保持戦略(B0h-d Mutex 継続 vs lock-free engine-loop 単独所有) | rev3(ADR 0020)で **engine-loop thread 単独所有**を採用、`Arc<Mutex<dyn IMEEngine>>`(B0h-d 導入)を撤去 | **closure**(ADR 0020):4-thread topology で engine state は engine-loop が `move` 単独所有、lock 0 件、Mutex poison cascade リスクが構造的に消滅 |
+| 11 | engine-loop の coalescing window 実装手段 | 旧 rev2 では `drain_events_blocking` 内で待機 / rev3 では `EventReactor::recv_timeout(window)` で実装 | **closure**(ADR 0020):window 値は `recv_timeout` の Duration 引数で表現、5-10ms / 30ms の empirical 確定は §13 #2 で継続 |
 
 ## §14 forward direction(Phase 4 / 5 / 6)
 
@@ -846,6 +890,7 @@ Task A と Task B は実装規模が小さく(各 1 PR)、統合 PR にしても
 - 新 crate `kotoha-engine-fcitx5` を追加し `IMEHostBridge` を impl
 - `kotoha-bin::main` に host detection logic(env var / D-Bus name)を追加
 - `kotoha-engine-core` は **無変更**
+- rev3 (ADR 0020) 注:`EventReactor` は `kotoha-engine-reactor-linux` に置かれる。fcitx5 が D-Bus protocol で動く場合は同 reactor の bridge channel に signal を流せば良く、別 reactor 実装は不要。fcitx5 が独自 IPC(socket)を使う場合のみ `kotoha-engine-reactor-fcitx5` を並列追加する選択肢があるが、Phase 4 着手時に判断する
 
 ### §14.2 Phase 5 custom romaji-base model
 
@@ -880,4 +925,5 @@ Task A と Task B は実装規模が小さく(各 1 PR)、統合 PR にしても
 |------|----------|------|
 | 2026-05-02 | r1 | 初版 draft、ISSUE #116 |
 | 2026-05-04 | r2 | Phase 3-B B2 wire format 実装方針を §4.2 に追記、§13 Open Q 9 を B0h-d 結果で closure |
+| 2026-05-06 | r3 | Phase 3-B B0h-f + B3 一体化(ADR 0020)を §6.0 / §7.1 / §7.2 / §7.4 / §13 #10 #11 / §14.1 に反映:4-thread lock-free topology / `EventReactor` trait + `Event` sum 型 / `drain_events_blocking` 撤去 / `Arc<Mutex<dyn IMEEngine>>` 撤去 |
 | 2026-05-04 | r3 | §4.2 wire format 方針を実装後形に refresh(plain data struct + `into_variant`、structural assertion による test、`Display` 形式 error log)、§4.2.1 D-Bus session bus threat model 追加。Phase 3-B B2 PR #171 の review 統合反映 |

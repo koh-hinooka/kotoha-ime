@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-05-02)
+Accepted (2026-05-02)、rev2 (2026-05-06):crossbeam-channel 採択を補足、「core は tokio 非依存」原則は維持
 
 ## Context
 
@@ -22,6 +22,11 @@ Phase 3-A IBus engine 実装で、core engine layer (`kotoha-engine-core`) が h
   `CancellationToken` は自作 trait + `StdCancellationToken` impl とし、Phase 5/6 で
   tokio runtime を導入する場合は別 crate で `TokioCancellationToken` adapter を
   提供する。
+- **rev2 補足 (2026-05-06)**:Phase 3-B B0h-f + B3 一体化(ADR 0020)で multi-source
+  event multiplex 用に `crossbeam-channel = "0.5"` を採択する。`std::sync::mpsc`
+  上位互換であり「core は tokio 非依存」原則は維持される。`select!` macro は
+  reactor 実装内部 detail として OS 依存 crate(`kotoha-engine-reactor-linux`)
+  に閉じ、`kotoha-engine-core` の trait API には露出しない。
 
 ## Consequences
 
@@ -36,6 +41,7 @@ Phase 3-A IBus engine 実装で、core engine layer (`kotoha-engine-core`) が h
 
 ## References
 
-- Phase 3-A spec `docs/superpowers/specs/2026-05-02-p3-a-ibus-engine-design.md` §3 / §4
+- Phase 3-A spec `docs/specs/_uncategorized/p3-a-ibus-engine.md` §3 / §4
 - ADR 0011: kanji backend trait design(trait ベース DI の前例)
+- ADR 0020: Event-loop architecture for Phase 3-B(rev2 補足の根拠)
 - Adaptive boundary-first 原則(`feedback_adaptive_boundary_first.md`)
