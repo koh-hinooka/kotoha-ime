@@ -103,7 +103,15 @@ fn typing_space_enter_end_to_end_via_real_hybrid_ranker() {
 
     eng.process_key_event(key_char('k'));
     eng.process_key_event(key_char('a'));
+    // Phase 3-B B0h-f rev3 (ADR 0020):Live 候補も engine-loop role の pump で
+    // engine state に反映される(production の engine-loop と等価)。
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    eng.pump_worker_events_for_test(&worker_event_rx);
     eng.process_key_event(key_special(keysyms::SPACE));
+    // SPACE で Commit dispatch → worker output 待機 + pump で
+    // CandidatesShown 遷移を起こしてから RETURN で commit する。
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    eng.pump_worker_events_for_test(&worker_event_rx);
     eng.process_key_event(key_special(keysyms::RETURN));
 
     let ops = host.operations();
@@ -133,6 +141,10 @@ fn live_typing_shows_hybrid_ranker_candidates() {
 
     eng.process_key_event(key_char('k'));
     eng.process_key_event(key_char('a'));
+    // Phase 3-B B0h-f rev3 (ADR 0020):worker → engine-loop async path を
+    // pump で進めると `update_candidates(Replace)` が host に飛ぶ。
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    eng.pump_worker_events_for_test(&worker_event_rx);
 
     let ops = host.operations();
     // Live mode で update_candidates(Replace) + show_candidate_window が呼ばれている

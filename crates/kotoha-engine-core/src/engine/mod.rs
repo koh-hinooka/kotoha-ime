@@ -37,20 +37,6 @@ use worker_channel::WorkerChannel;
 pub use commit_history::CommitHistory;
 pub use worker::panic_message_from;
 
-/// `KotohaEngine` 公開 API のエラー型。
-///
-/// Phase 3-B B0h-f + B3 (ADR 0020) で engine-loop thread が `apply_candidate_update`
-/// を呼ぶ経路を導入した際に追加。現状は variant 無しの placeholder で、
-/// 将来 worker error / host I/O 失敗等を区別する余地として用意する。
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum KotohaEngineError {
-    /// 現状未使用。`#[non_exhaustive]` のため variant が 0 件でも将来追加可能。
-    #[doc(hidden)]
-    #[error("placeholder; should never be observed")]
-    Placeholder,
-}
-
 /// `KotohaEngine` の現在状態(spec §5.1)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineState {
@@ -224,7 +210,7 @@ impl KotohaEngine {
             cancel_token,
             ranker: self.ranker.clone(),
         };
-        if self.worker.tx_request.send(req).is_err() {
+        if self.worker.send_request(req).is_err() {
             // worker thread が死亡している。spec §9.1 row 2 に従い、
             // engine 状態を Idle に戻して stale active_request を残さない。
             //
@@ -232,13 +218,20 @@ impl KotohaEngine {
             // breaker を持つ。本 path に到達したら engine 全体を IME-disabled
             // に倒して keystroke ごとの ERROR log flood を停止し、user に
             // 「IME が無効化された」を察知させる(spec §9.3)。
+            //
+            // rev3 (ADR 0020 review M4 fix):他 idle-degrade path との
+            // 対称性のため `cancel_active()` で active_request の token を
+            // 明示 cancel する。さらに preedit + host preedit も clear して
+            // UI に stale 文字列が残らないようにする(degrade_to_idle と同等)。
             tracing::error!(
                 request_id,
                 "ranker worker channel closed; engine going to IME-disabled (consecutive panic threshold reached \
                  or worker exited unexpectedly)"
             );
-            self.active_request = None;
+            self.cancel_active();
+            self.preedit.clear();
             self.candidates.clear();
+            self.host.update_preedit("", 0, false);
             self.host.hide_candidate_window();
             self.state = EngineState::Idle;
             self.enabled = false;
@@ -258,9 +251,17 @@ impl KotohaEngine {
     }
 
     /// worker 死亡 / WorkerError 発生時の共通 Idle 復帰処理。
+    ///
+    /// rev3 (ADR 0020 review M3 fix):`focus_out` / `reset` と同等に
+    /// **preedit と host preedit notification も clear する**。旧版は
+    /// `candidates.clear()` のみ走り、host UI 上に preedit 文字列が orphan で
+    /// 残る silent failure があった(spec §9.3「変換失敗で前回 preedit が
+    /// 画面に残る」防止)。
     fn degrade_to_idle(&mut self) {
         self.active_request = None;
+        self.preedit.clear();
         self.candidates.clear();
+        self.host.update_preedit("", 0, false);
         self.host.hide_candidate_window();
         self.state = EngineState::Idle;
     }
@@ -280,38 +281,41 @@ impl KotohaEngine {
     /// # Postconditions
     ///
     /// - `request_id != active_request.id` ⇒ stale 結果として discard
+    ///   (`tracing::trace!` で観測経路を残す)
     /// - `payload == Candidates(_)` ⇒ buffer 更新 + CommitConverting 中なら
     ///   CandidatesShown へ昇格(spec §5.2 row 7)
     /// - `payload == Error(_)` で `request_id == active_request.id` ⇒
     ///   engine state を Idle に degrade(spec §9.1 row 2)
-    ///
-    /// # Errors
-    ///
-    /// 本実装は state 更新 + host 通知のみ行うため `Result::Ok(())` 固定。
-    /// `KotohaEngineError` は将来の拡張点として残してある。
-    pub fn apply_candidate_update(
-        &mut self,
-        request_id: u64,
-        payload: WorkerPayload,
-    ) -> Result<(), KotohaEngineError> {
+    pub fn apply_candidate_update(&mut self, request_id: u64, payload: WorkerPayload) {
         let active_id = self.active_request.as_ref().map(|h| h.id);
         match payload {
             WorkerPayload::Candidates(update) => {
                 if active_id != Some(request_id) {
-                    return Ok(());
+                    tracing::trace!(
+                        request_id,
+                        ?active_id,
+                        "discarding stale Candidates from worker (request_id mismatch)"
+                    );
+                    return;
                 }
                 self.apply_buffer_update(update);
                 self.maybe_promote_commit_to_candidates_shown();
                 self.maybe_update_live_candidates();
             }
             WorkerPayload::Error(error) => {
-                tracing::error!(request_id, error, "ranker worker error");
+                let sanitized = sanitize_log_text(&error);
+                tracing::error!(request_id, error = %sanitized, "ranker worker error");
                 if active_id == Some(request_id) {
                     self.degrade_to_idle();
+                } else {
+                    tracing::trace!(
+                        request_id,
+                        ?active_id,
+                        "ranker worker error is for stale request, no degrade"
+                    );
                 }
             }
         }
-        Ok(())
     }
 
     /// LiveConverting 中に worker output が届いた際、buffer に候補があるなら
@@ -388,6 +392,24 @@ impl KotohaEngine {
             }
         }
     }
+}
+
+/// log 出力で control / bidi / escape 文字を `\xNN` 表記に escape する。
+///
+/// `WorkerPayload::Error(String)` のように ranker / 外部入力由来の文字列を
+/// `tracing::error!` に流す境界で本 helper を通す(spec §9.3 silent failure
+/// 防止 + log injection 緩和)。`crate::sanitize::is_safe_for_host` は host UI
+/// 出力向けの「reject filter」だが、log では文脈確認のため捨てずに escape する。
+fn sanitize_log_text(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202E}' | '\u{202D}') {
+            out.push_str(&format!("\\u{{{:04x}}}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// candidate Vec から `surface` が unsafe な要素を除去する filter。
@@ -540,7 +562,7 @@ impl KotohaEngine {
                 payload,
             } = ev
             {
-                let _ = self.apply_candidate_update(request_id, payload);
+                self.apply_candidate_update(request_id, payload);
             }
         }
     }
@@ -597,6 +619,38 @@ mod tests {
         ];
         let kept = filter_safe_candidates(input);
         assert!(kept.is_empty());
+    }
+
+    #[test]
+    fn sanitize_log_text_escapes_control_chars() {
+        // Phase 3-B B0h-f rev3 (ADR 0020) review Low security fix:
+        // `WorkerPayload::Error(String)` の log 出力経路で control / bidi /
+        // line-separator 文字を `\u{NNNN}` 表記に escape する。
+        let input = "leak\x1b[2Jhere\nand\u{202E}bidi";
+        let escaped = sanitize_log_text(input);
+        assert!(
+            escaped.contains("\\u{001b}"),
+            "expected ESC escape, got {escaped}"
+        );
+        assert!(
+            escaped.contains("\\u{000a}"),
+            "expected \\n escape, got {escaped}"
+        );
+        assert!(
+            escaped.contains("\\u{202e}"),
+            "expected RTL override escape, got {escaped}"
+        );
+        // ASCII alphanumeric は保持される。
+        assert!(escaped.contains("leak"));
+        assert!(escaped.contains("here"));
+        assert!(escaped.contains("bidi"));
+    }
+
+    #[test]
+    fn sanitize_log_text_preserves_safe_text() {
+        let input = "ranker error: timeout for kana=\"こんにちは\"";
+        let escaped = sanitize_log_text(input);
+        assert_eq!(escaped, input);
     }
 }
 
@@ -828,6 +882,167 @@ mod boundary_notify_tests {
                 .any(|op| matches!(op, HostOperation::UpdateCandidates(_))),
             "apply_candidate_update should not emit host update_candidates for clean Replace; \
              host call is the caller's responsibility (transitions.rs). Observed: {ops:?}"
+        );
+    }
+}
+
+#[cfg(all(test, feature = "test-helpers"))]
+mod apply_candidate_update_tests {
+    //! Phase 3-B B0h-f rev3 (ADR 0020) review Critical fix:`apply_candidate_update`
+    //! 公開 entry point の 4 branch 直接 unit test。
+    //!
+    //! - request_id mismatch (Candidates 経路) → silent discard、state 変化なし
+    //! - request_id mismatch (Error 経路) → degrade 不発火、state 変化なし
+    //! - WorkerPayload::Error + 一致 id → degrade_to_idle (preedit + candidates clear、host 通知)
+    //! - WorkerPayload::Candidates + 一致 id + LiveConverting → host へ Replace 通知
+    //!
+    //! production の engine-loop と等価な dispatch を 1 ステップで観測する。
+
+    use super::*;
+    use crate::testing::{HostOperation, MockCandidateUpdate, MockHostBridge};
+    use kotoha_core::Candidate;
+
+    /// 共通 helper:noop ranker / stub writer / host bridge で engine を組む。
+    /// 各 test は active_request を手動で立てて apply_candidate_update を呼ぶ。
+    fn build_engine_with_active_request(active_id: u64) -> (KotohaEngine, MockHostBridge) {
+        struct NoopRanker;
+        impl crate::Ranker for NoopRanker {
+            fn rank(
+                &self,
+                _kana: &str,
+                _ctx: &crate::ConversionContext,
+                _cancel: std::sync::Arc<dyn crate::CancellationToken>,
+                _sink: std::sync::mpsc::Sender<crate::RankerOutput>,
+            ) -> Result<(), crate::RankerError> {
+                Ok(())
+            }
+        }
+        #[derive(Default)]
+        struct StubWriter;
+        impl crate::learning_port::LearningRecorder for StubWriter {
+            fn record_choice(
+                &self,
+                _kana_input: &str,
+                _chosen_kanji: &str,
+            ) -> Result<(), crate::learning_port::LearningError> {
+                Ok(())
+            }
+            fn evict_lru(
+                &self,
+                _max_entries: usize,
+            ) -> Result<usize, crate::learning_port::LearningError> {
+                Ok(0)
+            }
+        }
+
+        let host = MockHostBridge::new();
+        let host_handle = host.clone();
+        let host_box: Box<dyn IMEHostBridge> = Box::new(host);
+        let (worker_event_tx, _worker_event_rx) = crossbeam_channel::unbounded();
+        let mut engine = KotohaEngine::new(
+            host_box,
+            std::sync::Arc::new(NoopRanker),
+            std::sync::Arc::new(StubWriter),
+            worker_event_tx,
+        )
+        .expect("engine spawn");
+
+        // active_request を直接 install。本 test は dispatch 経路を avoid して
+        // apply_candidate_update の 4 branch を pin することに専念する。
+        engine.active_request = Some(RequestHandle {
+            id: active_id,
+            cancel_token: std::sync::Arc::new(StdCancellationToken::new()),
+        });
+        // LiveConverting に倒して maybe_update_live_candidates path も exercise。
+        engine.state = EngineState::LiveConverting;
+        engine.preedit.current = "か".to_string();
+
+        (engine, host_handle)
+    }
+
+    #[test]
+    fn candidates_with_matching_id_apply_buffer_and_notify_host_in_live() {
+        let (mut engine, host) = build_engine_with_active_request(42);
+        engine.apply_candidate_update(
+            42,
+            WorkerPayload::Candidates(CandidateUpdate::Replace(vec![Candidate::new("蚊", -1.0)])),
+        );
+        assert_eq!(engine.candidate_count_for_test(), 1);
+        // LiveConverting なので update_candidates(Replace) が host に飛ぶ。
+        let ops = host.operations();
+        assert!(
+            ops.iter().any(|o| matches!(
+                o,
+                HostOperation::UpdateCandidates(MockCandidateUpdate::Replace(v)) if v == &vec!["蚊".to_string()]
+            )),
+            "expected UpdateCandidates(Replace) in {ops:?}"
+        );
+    }
+
+    #[test]
+    fn candidates_with_mismatched_id_are_silently_discarded() {
+        let (mut engine, host) = build_engine_with_active_request(42);
+        // 別 id の output:state 変化なし、host 通知なし。
+        engine.apply_candidate_update(
+            999,
+            WorkerPayload::Candidates(CandidateUpdate::Replace(vec![Candidate::new(
+                "stale", -1.0,
+            )])),
+        );
+        assert_eq!(
+            engine.candidate_count_for_test(),
+            0,
+            "stale Candidates should not populate buffer"
+        );
+        let ops = host.operations();
+        assert!(
+            !ops.iter()
+                .any(|o| matches!(o, HostOperation::UpdateCandidates(_))),
+            "stale Candidates should not emit host UpdateCandidates: {ops:?}"
+        );
+    }
+
+    #[test]
+    fn worker_error_with_matching_id_degrades_to_idle() {
+        let (mut engine, host) = build_engine_with_active_request(42);
+        engine.apply_candidate_update(42, WorkerPayload::Error("timeout".to_string()));
+        assert_eq!(engine.state_for_test(), EngineState::Idle);
+        assert_eq!(
+            engine.preedit_for_test(),
+            "",
+            "degrade_to_idle should clear preedit (rev3 fix)"
+        );
+        assert_eq!(engine.candidate_count_for_test(), 0);
+        // host への通知:hide_candidate_window と update_preedit("",0,false) が出る。
+        let ops = host.operations();
+        assert!(
+            ops.iter()
+                .any(|o| matches!(o, HostOperation::HideCandidateWindow)),
+            "degrade should hide candidate window: {ops:?}"
+        );
+        assert!(
+            ops.iter().any(|o| matches!(
+                o,
+                HostOperation::UpdatePreedit { text, visible, .. }
+                    if text.is_empty() && !*visible
+            )),
+            "degrade should clear host preedit: {ops:?}"
+        );
+    }
+
+    #[test]
+    fn worker_error_with_mismatched_id_does_not_degrade() {
+        let (mut engine, host) = build_engine_with_active_request(42);
+        let host_op_count_before = host.operations().len();
+        engine.apply_candidate_update(999, WorkerPayload::Error("stale".to_string()));
+        // state は LiveConverting のまま、preedit は維持される。
+        assert_eq!(engine.state_for_test(), EngineState::LiveConverting);
+        assert_eq!(engine.preedit_for_test(), "か");
+        // host 通知は変化していない(error log は出ているが host への呼び出しなし)。
+        assert_eq!(
+            host.operations().len(),
+            host_op_count_before,
+            "stale error should NOT cause any host operation"
         );
     }
 }

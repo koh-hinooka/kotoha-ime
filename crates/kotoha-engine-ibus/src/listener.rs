@@ -69,6 +69,31 @@ impl Default for ListenerShutdown {
     }
 }
 
+/// 本 PR の listener stub 起動を許可する env var 名。
+///
+/// production 環境では本 var 未設定で `run()` は起動拒否(spec §9.3 fail-loud)。
+/// 開発・CI 用途では `=1` を export して stub を許可する。Phase 3-B B6 で実 zbus
+/// 経路完成時に env var 自体は不要となる(本 const も削除予定)。
+pub const KOTOHA_ALLOW_LISTENER_STUB_ENV: &str = "KOTOHA_ALLOW_LISTENER_STUB";
+
+/// listener stub を許可する env var 値の判定。
+fn allow_listener_stub() -> bool {
+    matches!(
+        std::env::var(KOTOHA_ALLOW_LISTENER_STUB_ENV).as_deref(),
+        Ok("1" | "true" | "yes")
+    )
+}
+
+/// listener が `run()` 起動拒否したことを示す sentinel。
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "B3 listener is a non-functional stub (Phase 3-B B0h-f rev3 / ADR 0020 §影響). \
+     The IME will not deliver any key events to the engine in this state. \
+     Set {KOTOHA_ALLOW_LISTENER_STUB_ENV}=1 only for development / CI smoke runs. \
+     Full implementation tracked in ISSUE #136 B6 manual smoke."
+)]
+pub struct ListenerStubRefused;
+
 /// D-Bus listener thread の main loop(B3 architectural skeleton)。
 ///
 /// # Preconditions
@@ -83,6 +108,11 @@ impl Default for ListenerShutdown {
 /// - `bridge_tx.send()` が `Err` を返したら(engine-loop drop で channel close)
 ///   `Ok(())` で return する
 ///
+/// # Errors
+///
+/// - [`ListenerStubRefused`] — `KOTOHA_ALLOW_LISTENER_STUB` が未設定で stub
+///   実装の起動を拒否した場合(spec §9.3 fail-loud / B6 完成までの safety net)
+///
 /// # Stub behavior
 ///
 /// 本 PR では実 zbus message stream の decode は実装せず、shutdown flag を
@@ -93,9 +123,20 @@ pub fn run(
     bridge_tx: Sender<Event>,
     shutdown: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
-    tracing::info!(
-        "dbus-listener started (B3 architectural skeleton; full zbus message decode \
-         deferred to B6 manual smoke per ADR 0020 §影響)"
+    if !allow_listener_stub() {
+        tracing::error!(
+            env_var = KOTOHA_ALLOW_LISTENER_STUB_ENV,
+            "dbus-listener refusing to start: this build ships only the B3 architectural \
+             skeleton with no zbus message decode. Set {KOTOHA_ALLOW_LISTENER_STUB_ENV}=1 to \
+             allow stub startup (development / CI only). Full implementation tracked in \
+             ISSUE #136 B6 manual smoke."
+        );
+        return Err(anyhow::Error::from(ListenerStubRefused));
+    }
+    tracing::error!(
+        "dbus-listener started in STUB mode (KOTOHA_ALLOW_LISTENER_STUB=1). \
+         No D-Bus method calls will be decoded; the IME will NOT receive key events \
+         until B6 lands. Production deployments must NOT export this env var."
     );
     while !shutdown.load(Ordering::SeqCst) {
         // bridge_tx が disconnected ならば engine-loop が落ちた合図。即時 exit。
@@ -107,4 +148,69 @@ pub fn run(
     }
     tracing::info!("dbus-listener received shutdown signal, exiting");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Phase 3-B B0h-f rev3 (ADR 0020) review Critical 修正:listener stub の
+    //! shutdown ordering と fail-loud 起動拒否を pin する。
+    //!
+    //! `KOTOHA_ALLOW_LISTENER_STUB` env var の設定値ごとに run() の戻り値を観測する。
+
+    use super::*;
+    use crossbeam_channel::unbounded;
+    use std::time::Duration;
+
+    fn dummy_connection() -> zbus::blocking::Connection {
+        zbus::blocking::Connection::session().expect("test requires session bus")
+    }
+
+    /// `KOTOHA_ALLOW_LISTENER_STUB` 未設定で `run()` は即時 `ListenerStubRefused` を返す。
+    #[test]
+    #[ignore = "依存: dbus session bus available; CI で flaky のため opt-in"]
+    fn run_refuses_to_start_without_env_var() {
+        // 本 test は env var を unsafely 操作するため、他 test と並列実行 unsafe。
+        // `cargo test -- --test-threads=1` で動かすか、本 test を ignore のままに留める。
+        unsafe {
+            std::env::remove_var(KOTOHA_ALLOW_LISTENER_STUB_ENV);
+        }
+        let conn = dummy_connection();
+        let (tx, _rx) = unbounded();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let result = run(conn, tx, shutdown);
+        assert!(
+            result.is_err(),
+            "run() should reject when env var unset, got Ok"
+        );
+    }
+
+    /// `KOTOHA_ALLOW_LISTENER_STUB=1` + `ListenerShutdown::request()` で
+    /// listener thread が ~200ms 以内に `Ok(())` で return する。
+    #[test]
+    #[ignore = "依存: dbus session bus available; CI で flaky のため opt-in"]
+    fn run_exits_within_200ms_after_shutdown_request() {
+        unsafe {
+            std::env::set_var(KOTOHA_ALLOW_LISTENER_STUB_ENV, "1");
+        }
+        let conn = dummy_connection();
+        let (tx, _rx) = unbounded();
+        let shutdown_handle = ListenerShutdown::new();
+        let observer = shutdown_handle.observer();
+        let listener_thread = std::thread::spawn(move || run(conn, tx, observer));
+
+        // 50ms poll cycle + 余裕で 80ms 後 request、150ms 待って exit を観測。
+        std::thread::sleep(Duration::from_millis(80));
+        shutdown_handle.request();
+        let start = std::time::Instant::now();
+        let result = listener_thread.join().expect("thread join");
+        let elapsed = start.elapsed();
+        assert!(result.is_ok(), "expected Ok(()), got {result:?}");
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "listener should exit within 200ms after shutdown request, took {elapsed:?}"
+        );
+        unsafe {
+            std::env::remove_var(KOTOHA_ALLOW_LISTENER_STUB_ENV);
+        }
+    }
 }

@@ -2,7 +2,7 @@
 
 ## ステータス
 
-承認 (2026-05-06)
+承認 (2026-05-06)、rev2 (2026-05-07):実装フェーズで判明した B3 listener と SIGTERM hook の B6 deferral を §影響 に明記
 
 ## コンテキスト
 
@@ -122,6 +122,15 @@ Phase 3-B B0h-f + B3 を一体化し、以下の architecture を採用する。
 - **ADR 0017 (rev2 で更新)**: 「core は tokio 非依存」原則は維持。crossbeam-channel = "0.5" の採択を補足。
 - **ADR 0018 (Ranker invocation contract)**: 維持。`Ranker` trait API は変更なし。
 - **B0h-d (#157 / PR #158) で導入した `Arc<Mutex<dyn IMEEngine>>`**: 本 ADR で superseded。撤去理由は ADR 0020 §採択 Q4 を参照。
+
+### rev2 (2026-05-07) 補足:B6 deferral 明示
+
+実装フェーズ(PR #183)で以下 2 件は ADR 起案時の見積を超え、B6 manual smoke (#136 残)に deferral となった。本 deferral は本 ADR の §決定 / §採択 Q1-Q4 を変更しない(architectural intent は完成)が、実 production 動作までは B6 完了が必要である事実を残す。
+
+1. **B3 listener の zbus message decode**:`kotoha-engine-ibus::listener::run` は本 PR で **architectural skeleton**(shutdown flag polling)として完成。実 zbus `MessageStream` decode + IBus engine factory 登録(`RequestName` + `interface!` macro impl)は B6 で完成させる。skeleton 起動は `KOTOHA_ALLOW_LISTENER_STUB=1` 必須(env var 未設定時は `ListenerStubRefused` で起動拒否、spec §9.3 fail-loud)。
+2. **SIGTERM/SIGINT hook**:`kotoha-bin::run_ibus()` の `engine_loop_handle.join()` は signal 受信で抜ける経路が無い。本 PR は `tracing::warn!` 1 行で限界を明示。`ctrlc::set_handler` 等の最小依存追加は B6 で行う。
+
+これらは ADR 0020 の architectural goals を変えるものではなく、実 IBus daemon との接続(B6 manual smoke)前段で完成させるべき残作業である。Issue #136 の acceptance に反映する。
 
 ## 参考
 
