@@ -12,8 +12,30 @@ use std::time::{Duration, Instant};
 use kotoha_core::Candidate;
 
 use crate::cancel::CancellationToken;
+use crate::engine::KotohaEngine;
 use crate::host_bridge::IMEHostBridge;
+use crate::learning_port::LearningRecorder;
 use crate::ranker::{CandidateUpdate, ConversionContext, Ranker, RankerError, RankerOutput};
+use crate::reactor::Event;
+
+/// Phase 3-B B0h-f rev3 (ADR 0020) で `KotohaEngine::new` の signature が
+/// 4 引数化(`worker_event_tx: Sender<Event>` 追加)された。test 側で channel
+/// pair の boilerplate を毎回書かなくて済むよう、本 helper が `(eng, rx)` を
+/// 返す。`rx` は `KotohaEngine::pump_worker_events_for_test` に渡して engine-loop
+/// thread の挙動を模擬する。
+///
+/// # Errors
+///
+/// - `KotohaEngine::new` 内部の thread spawn 失敗時に伝播する [`std::io::Error`]
+pub fn make_engine_with_event_rx(
+    host: Box<dyn IMEHostBridge>,
+    ranker: Arc<dyn Ranker>,
+    writer: Arc<dyn LearningRecorder>,
+) -> std::io::Result<(KotohaEngine, crossbeam_channel::Receiver<Event>)> {
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let eng = KotohaEngine::new(host, ranker, writer, tx)?;
+    Ok((eng, rx))
+}
 
 /// `IMEHostBridge` への呼び出しを `Vec<HostOperation>` に記録する mock。
 ///

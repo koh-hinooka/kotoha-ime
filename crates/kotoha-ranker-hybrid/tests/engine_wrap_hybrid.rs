@@ -69,7 +69,12 @@ fn key_special(keysym: u32) -> KeyEvent {
 
 fn build_engine_with_real_hybrid_ranker(
     canned: Vec<EngineCandidate>,
-) -> (KotohaEngine, MockHostBridge, Arc<MockLearningCacheStore>) {
+) -> (
+    KotohaEngine,
+    MockHostBridge,
+    Arc<MockLearningCacheStore>,
+    crossbeam_channel::Receiver<kotoha_engine_core::reactor::Event>,
+) {
     let host = MockHostBridge::new();
     let host_clone = host.clone();
     let stub_engine: Arc<dyn MorphologicalEngine + Send + Sync> = Arc::new(StubEngine { canned });
@@ -78,20 +83,23 @@ fn build_engine_with_real_hybrid_ranker(
     let user_vocab_port = kotoha_engine_adapter::arc_mock_user_vocab(user_vocab);
     let (recorder, lookup) = kotoha_engine_adapter::arc_mock_learning_cache(learning_cache.clone());
     let ranker = Arc::new(HybridRanker::new(stub_engine, user_vocab_port, lookup));
-    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, recorder).expect("engine spawn");
+    let (worker_event_tx, worker_event_rx) = crossbeam_channel::unbounded();
+    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, recorder, worker_event_tx)
+        .expect("engine spawn");
     eng.enable();
     eng.focus_in();
-    (eng, host, learning_cache)
+    (eng, host, learning_cache, worker_event_rx)
 }
 
 /// End-to-end: typing「ka」→ space → Enter で StubEngine 由来候補が commit される
 #[test]
 fn typing_space_enter_end_to_end_via_real_hybrid_ranker() {
-    let (mut eng, host, _cache) = build_engine_with_real_hybrid_ranker(vec![EngineCandidate {
-        surface: "蚊".to_string(),
-        reading: "か".to_string(),
-        score: -1.0,
-    }]);
+    let (mut eng, host, _cache, worker_event_rx) =
+        build_engine_with_real_hybrid_ranker(vec![EngineCandidate {
+            surface: "蚊".to_string(),
+            reading: "か".to_string(),
+            score: -1.0,
+        }]);
 
     eng.process_key_event(key_char('k'));
     eng.process_key_event(key_char('a'));
@@ -116,11 +124,12 @@ fn typing_space_enter_end_to_end_via_real_hybrid_ranker() {
 /// End-to-end: 実 HybridRanker から Live 変換候補が候補ウィンドウに反映される
 #[test]
 fn live_typing_shows_hybrid_ranker_candidates() {
-    let (mut eng, host, _cache) = build_engine_with_real_hybrid_ranker(vec![EngineCandidate {
-        surface: "蚊".to_string(),
-        reading: "か".to_string(),
-        score: -1.0,
-    }]);
+    let (mut eng, host, _cache, worker_event_rx) =
+        build_engine_with_real_hybrid_ranker(vec![EngineCandidate {
+            surface: "蚊".to_string(),
+            reading: "か".to_string(),
+            score: -1.0,
+        }]);
 
     eng.process_key_event(key_char('k'));
     eng.process_key_event(key_char('a'));

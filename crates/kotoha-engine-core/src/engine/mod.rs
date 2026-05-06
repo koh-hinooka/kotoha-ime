@@ -8,15 +8,16 @@
 //! ([`transitions::dispatch_key`])で網羅する。
 
 use std::io;
-use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+
+use crossbeam_channel::Sender;
 
 use crate::cancel::{CancellationToken, StdCancellationToken};
 use crate::host_bridge::IMEHostBridge;
 use crate::ime_engine::IMEEngine;
 use crate::key_event::{KeyEvent, KeyEventResult};
 use crate::ranker::{CandidateUpdate, ConversionContext, ConversionMode, Ranker};
+use crate::reactor::{Event, WorkerPayload};
 
 mod candidates;
 mod commit_history;
@@ -35,6 +36,20 @@ use worker_channel::WorkerChannel;
 
 pub use commit_history::CommitHistory;
 pub use worker::panic_message_from;
+
+/// `KotohaEngine` 公開 API のエラー型。
+///
+/// Phase 3-B B0h-f + B3 (ADR 0020) で engine-loop thread が `apply_candidate_update`
+/// を呼ぶ経路を導入した際に追加。現状は variant 無しの placeholder で、
+/// 将来 worker error / host I/O 失敗等を区別する余地として用意する。
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum KotohaEngineError {
+    /// 現状未使用。`#[non_exhaustive]` のため variant が 0 件でも将来追加可能。
+    #[doc(hidden)]
+    #[error("placeholder; should never be observed")]
+    Placeholder,
+}
 
 /// `KotohaEngine` の現在状態(spec §5.1)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,8 +148,9 @@ impl KotohaEngine {
         host: Box<dyn IMEHostBridge>,
         ranker: Arc<dyn Ranker>,
         learning_writer: Arc<dyn crate::learning_port::LearningRecorder>,
+        worker_event_tx: Sender<Event>,
     ) -> io::Result<Self> {
-        let worker = WorkerChannel::new()?;
+        let worker = WorkerChannel::new(worker_event_tx)?;
         Ok(Self {
             state: EngineState::Idle,
             host,
@@ -163,14 +179,23 @@ impl KotohaEngine {
         }
     }
 
-    /// Live or Commit mode の RankRequest を発行し、`active_request` を更新する。
+    /// Live or Commit mode の `RankRequest` を発行し、`active_request` を更新する。
     ///
-    /// 本 method は M3 段階で `RankerWorker` 背景 thread に dispatch し、
-    /// 第 1 候補 batch が `coalescing window + safety` 以内に到着するまで
-    /// blocking で待機する。Commit mode の second window(LLM 後続結果)は
-    /// 後続 `process_key_event` 呼び出しの先頭で `drain_pending_events()`
-    /// が拾う設計で、本 method 内では待機しない(M3 簡略化、Phase 3-A
-    /// 実装段階で擾乱検出して再評価)。
+    /// Phase 3-B B0h-f (ADR 0020) で本 method は **send-only** に変更された。
+    /// 旧 rev2 までは `drain_events_blocking` で第 1 batch を blocking 待機
+    /// していたが、rev3 では engine-loop thread が `Event::WorkerOutput` を
+    /// 受け取り次第 [`Self::apply_candidate_update`] を呼ぶ flow に移管された。
+    /// よって本 method は worker への request 送信のみ行い即時 return する。
+    ///
+    /// # 表示中の候補を eager に Clear+hide する理由
+    ///
+    /// dispatch 入口時点で host 側に候補が表示されている場合、本 method 後の
+    /// 第 1 candidate event 到着までの間に user に stale 候補が残らないよう、
+    /// **eager に host へ Clear + hide を発行**し engine 内 buffer も clear する。
+    /// 旧 rev2 の「dispatch 内 drain で待ち、空のままなら Clear」 path は
+    /// engine-loop の async 性で再現できないため、保守的に常に clear する flow
+    /// に移行した。worker 結果到着後に `apply_buffer_update(Replace(_))` で
+    /// 即座に再描画されるため、ユーザ体感の flicker は最小化される。
     pub(crate) fn dispatch_rank_request(&mut self, mode: ConversionMode) {
         let request_id = self.next_request_id();
         let cancel_token = Arc::new(StdCancellationToken::new());
@@ -184,6 +209,14 @@ impl KotohaEngine {
             cancel_token: cancel_token.clone(),
         });
 
+        // dispatch 入口で host 側 stale 候補を消す(B0h-f rev3:eager Clear pattern)。
+        let had_displayed_before_dispatch = !self.candidates.items.is_empty();
+        self.candidates.clear();
+        if had_displayed_before_dispatch {
+            self.host.update_candidates(CandidateUpdate::Clear);
+            self.host.hide_candidate_window();
+        }
+
         let req = event::RankRequest {
             request_id,
             kana: self.preedit.current.clone(),
@@ -193,15 +226,12 @@ impl KotohaEngine {
         };
         if self.worker.tx_request.send(req).is_err() {
             // worker thread が死亡している。spec §9.1 row 2 に従い、
-            // engine 状態を Idle に戻して候補ウィンドウを閉じ、stale な
-            // active_request を残さない(後続 keystroke の cancel_active が
-            // phantom request を握って残響しないようにする)。
+            // engine 状態を Idle に戻して stale active_request を残さない。
             //
             // B0g #148 / I16: worker は連続 panic 上限到達で exit する circuit
-            // breaker を持つ。本 path に到達したら、engine 全体を IME-disabled
-            // に倒して keystroke ごとの ERROR log flood を停止し、user が
-            // 「IME が無効化された」を察知できるようにする(spec §9.3
-            // 「IME-disabled mode を user に通知」)。
+            // breaker を持つ。本 path に到達したら engine 全体を IME-disabled
+            // に倒して keystroke ごとの ERROR log flood を停止し、user に
+            // 「IME が無効化された」を察知させる(spec §9.3)。
             tracing::error!(
                 request_id,
                 "ranker worker channel closed; engine going to IME-disabled (consecutive panic threshold reached \
@@ -212,33 +242,6 @@ impl KotohaEngine {
             self.host.hide_candidate_window();
             self.state = EngineState::Idle;
             self.enabled = false;
-            return;
-        }
-
-        // 第 1 候補 batch を待つ。
-        // safety margin: thread 起動 + Ranker.rank 同期 path + worker 処理。
-        let max_wait = match mode {
-            ConversionMode::Live => worker::LIVE_WINDOW + Duration::from_millis(5),
-            ConversionMode::Commit => worker::COMMIT_WINDOW + Duration::from_millis(5),
-        };
-        // B0g-c #148 / silent_ranker e2e fix:dispatch 入口時点で表示中だった
-        // 候補があり、本 dispatch を経ても engine.candidates が空のまま終わった
-        // 場合(silent ranker / 全 backend 失敗 + timeout / filter all-unsafe
-        // 等)、host 側 lookup table も明示的に Clear + hide する(spec §9.3
-        // 「変換失敗で前回候補が画面に残る」防止)。
-        //
-        // 注意:`apply_candidate_update` Replace path にも prior_was_nonempty
-        // 検出があるが、本関数の `self.candidates.clear()` で apply 時点では
-        // prior=empty になるため、runtime path では apply 側の host 通知は
-        // 発火しない。direct-call test (`apply_candidate_update_for_test`) が
-        // 単体 API として apply boundary を assert するために apply 側の
-        // 検出は維持する(両者の発火条件は排他、二重通知はしない)。
-        let had_displayed_before_dispatch = !self.candidates.items.is_empty();
-        self.candidates.clear();
-        self.drain_events_blocking(max_wait, request_id);
-        if had_displayed_before_dispatch && self.candidates.items.is_empty() {
-            self.host.update_candidates(CandidateUpdate::Clear);
-            self.host.hide_candidate_window();
         }
     }
 
@@ -262,84 +265,65 @@ impl KotohaEngine {
         self.state = EngineState::Idle;
     }
 
-    /// `rx_event` から最大 `max_wait` まで待ち、第 1 Candidates(target_id 一致)を
-    /// engine state に反映して return する。
+    /// engine-loop thread が `Event::WorkerOutput { request_id, payload }` を
+    /// 受け取った際の dispatch entry point(Phase 3-B B0h-f / ADR 0020)。
     ///
-    /// - WorkerError target_id 一致時は spec §9.1 row 2 に従い `host.hide_candidate_window()`
-    ///   + state Idle に戻し、`tracing::error!` を残して return。
-    /// - WorkerError target_id 不一致時は loop 継続(別 request の error)。
-    /// - `RecvTimeoutError::Timeout` は normal path で return。
-    /// - `RecvTimeoutError::Disconnected` は worker thread 死亡を意味し、spec §9.1 row 2
-    ///   に従い engine 状態を Idle に戻し host を閉じて return。
-    /// - `Candidates` で CommitConverting 中なら `CandidatesShown` 遷移を併発する
-    ///   (spec §5.2 row 7、Phase 3-B B0d Critical 4 async path 修正)。
-    pub(crate) fn drain_events_blocking(&mut self, max_wait: Duration, target_id: u64) {
-        let deadline = Instant::now() + max_wait;
-        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-            match self.worker.rx_event.recv_timeout(remaining) {
-                Ok(event::EngineEvent::Candidates { request_id, update }) => {
-                    if request_id != target_id {
-                        continue;
-                    }
-                    self.apply_candidate_update(update);
-                    self.maybe_promote_commit_to_candidates_shown();
-                    return;
+    /// 旧 rev2 までは `drain_events_blocking` / `drain_pending_events` が
+    /// 内部 receiver から event を pull していたが、rev3 では engine-loop が
+    /// `EventReactor` 経由で event を push 配信するため、本 method が単一の
+    /// 公開 entry point となる。
+    ///
+    /// # Preconditions
+    ///
+    /// - `request_id` は engine が `dispatch_rank_request` で発行した id
+    ///
+    /// # Postconditions
+    ///
+    /// - `request_id != active_request.id` ⇒ stale 結果として discard
+    /// - `payload == Candidates(_)` ⇒ buffer 更新 + CommitConverting 中なら
+    ///   CandidatesShown へ昇格(spec §5.2 row 7)
+    /// - `payload == Error(_)` で `request_id == active_request.id` ⇒
+    ///   engine state を Idle に degrade(spec §9.1 row 2)
+    ///
+    /// # Errors
+    ///
+    /// 本実装は state 更新 + host 通知のみ行うため `Result::Ok(())` 固定。
+    /// `KotohaEngineError` は将来の拡張点として残してある。
+    pub fn apply_candidate_update(
+        &mut self,
+        request_id: u64,
+        payload: WorkerPayload,
+    ) -> Result<(), KotohaEngineError> {
+        let active_id = self.active_request.as_ref().map(|h| h.id);
+        match payload {
+            WorkerPayload::Candidates(update) => {
+                if active_id != Some(request_id) {
+                    return Ok(());
                 }
-                Ok(event::EngineEvent::WorkerError { request_id, error }) => {
-                    tracing::error!(request_id, error, "ranker worker error");
-                    if request_id == target_id {
-                        self.degrade_to_idle();
-                        return;
-                    }
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => return,
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    tracing::error!(
-                        target_id,
-                        "ranker worker channel disconnected; engine degrading to Idle"
-                    );
+                self.apply_buffer_update(update);
+                self.maybe_promote_commit_to_candidates_shown();
+                self.maybe_update_live_candidates();
+            }
+            WorkerPayload::Error(error) => {
+                tracing::error!(request_id, error, "ranker worker error");
+                if active_id == Some(request_id) {
                     self.degrade_to_idle();
-                    return;
                 }
             }
         }
+        Ok(())
     }
 
-    /// `rx_event` に蓄積されている event を非 blocking で全 drain する
-    /// (`process_key_event` 先頭で呼び出し、Commit mode second window で
-    /// 到着した LLM 結果等 + 遅延 dict 候補を反映する)。
+    /// LiveConverting 中に worker output が届いた際、buffer に候補があるなら
+    /// host へ `update_candidates(Replace)` を発行する。
     ///
-    /// `try_recv` が `Disconnected` を返した場合は worker 死亡で、
-    /// `drain_events_blocking` と同等の Idle 復帰処理を行う。
-    /// `Candidates` で CommitConverting 中なら `CandidatesShown` へ遷移する
-    /// (spec §5.2 row 7)。
-    pub(crate) fn drain_pending_events(&mut self) {
-        let active_id = self.active_request.as_ref().map(|h| h.id);
-        loop {
-            match self.worker.rx_event.try_recv() {
-                Ok(event::EngineEvent::Candidates { request_id, update }) => {
-                    if active_id != Some(request_id) {
-                        continue; // mismatch discard
-                    }
-                    self.apply_candidate_update(update);
-                    self.maybe_promote_commit_to_candidates_shown();
-                }
-                Ok(event::EngineEvent::WorkerError { request_id, error }) => {
-                    tracing::error!(request_id, error, "ranker worker error");
-                    if active_id == Some(request_id) {
-                        self.degrade_to_idle();
-                    }
-                }
-                Err(mpsc::TryRecvError::Empty) => return,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    tracing::error!(
-                        ?active_id,
-                        "ranker worker channel disconnected; engine degrading to Idle"
-                    );
-                    self.degrade_to_idle();
-                    return;
-                }
-            }
+    /// Phase 3-B B0h-f rev3 (ADR 0020):旧 rev2 では transitions.rs の
+    /// dispatch 直後 if 節でこの host 通知を出していた。rev3 で dispatch が
+    /// async 化したため、worker output 到着時に本 helper で発火する。
+    fn maybe_update_live_candidates(&mut self) {
+        if self.state == EngineState::LiveConverting && !self.candidates.items.is_empty() {
+            self.host
+                .update_candidates(CandidateUpdate::Replace(self.candidates.items.clone()));
         }
     }
 
@@ -365,7 +349,7 @@ impl KotohaEngine {
     /// 統一基準として「**直前 `self.candidates` が non-empty で、適用後に
     /// 空になった場合**」に host へ `update_candidates(Clear)` + `hide_candidate_window`
     /// を発行する。直前から空の場合は host 側もすでに hide 状態のため発火しない。
-    pub(crate) fn apply_candidate_update(&mut self, update: CandidateUpdate) {
+    pub(crate) fn apply_buffer_update(&mut self, update: CandidateUpdate) {
         match update {
             CandidateUpdate::Replace(c) => {
                 let prior_was_nonempty = !self.candidates.items.is_empty();
@@ -441,8 +425,10 @@ impl IMEEngine for KotohaEngine {
         {
             return KeyEventResult::Forwarded;
         }
-        // Commit mode second window などで遅延到着した event を最初に取り込む。
-        self.drain_pending_events();
+        // Phase 3-B B0h-f rev3 (ADR 0020):旧 `drain_pending_events()` 呼び出し
+        // は engine-loop thread が `Event::WorkerOutput` を直接 dispatch する
+        // 設計に置き換わったため不要となった。process_key_event は state 遷移
+        // に専念する。
         transitions::dispatch_key(self, key)
     }
 
@@ -525,25 +511,38 @@ impl KotohaEngine {
         self.candidates.items.clone()
     }
 
-    /// Test-only: `drain_pending_events()` を直接呼んで rx_event の pending な
-    /// `Candidates` / `WorkerError` を即時消化する。
-    ///
-    /// B0g-c #148 / I12 polling helper と組合わせ、worker が late に送った
-    /// 空 Replace 等を test 側で明示的に flush して assert する用途。
-    /// `process_key_event` 経由でしか `drain_pending_events` を呼ばないため、
-    /// keystroke を発火させずに pending event を吸い出したい case で必要。
-    pub fn flush_pending_events_for_test(&mut self) {
-        self.drain_pending_events();
-    }
-
-    /// Test-only: `apply_candidate_update()` を外部 integration test から呼ぶ
+    /// Test-only: `apply_buffer_update()` を外部 integration test から呼ぶ
     /// ための wrapper(I10 silent ranker theater fix の direct-apply pattern 用)。
     ///
-    /// `apply_candidate_update` 自体は `pub(crate)` で同 crate 内 module 限定。
+    /// `apply_buffer_update` 自体は `pub(crate)` で同 crate 内 module 限定。
     /// Worker chain の timing 依存を回避して boundary 規約を unit-style assert
     /// する test に必要。
     pub fn apply_candidate_update_for_test(&mut self, update: CandidateUpdate) {
-        self.apply_candidate_update(update);
+        self.apply_buffer_update(update);
+    }
+
+    /// Test-only: production の engine-loop thread が `EventReactor` 経由で
+    /// 行う `Event::WorkerOutput` dispatch を test 内で手動駆動する helper。
+    ///
+    /// Phase 3-B B0h-f rev3 (ADR 0020):旧 `flush_pending_events_for_test()`
+    /// は engine 内部に `rx_event` を保持していた前提で `try_recv` していたが、
+    /// rev3 で worker output 経路は `Sender<Event>` 直送に変更された。test 側で
+    /// `KotohaEngine::new` に渡した `worker_event_tx` と pair の `Receiver` から
+    /// 非 blocking で event を吸い出し、`apply_candidate_update` 経由で engine
+    /// state に反映する。production の engine-loop と挙動が等価になる。
+    ///
+    /// `Event::Shutdown` / `IBusKey` / `IBusReset` が混入してもよい(test では
+    /// 通常 `WorkerOutput` のみだが、混入時は無視する)。
+    pub fn pump_worker_events_for_test(&mut self, rx: &crossbeam_channel::Receiver<Event>) {
+        while let Ok(ev) = rx.try_recv() {
+            if let Event::WorkerOutput {
+                request_id,
+                payload,
+            } = ev
+            {
+                let _ = self.apply_candidate_update(request_id, payload);
+            }
+        }
     }
 }
 
@@ -652,16 +651,21 @@ mod boundary_notify_tests {
             }
         }
 
+        // worker_event_tx: 本 test は engine 内 worker thread 経路を直接駆動
+        // しないため、tx だけ保持して rx は drop しても問題ない(worker は
+        // request 送信が来ないので idle のまま、tx_event drop しても影響なし)。
+        let (worker_event_tx, _worker_event_rx) = crossbeam_channel::unbounded();
         let mut engine = KotohaEngine::new(
             host_box,
             std::sync::Arc::new(NoopRanker),
             std::sync::Arc::new(StubWriter),
+            worker_event_tx,
         )
         .expect("engine spawn");
 
         // (1) 事前に safe candidates を投入して engine 内 state を non-empty にする
         //     (= 直前 host 側に候補が表示されている状態を simulate)。
-        engine.apply_candidate_update(CandidateUpdate::Replace(vec![Candidate::new(
+        engine.apply_buffer_update(CandidateUpdate::Replace(vec![Candidate::new(
             "こんにちは",
             0.0,
         )]));
@@ -669,7 +673,7 @@ mod boundary_notify_tests {
         host_handle.clear(); // 事前 setup の operation 履歴を捨てる。
 
         // (2) 全 unsafe な candidate を Replace で投入 → filter で空に。
-        engine.apply_candidate_update(CandidateUpdate::Replace(vec![
+        engine.apply_buffer_update(CandidateUpdate::Replace(vec![
             Candidate::new("\u{001B}[2J", 0.0),
             Candidate::new("\u{0000}null", 0.0),
         ]));
@@ -731,14 +735,19 @@ mod boundary_notify_tests {
             }
         }
 
+        // worker_event_tx: 本 test は engine 内 worker thread 経路を直接駆動
+        // しないため、tx だけ保持して rx は drop しても問題ない(worker は
+        // request 送信が来ないので idle のまま、tx_event drop しても影響なし)。
+        let (worker_event_tx, _worker_event_rx) = crossbeam_channel::unbounded();
         let mut engine = KotohaEngine::new(
             host_box,
             std::sync::Arc::new(NoopRanker),
             std::sync::Arc::new(StubWriter),
+            worker_event_tx,
         )
         .expect("engine spawn");
 
-        engine.apply_candidate_update(CandidateUpdate::Replace(vec![Candidate::new(
+        engine.apply_buffer_update(CandidateUpdate::Replace(vec![Candidate::new(
             "\u{001B}[2J",
             0.0,
         )]));
@@ -792,15 +801,20 @@ mod boundary_notify_tests {
             }
         }
 
+        // worker_event_tx: 本 test は engine 内 worker thread 経路を直接駆動
+        // しないため、tx だけ保持して rx は drop しても問題ない(worker は
+        // request 送信が来ないので idle のまま、tx_event drop しても影響なし)。
+        let (worker_event_tx, _worker_event_rx) = crossbeam_channel::unbounded();
         let mut engine = KotohaEngine::new(
             host_box,
             std::sync::Arc::new(NoopRanker),
             std::sync::Arc::new(StubWriter),
+            worker_event_tx,
         )
         .expect("engine spawn");
 
         // clean candidate を Replace。
-        engine.apply_candidate_update(CandidateUpdate::Replace(vec![
+        engine.apply_buffer_update(CandidateUpdate::Replace(vec![
             Candidate::new("こんにちは", 0.0),
             Candidate::new("hello", 0.0),
         ]));

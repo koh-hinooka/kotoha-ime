@@ -8,6 +8,7 @@
 #![cfg(feature = "test-helpers")]
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use kotoha_core::Candidate;
 use kotoha_engine_core::engine::transitions::keysyms;
@@ -50,25 +51,38 @@ fn key_special(keysym: u32) -> KeyEvent {
     }
 }
 
-fn build(candidates: Vec<Candidate>) -> (KotohaEngine, MockHostBridge) {
+fn build(
+    candidates: Vec<Candidate>,
+) -> (
+    KotohaEngine,
+    MockHostBridge,
+    crossbeam_channel::Receiver<kotoha_engine_core::reactor::Event>,
+) {
     let host = MockHostBridge::new();
     let host_clone = host.clone();
     let ranker = Arc::new(MockRanker::new(candidates));
     let writer = Arc::new(StubWriter);
-    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, writer).expect("engine spawn");
+    let (worker_event_tx, worker_event_rx) = crossbeam_channel::unbounded();
+    let mut eng = KotohaEngine::new(Box::new(host_clone), ranker, writer, worker_event_tx)
+        .expect("engine spawn");
     eng.enable();
     eng.focus_in();
-    (eng, host)
+    (eng, host, worker_event_rx)
 }
 
 /// Scenario A: typing「kotoha」(7 chars)→ space → top 候補 Enter で commit_text 観測
 #[test]
 fn scenario_typing_space_enter() {
-    let (mut eng, host) = build(vec![Candidate::new("琴葉", -1.0)]);
+    let (mut eng, host, worker_event_rx) = build(vec![Candidate::new("琴葉", -1.0)]);
     for c in "kotoha".chars() {
         eng.process_key_event(key_char(c));
     }
     eng.process_key_event(key_special(keysyms::SPACE));
+    // Phase 3-B B0h-f rev3 (ADR 0020):worker output が engine-loop role の
+    // pump で engine state に反映されないと CandidatesShown 遷移しないため、
+    // RETURN 前に pump で候補を吸い上げる。
+    std::thread::sleep(Duration::from_millis(80));
+    eng.pump_worker_events_for_test(&worker_event_rx);
     eng.process_key_event(key_special(keysyms::RETURN));
     let ops = host.operations();
     assert!(
@@ -81,7 +95,7 @@ fn scenario_typing_space_enter() {
 /// Scenario B: typing → backspace で preedit shrink、再 typing で kana 出力が継続する
 #[test]
 fn scenario_typing_backspace_typing() {
-    let (mut eng, _host) = build(vec![Candidate::new("か", -1.0)]);
+    let (mut eng, _host, _worker_event_rx) = build(vec![Candidate::new("か", -1.0)]);
     eng.process_key_event(key_char('k'));
     eng.process_key_event(key_char('a'));
     eng.process_key_event(key_special(keysyms::BACKSPACE));
@@ -93,7 +107,7 @@ fn scenario_typing_backspace_typing() {
 /// Scenario C: focus_out で全 clear + state Idle
 #[test]
 fn scenario_focus_out_clears() {
-    let (mut eng, host) = build(vec![Candidate::new("か", -1.0)]);
+    let (mut eng, host, _worker_event_rx) = build(vec![Candidate::new("か", -1.0)]);
     eng.process_key_event(key_char('k'));
     eng.process_key_event(key_char('a'));
     eng.process_key_event(key_special(keysyms::SPACE));
@@ -108,10 +122,13 @@ fn scenario_focus_out_clears() {
 /// Scenario D: CandidatesShown で Esc → preedit kana 維持で LiveConverting に戻る
 #[test]
 fn scenario_esc_on_candidates_back_to_live() {
-    let (mut eng, host) = build(vec![Candidate::new("か", -1.0)]);
+    let (mut eng, host, worker_event_rx) = build(vec![Candidate::new("か", -1.0)]);
     eng.process_key_event(key_char('k'));
     eng.process_key_event(key_char('a'));
     eng.process_key_event(key_special(keysyms::SPACE));
+    // Phase 3-B B0h-f rev3:CommitConverting → CandidatesShown 遷移には pump が要る
+    std::thread::sleep(Duration::from_millis(80));
+    eng.pump_worker_events_for_test(&worker_event_rx);
     host.clear();
     eng.process_key_event(key_special(keysyms::ESCAPE));
     assert_eq!(eng.preedit_for_test(), "か");

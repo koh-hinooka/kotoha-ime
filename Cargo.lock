@@ -804,10 +804,12 @@ name = "kotoha-bin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "crossbeam-channel",
  "kotoha-core",
  "kotoha-engine-adapter",
  "kotoha-engine-core",
  "kotoha-engine-ibus",
+ "kotoha-engine-reactor-linux",
  "kotoha-ranker-hybrid",
  "kotoha-storage",
  "tracing",
@@ -886,6 +888,7 @@ dependencies = [
 name = "kotoha-ranker-hybrid"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "kotoha-core",
  "kotoha-engine-adapter",
  "kotoha-engine-core",

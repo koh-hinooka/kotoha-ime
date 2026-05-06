@@ -91,7 +91,8 @@ fn consecutive_typing_cancels_previous_rank_request() {
     });
     let host = Box::new(MockHostBridge::new());
     let writer = Arc::new(StubWriter);
-    let mut eng = KotohaEngine::new(host, ranker, writer).expect("engine spawn");
+    let (worker_event_tx, _worker_event_rx) = crossbeam_channel::unbounded();
+    let mut eng = KotohaEngine::new(host, ranker, writer, worker_event_tx).expect("engine spawn");
     eng.enable();
     eng.focus_in();
 
@@ -164,7 +165,9 @@ fn worker_recovers_after_ranker_panic() {
     let host_handle = host.clone();
     let host_box: Box<dyn kotoha_engine_core::IMEHostBridge> = Box::new(host);
     let writer = Arc::new(StubWriter);
-    let mut eng = KotohaEngine::new(host_box, ranker, writer).expect("engine spawn");
+    let (worker_event_tx, _worker_event_rx) = crossbeam_channel::unbounded();
+    let mut eng =
+        KotohaEngine::new(host_box, ranker, writer, worker_event_tx).expect("engine spawn");
     eng.enable();
     eng.focus_in();
 
@@ -214,7 +217,8 @@ fn focus_out_cancels_active_request() {
     });
     let host = Box::new(MockHostBridge::new());
     let writer = Arc::new(StubWriter);
-    let mut eng = KotohaEngine::new(host, ranker, writer).expect("engine spawn");
+    let (worker_event_tx, _worker_event_rx) = crossbeam_channel::unbounded();
+    let mut eng = KotohaEngine::new(host, ranker, writer, worker_event_tx).expect("engine spawn");
     eng.enable();
     eng.focus_in();
 
@@ -243,7 +247,8 @@ fn build_engine_for_cancel_test(delay_ms: u64) -> (KotohaEngine, Arc<AtomicU64>)
     });
     let host = Box::new(MockHostBridge::new());
     let writer = Arc::new(StubWriter);
-    let mut eng = KotohaEngine::new(host, ranker, writer).expect("engine spawn");
+    let (worker_event_tx, _worker_event_rx) = crossbeam_channel::unbounded();
+    let mut eng = KotohaEngine::new(host, ranker, writer, worker_event_tx).expect("engine spawn");
     eng.enable();
     eng.focus_in();
     (eng, cancel_count)
@@ -367,7 +372,9 @@ fn silent_ranker_apply_boundary_clears_host_when_prior_was_nonempty() {
     let host_handle = host.clone();
     let host_box: Box<dyn kotoha_engine_core::IMEHostBridge> = Box::new(host);
     let writer = Arc::new(StubWriter);
-    let mut eng = KotohaEngine::new(host_box, Arc::new(NoopRanker), writer).expect("engine spawn");
+    let (worker_event_tx, _worker_event_rx) = crossbeam_channel::unbounded();
+    let mut eng = KotohaEngine::new(host_box, Arc::new(NoopRanker), writer, worker_event_tx)
+        .expect("engine spawn");
 
     // (1) prior_was_nonempty path 用の setup:engine 内 candidates を直接 populate。
     eng.apply_candidate_update_for_test(CandidateUpdate::Replace(vec![Candidate::new("あ", -1.0)]));
@@ -442,25 +449,43 @@ fn silent_ranker_end_to_end_clears_host_via_worker_chain() {
     let ranker = Arc::new(ToggleRanker {
         first_call: AtomicBool::new(true),
     });
-    let mut eng = KotohaEngine::new(host_box, ranker, writer).expect("engine spawn");
+    let (worker_event_tx, worker_event_rx) = crossbeam_channel::unbounded();
+    let mut eng =
+        KotohaEngine::new(host_box, ranker, writer, worker_event_tx).expect("engine spawn");
     eng.enable();
     eng.focus_in();
 
     // 第 1 keystroke で候補を populate(prior path のための setup)。
+    // Phase 3-B B0h-f rev3 (ADR 0020):worker output は engine 内部 rx ではなく
+    // worker_event_rx に届くため、test 側で `pump_worker_events_for_test` を
+    // 呼んで engine-loop thread の挙動を模擬する。
     eng.process_key_event(key('a'));
     await_until(
-        || eng.candidate_count_for_test() >= 1,
+        || {
+            eng.pump_worker_events_for_test(&worker_event_rx);
+            eng.candidate_count_for_test() >= 1
+        },
         Duration::from_millis(500),
     )
     .expect("first keystroke should populate candidates within 500ms");
+
+    // dispatch_rank_request の eager Clear/hide は host_handle に記録済み。
+    // 第 2 keystroke の silent ranker 検証では本 eager 経路が host.Clear + hide
+    // を出すことを assert する。clear 直前の clear() で setup-side 操作を捨てる
+    // タイミングは保つが、第 2 dispatch の eager Clear+hide は「prior が non-empty」
+    // のときだけ発火するため、host_handle.clear() は process_key_event の **直前**
+    // (= prior が non-empty な状態が host にも反映済の状態)で行う。
     host_handle.clear();
 
-    // 第 2 keystroke で silent ranker → worker 空 Replace → dispatch_rank_request
-    // post-drain 経路で host.update_candidates(Clear) + hide が発火する。
+    // 第 2 keystroke で silent ranker → engine の dispatch_rank_request 内
+    // eager Clear + hide が発火する(prior の表示中候補に対して保守的に出す)。
     eng.process_key_event(key('i'));
+
+    // engine 側の eager Clear/hide 観測 + worker からの空 Replace を pump して
+    // engine state が空であることを assert する。
     await_until(
         || {
-            eng.flush_pending_events_for_test();
+            eng.pump_worker_events_for_test(&worker_event_rx);
             let ops = host_handle.operations();
             ops.iter().any(|op| {
                 matches!(
@@ -474,8 +499,8 @@ fn silent_ranker_end_to_end_clears_host_via_worker_chain() {
         Duration::from_millis(1000),
     )
     .expect(
-        "worker chain should propagate silent-ranker empty Replace and engine should emit \
-         host.Clear + hide within 1s",
+        "engine should emit eager host.Clear + hide on dispatch when prior candidates were \
+         displayed (B0h-f rev3 conservative cleanup)",
     );
 
     assert_eq!(eng.candidate_count_for_test(), 0);
@@ -528,17 +553,23 @@ fn worker_circuit_breaker_disables_engine_after_repeated_ranker_panics() {
     let ranker = Arc::new(AlwaysPanicRanker);
     let host = Box::new(MockHostBridge::new());
     let writer = Arc::new(StubWriter);
-    let mut eng = KotohaEngine::new(host, ranker, writer).expect("engine spawn");
+    let (worker_event_tx, worker_event_rx) = crossbeam_channel::unbounded();
+    let mut eng = KotohaEngine::new(host, ranker, writer, worker_event_tx).expect("engine spawn");
     eng.enable();
     eng.focus_in();
 
     // 10 keystroke 連続(MAX_CONSECUTIVE_PANICS=5 を超えて margin 確保)。
     // 最初の 5 回は WorkerError event 経由で degrade_to_idle、6 回目以降に
     // worker が channel close 済で tx_request.send Err → enabled=false。
+    //
+    // Phase 3-B B0h-f rev3 (ADR 0020):worker output(WorkerError 含)は
+    // worker_event_rx に届く。test 側で pump して engine の degrade_to_idle を
+    // 駆動する(production の engine-loop と等価)。
     for c in ['a', 'i', 'u', 'e', 'o', 'k', 's', 't', 'n', 'h'].iter() {
         eng.process_key_event(key(*c));
         // worker thread に panic + channel close 反映の余裕を与える。
         sleep(Duration::from_millis(50));
+        eng.pump_worker_events_for_test(&worker_event_rx);
     }
 
     // 三重 AND assert:circuit breaker 経由 degrade を特定。

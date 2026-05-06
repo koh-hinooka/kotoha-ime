@@ -257,34 +257,41 @@ fn run_ibus() -> anyhow::Result<()> {
         }
     };
 
-    // 9. engine(spec §9.1 row 5: spawn 失敗は Result 経由 propagate)
-    //    adapter 経由で `Arc<dyn LearningRecorder>` を engine に注入する。
-    let engine =
-        kotoha_engine_core::engine::KotohaEngine::new(host_bridge, ranker, learning_recorder)
-            .context("spawn ranker worker thread")?;
+    // 9. reactor (Phase 3-B B0h-f + B3 / ADR 0020):4-thread topology の core。
+    //    main は `ReactorHandles` を保持し、bridge_tx / worker_tx を各 thread に
+    //    move、shutdown_tx を SIGTERM/SIGINT handler 経由で発火させる。
+    let kotoha_engine_reactor_linux::ReactorHandles {
+        reactor,
+        bridge_tx: _bridge_tx,
+        worker_tx,
+        shutdown_tx: _shutdown_tx,
+    } = kotoha_engine_reactor_linux::start();
 
-    // 10. dispatcher (event loop stub) — wire up but do NOT silently exit.
-    //
-    // Phase 3-B B0f (ISSUE #146):旧 path は `let _dispatcher = ...; Ok(())` で
-    // event loop が無いまま exit code 0 を返し、systemd の Restart=on-failure
-    // が再起動しない silent failure(spec §9.3 違反)だった。実 event loop
-    // 完成までは fail-loud で起動失敗を user に通知する。
-    //
-    // Phase 3-B B0h-d (ISSUE #149 / #157):dispatcher を `Arc<Mutex<dyn IMEEngine>>`
-    // に切り替え。B3 event loop で D-Bus signal listener thread と engine を
-    // 共有する瞬間に必須となる前提を、B3 着手前に整える先行作業。
-    let engine_shared: std::sync::Arc<std::sync::Mutex<dyn kotoha_engine_core::IMEEngine>> =
-        std::sync::Arc::new(std::sync::Mutex::new(engine));
-    let _dispatcher = kotoha_engine_ibus::IBusEventDispatcher::new(engine_shared);
+    // 10. engine(spec §9.1 row 5: spawn 失敗は Result 経由 propagate)
+    //     adapter 経由で `Arc<dyn LearningRecorder>` を engine に注入し、
+    //     worker thread が生成する `Event::WorkerOutput` の送信先 (`worker_tx`) を渡す。
+    let engine = kotoha_engine_core::engine::KotohaEngine::new(
+        host_bridge,
+        ranker,
+        learning_recorder,
+        worker_tx,
+    )
+    .context("spawn ranker worker thread")?;
+
+    // 11. dispatcher / engine-loop / dbus-listener の thread 起動は Phase D / E で
+    //     完成させる(本 commit は Phase C scope のため、B3 listener / engine_loop
+    //     の wiring は未実施)。fail-loud で起動失敗を user に通知する。
+    let _ = engine; // engine は thread 移動前は drop すると worker が exit するため hold。
+    let _ = reactor;
 
     tracing::error!(
         ranker_backend,
         host_bridge_backend,
-        "kotoha engine wired up but the IBus event loop is not yet implemented (Phase 3-B B3); \
-         refusing to silently exit"
+        "kotoha engine + reactor wired up but the IBus event loop is not yet implemented \
+         (Phase 3-B B3 / ISSUE #136); refusing to silently exit"
     );
     anyhow::bail!(
-        "IBus event loop not yet implemented (tracked in Phase 3-B B3 / ISSUE #146); \
+        "IBus event loop not yet implemented (tracked in Phase 3-B B3 / ISSUE #136); \
          kotoha-bin cannot serve as an IME yet"
     );
 }
