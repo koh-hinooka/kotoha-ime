@@ -874,6 +874,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kotoha-engine-reactor-linux"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "kotoha-engine-core",
+ "tracing",
+]
+
+[[package]]
 name = "kotoha-ranker-hybrid"
 version = "0.1.0"
 dependencies = [

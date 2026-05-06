@@ -7,6 +7,7 @@ members = [
     "crates/kotoha-engine-core",
     "crates/kotoha-engine-adapter",
     "crates/kotoha-ranker-hybrid",
+    "crates/kotoha-engine-reactor-linux",
     "crates/kotoha-engine-ibus",
     "crates/kotoha-bin",
 ]
