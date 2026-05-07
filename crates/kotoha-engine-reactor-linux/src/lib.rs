@@ -38,7 +38,20 @@ pub struct LinuxReactor {
 /// main thread が DI wiring 時に保持し、各 producer thread に move する。
 /// drop されると `engine-loop` thread が即時 shutdown するため、
 /// `#[must_use]` で誤破棄を予防する。
-#[must_use = "ReactorHandles を drop すると engine-loop が即時 shutdown する"]
+///
+/// # Lifetime contract
+///
+/// `ReactorHandles` の drop は次の連鎖を起こす:
+///
+/// 1. `bridge_tx` / `worker_tx` / `shutdown_tx` が drop される
+/// 2. `LinuxReactor::recv()` の `select!` arm が `RecvError`(全 sender drop 時)
+///    または `Ok(Event::Shutdown)`(`shutdown_tx` 経由)を返す
+/// 3. `engine-loop` thread が即時 exit する
+///
+/// したがって `start()` 戻り値は **program lifetime** まで保持する変数に
+/// bind すること(典型的には `kotoha-bin::main` の local)。明示的な
+/// shutdown を意図する場合のみ scope を抜けて drop させる。
+#[must_use = "ReactorHandles を drop すると全 sender が close され engine-loop が即時 shutdown する。program lifetime まで bind するか、明示的に shutdown を意図する場合のみ drop すること"]
 pub struct ReactorHandles {
     pub reactor: LinuxReactor,
     pub bridge_tx: Sender<Event>,
