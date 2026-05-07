@@ -50,6 +50,7 @@ use kotoha_engine_core::reactor::Event;
 /// `load`) をカプセル化する。これにより observer 側からは `is_shutting_down()`
 /// しか呼べず、誤って `flag.store(false, ...)` で trigger 側を打ち消す事故を
 /// 構造的に防ぐ。
+#[derive(Clone)]
 pub struct ListenerShutdown {
     flag: Arc<AtomicBool>,
 }
@@ -271,5 +272,20 @@ mod tests {
         trigger.request();
         assert!(observer1.is_shutting_down());
         assert!(observer2.is_shutting_down());
+    }
+
+    /// `ListenerShutdown::clone()` は同一 atomic flag を共有する(#197 SIGTERM
+    /// hook で signal handler closure に trigger を move するため Clone を要求)。
+    #[test]
+    fn cloned_trigger_shares_state() {
+        let (trigger1, observer) = ListenerShutdown::new();
+        let trigger2 = trigger1.clone();
+        assert!(!observer.is_shutting_down());
+        // trigger1 が request しても trigger2 経由でも observer に伝わる
+        trigger2.request();
+        assert!(
+            observer.is_shutting_down(),
+            "request via cloned trigger must reach observer"
+        );
     }
 }

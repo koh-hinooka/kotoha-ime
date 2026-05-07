@@ -260,8 +260,8 @@ fn run_ibus() -> anyhow::Result<()> {
 
     // 9. reactor (Phase 3-B B0h-f + B3 / ADR 0020):4-thread topology の core。
     //    main は `ReactorHandles` を保持し、bridge_tx / worker_tx を各 thread に
-    //    move、shutdown_tx を `Drop` で発火させる(ctrlc::set_handler 等の
-    //    SIGTERM/SIGINT integration は B6 manual smoke で完成)。
+    //    move、shutdown_tx を `Drop` で発火させる。SIGTERM/SIGINT は #197 で
+    //    `ctrlc::set_handler` 経由で listener_shutdown + shutdown_tx を駆動する。
     let kotoha_engine_reactor_linux::ReactorHandles {
         reactor,
         bridge_tx,
@@ -287,6 +287,29 @@ fn run_ibus() -> anyhow::Result<()> {
     let (listener_shutdown, listener_observer) =
         kotoha_engine_ibus::listener::ListenerShutdown::new();
 
+    // 11.5. SIGTERM/SIGINT shutdown hook (#197):signal 受信時に
+    //       (a) listener_shutdown.request() で listener thread に shutdown 通知
+    //       (b) shutdown_tx.send(()) で engine-loop の reactor に Event::Shutdown
+    //       を駆動する。`ctrlc` crate は内部で `nix::sys::signal` を使い、
+    //       SIGINT / SIGTERM (+ Windows Ctrl+Break) に対して 1 つの handler を
+    //       install する。idempotent な `request()` + 1 回の `send(())` で
+    //       連続 signal にも安全。closure は `Send + 'static` を要求するため
+    //       `clone()` 済みの owned handle を move する。
+    {
+        let listener_shutdown_for_signal = listener_shutdown.clone();
+        let shutdown_tx_for_signal = shutdown_tx.clone();
+        ctrlc::set_handler(move || {
+            tracing::info!(
+                "received SIGINT/SIGTERM, requesting clean shutdown of dbus-listener + engine-loop"
+            );
+            listener_shutdown_for_signal.request();
+            // crossbeam unbounded send は disconnect を除き infallible。
+            // engine-loop が既に exit して shutdown_rx が drop された場合のみ Err。
+            let _ = shutdown_tx_for_signal.send(());
+        })
+        .context("install SIGTERM/SIGINT signal handler")?;
+    }
+
     // 12. thread spawn(ADR 0020 §採択 Q4 4-thread topology)
     //     順序:dbus-listener → engine-loop。engine_loop に engine + reactor を
     //     move し、engine 状態を完全所有させる。
@@ -309,19 +332,13 @@ fn run_ibus() -> anyhow::Result<()> {
     );
 
     // 13. join 順は engine-loop → dbus-listener。
-    //     - engine-loop は `Event::Shutdown` 受信または `EventReactor::recv` Err
+    //     - engine-loop は `Event::Shutdown` 受信(SIGTERM/SIGINT 経路または
+    //       下記 step 14 の `drop(shutdown_tx)`)、または `EventReactor::recv` Err
     //       (全 Sender drop)で抜ける。
-    //     - dbus-listener は `ListenerShutdown::request()` または engine-loop drop
+    //     - dbus-listener は `listener_shutdown.request()`(SIGTERM/SIGINT 経路
+    //       または下記 step 14 の明示 request)、もしくは engine-loop drop
     //       による bridge_tx close で抜ける。
-    //     現状 SIGTERM hook は未配線(B6 manual smoke で `ctrlc` crate で対応)。
-    //     開発時は engine-loop / listener が自然に exit する path を取らない限り
-    //     join は永続 block する。spec §9.3 fail-loud 原則に従い、shutdown hook
-    //     未完成は warning log で明示する。
-    tracing::warn!(
-        "SIGTERM/SIGINT shutdown handler not yet wired (B6 manual smoke follow-up). \
-         kotoha-bin will block on join until threads exit naturally."
-    );
-
+    //     SIGTERM/SIGINT hook は step 11.5 の `ctrlc::set_handler` で wire 済。
     let engine_result = engine_loop_handle
         .join()
         .map_err(panic_to_anyhow)

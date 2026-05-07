@@ -43,3 +43,6 @@ kotoha-core = { path = "../kotoha-core" }
 crossbeam-channel = { workspace = true }
 # Phase 3-B B3 (ADR 0020):listener thread に session bus connection を渡すため。
 zbus = { workspace = true }
+# Phase 3-B B6-a (#197):SIGTERM/SIGINT 受信時に listener_shutdown.request() +
+# reactor shutdown_tx send で 4-thread topology を clean shutdown する。
+ctrlc = { workspace = true }

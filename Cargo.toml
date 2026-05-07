@@ -77,3 +77,9 @@ zbus = "5"
 #   - kanal 0.2.0-beta1: pre-1.0 で API 安定性懸念
 #   - flume 0.12: crossbeam ほど成熟していない
 crossbeam-channel = "0.5"
+# ctrlc pinned via P3-B B6-a (#197, 2026-05-08). SIGTERM/SIGINT shutdown hook in kotoha-bin。
+# Adopted reason: minimal API (single handler for INT/TERM), no async runtime,
+# zero dependency footprint suitable for IME daemon shutdown semantics.
+# Alternatives rejected: signal-hook (over-spec for single-shot trigger),
+# nix::sys::signal direct use (more boilerplate, bare-platform).
+ctrlc = "3"
