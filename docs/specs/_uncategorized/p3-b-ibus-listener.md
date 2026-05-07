@@ -149,7 +149,7 @@ pub(crate) struct KotohaEngineService {
 
 - engine state を direct に読まない(ADR 0020 §採択 Q4 lock-free 原則)
 - `ShutdownObserver` は `listener::run` の poll loop 専用、service struct は知らない
-- KeyEvent 変換 helper は free function(`KeyEvent::from_ibus_raw`)で渡す
+- KeyEvent 変換 helper は既存 free function(`crate::keysym::from_ibus(keysym, keycode, state) -> KeyEvent`、Phase 3-B B4 実装済)を使う
 
 ### §4.3 `#[interface]` impl
 
@@ -180,7 +180,9 @@ pub(crate) struct KotohaEngineService {
 
 ```rust
 fn process_key_event(&self, keyval: u32, keycode: u32, state: u32) -> bool {
-    let event = KeyEvent::from_ibus_raw(keyval, keycode, state);
+    // 既存 helper: crates/kotoha-engine-ibus/src/keysym.rs::from_ibus
+    // (Phase 3-B B4 で IBusModifierType → KeyModifiers full mapping 実装済)
+    let event = crate::keysym::from_ibus(keyval, keycode, state);
     let (resp_tx, resp_rx) = crossbeam_channel::bounded::<KeyEventResult>(1);
     if self
         .bridge_tx
@@ -195,7 +197,7 @@ fn process_key_event(&self, keyval: u32, keycode: u32, state: u32) -> bool {
         return false;
     }
     match resp_rx.recv_timeout(Duration::from_millis(100)) {
-        Ok(KeyEventResult::Handled) => true,
+        Ok(KeyEventResult::Consumed) => true,
         Ok(KeyEventResult::Forwarded) => false,
         Err(_) => {
             tracing::warn!(
@@ -218,7 +220,7 @@ Ok(Event::IBusKey { event, respond }) => {
 }
 ```
 
-`KeyEventResult` は engine 状態機械の出力(spec §5.2)で、`Handled` / `Forwarded` の 2 variant を持つ既存型。
+`KeyEventResult` は engine 状態機械の出力(spec §5.2)で、`Consumed` / `Forwarded` の 2 variant を持つ既存型(`crates/kotoha-engine-core/src/key_event.rs`)。
 
 ---
 
@@ -239,7 +241,7 @@ Ok(Event::IBusKey { event, respond }) => {
 
 ### §6.2 timeout fire 時の double-input 懸念
 
-timeout 後に engine が eventual に event を処理して `Handled` 判定した場合、preedit が表示されつつ app も raw key を受信する double-input 状態が原理的にありうる:
+timeout 後に engine が eventual に event を処理して `Consumed` 判定した場合、preedit が表示されつつ app も raw key を受信する double-input 状態が原理的にありうる:
 
 - 発生条件: engine_loop が 100ms 以上 hang(= bug 状態)
 - 観測経路: `error_id = "listener.process_key_event.timeout"` を log filter で監視
@@ -341,7 +343,7 @@ IBus 1.5.x では engine 登録の正規経路は `/usr/share/ibus/component/<na
 | L1 unit | `KotohaEngineService::process_key_event` の正常 / timeout / disconnect 経路 | `crates/kotoha-engine-ibus/src/service.rs` `#[cfg(test)]` | 無条件(mock bridge_tx) |
 | L1 unit | `KotohaEngineService::{focus_out, reset, disable, focus_in, enable}` の Event 送信 | 同上 | 同上 |
 | L1 unit | `Event::IBusKey { event, respond }` の destructure と engine_loop 経路 | `crates/kotoha-bin/src/engine_loop.rs` `#[cfg(test)]` または既存 integration test | mock reactor + mock host |
-| L2 integration | listener thread + engine_loop + dummy bridge channel 経路で `process_key_event` が `Handled` を返す | `crates/kotoha-engine-ibus/tests/integration.rs`(新規) | `#[ignore]`(dbus session bus 必要)|
+| L2 integration | listener thread + engine_loop + dummy bridge channel 経路で `process_key_event` が `true`(= Consumed)を返す | `crates/kotoha-engine-ibus/tests/integration.rs`(新規) | `#[ignore]`(dbus session bus 必要)|
 | L3 manual | 実機 IBus daemon に register、Firefox / GNOME Editor / VS Code で型変換 10 件 | `docs/wbs/<date>-phase3b-b6-l3-smoke.md` | 別 PR(#196)|
 
 ### §10.2 既存 test の preservation
@@ -366,8 +368,8 @@ IBus 1.5.x では engine 登録の正規経路は `/usr/share/ibus/component/<na
 2. **proxy.rs 定数追加**: `IBUS_ENGINE_BUS_NAME` / `IBUS_ENGINE_OBJECT_PATH`
 3. **service.rs 新規**: `KotohaEngineService` struct + `#[interface]` impl(6 method)+ unit tests
 4. **listener.rs rewrite**: `KOTOHA_ALLOW_LISTENER_STUB` 関連削除、`run()` を `blocking::connection::Builder` 経路に書き換え
-5. **kotoha-bin/src/main.rs 更新**: `KOTOHA_ALLOW_LISTENER_STUB=1` env var を起動時に export していた warning コメントの撤去(#197 で SIGTERM 関連 cleanup 済)
-6. **engine_loop.rs 更新**: `Event::IBusKey { event, respond }` の destructure + `respond.send(result)` 追加
+5. **engine_loop.rs 更新**: `Event::IBusKey { event, respond }` の destructure + `respond.send(result)` 追加(`crates/kotoha-bin/src/engine_loop.rs:43-46` の `let _result = engine.process_key_event(key);` を `let result = ...; let _ = respond.send(result);` に置換)
+6. **kotoha-bin/src/main.rs**: 本 spec scope では追加変更不要(SIGTERM hook は #197 で配線済、`KOTOHA_ALLOW_LISTENER_STUB=1` 起動 hint のような stub 関連表現も既に main.rs に残っていない)
 7. **L1 / L2 test 追加**
 8. **ADR 0021 起票**
 9. **`docs/specs/_uncategorized/p3-a-ibus-engine.md` の §6.1 step [1] / §11 acceptance criteria 更新**
