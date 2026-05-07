@@ -17,8 +17,8 @@
 
 use std::time::Duration;
 
-use crossbeam_channel::{select, unbounded, Receiver, RecvError, RecvTimeoutError, Sender};
-use kotoha_engine_core::reactor::{Event, EventReactor};
+use crossbeam_channel::{select, unbounded, Receiver, Sender};
+use kotoha_engine_core::reactor::{Event, EventReactor, ReactorError};
 
 /// Linux 専用の event reactor 実装。
 ///
@@ -44,9 +44,11 @@ pub struct LinuxReactor {
 /// `ReactorHandles` の drop は次の連鎖を起こす:
 ///
 /// 1. `bridge_tx` / `worker_tx` / `shutdown_tx` が drop される
-/// 2. `LinuxReactor::recv()` の `select!` arm が `RecvError`(全 sender drop 時)
+/// 2. `LinuxReactor::recv()` が [`ReactorError::Disconnected`] (全 sender drop 時)
 ///    または `Ok(Event::Shutdown)`(`shutdown_tx` 経由)を返す
 /// 3. `engine-loop` thread が即時 exit する
+///
+/// [`ReactorError::Disconnected`]: kotoha_engine_core::reactor::ReactorError::Disconnected
 ///
 /// したがって `start()` 戻り値は **program lifetime** まで保持する変数に
 /// bind すること(典型的には `kotoha-bin::main` の local)。明示的な
@@ -86,20 +88,20 @@ pub fn start() -> ReactorHandles {
 }
 
 impl EventReactor for LinuxReactor {
-    fn recv(&self) -> Result<Event, RecvError> {
+    fn recv(&self) -> Result<Event, ReactorError> {
         select! {
-            recv(self.bridge_rx) -> ev => ev,
-            recv(self.worker_rx) -> ev => ev,
+            recv(self.bridge_rx) -> ev => ev.map_err(|_| ReactorError::Disconnected),
+            recv(self.worker_rx) -> ev => ev.map_err(|_| ReactorError::Disconnected),
             recv(self.shutdown_rx) -> _ => Ok(Event::Shutdown),
         }
     }
 
-    fn recv_timeout(&self, timeout: Duration) -> Result<Event, RecvTimeoutError> {
+    fn recv_timeout(&self, timeout: Duration) -> Result<Event, ReactorError> {
         select! {
-            recv(self.bridge_rx) -> ev => ev.map_err(RecvTimeoutError::from),
-            recv(self.worker_rx) -> ev => ev.map_err(RecvTimeoutError::from),
+            recv(self.bridge_rx) -> ev => ev.map_err(|_| ReactorError::Disconnected),
+            recv(self.worker_rx) -> ev => ev.map_err(|_| ReactorError::Disconnected),
             recv(self.shutdown_rx) -> _ => Ok(Event::Shutdown),
-            default(timeout) => Err(RecvTimeoutError::Timeout),
+            default(timeout) => Err(ReactorError::Timeout),
         }
     }
 }
