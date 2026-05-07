@@ -18,6 +18,7 @@ use crate::ime_engine::IMEEngine;
 use crate::key_event::{KeyEvent, KeyEventResult};
 use crate::ranker::{CandidateUpdate, ConversionContext, ConversionMode, Ranker};
 use crate::reactor::{Event, WorkerPayload};
+use crate::request_id::RequestId;
 
 mod candidates;
 mod commit_history;
@@ -56,7 +57,7 @@ pub enum EngineState {
 /// engine 主 thread side の safety net として `EngineEvent::Candidates` の
 /// `request_id` と照合する。
 pub(crate) struct RequestHandle {
-    pub(crate) id: u64,
+    pub(crate) id: RequestId,
     pub(crate) cancel_token: Arc<StdCancellationToken>,
 }
 
@@ -101,7 +102,7 @@ pub struct KotohaEngine {
     pub(crate) preedit: PreeditBuffer,
     pub(crate) candidates: CandidateBuffer,
     pub(crate) active_request: Option<RequestHandle>,
-    pub(crate) request_id_seed: u64,
+    pub(crate) request_id_seed: RequestId,
     pub(crate) enabled: bool,
     pub(crate) focused: bool,
     /// `RankerWorker` 主 thread と engine 主 thread を結ぶ channel pair および
@@ -144,7 +145,7 @@ impl KotohaEngine {
             preedit: PreeditBuffer::new(),
             candidates: CandidateBuffer::new(),
             active_request: None,
-            request_id_seed: 0,
+            request_id_seed: RequestId::ZERO,
             enabled: false,
             focused: false,
             worker,
@@ -153,8 +154,8 @@ impl KotohaEngine {
     }
 
     /// 次 request_id を採番する(64-bit 単調増加、spec §7.5)。
-    pub(crate) fn next_request_id(&mut self) -> u64 {
-        self.request_id_seed = self.request_id_seed.wrapping_add(1);
+    pub(crate) fn next_request_id(&mut self) -> RequestId {
+        self.request_id_seed = self.request_id_seed.next();
         self.request_id_seed
     }
 
@@ -224,7 +225,7 @@ impl KotohaEngine {
             // 明示 cancel する。さらに preedit + host preedit も clear して
             // UI に stale 文字列が残らないようにする(degrade_to_idle と同等)。
             tracing::error!(
-                request_id,
+                request_id = %request_id,
                 "ranker worker channel closed; engine going to IME-disabled (consecutive panic threshold reached \
                  or worker exited unexpectedly)"
             );
@@ -286,13 +287,13 @@ impl KotohaEngine {
     ///   CandidatesShown へ昇格(spec §5.2 row 7)
     /// - `payload == Error(_)` で `request_id == active_request.id` ⇒
     ///   engine state を Idle に degrade(spec §9.1 row 2)
-    pub fn apply_candidate_update(&mut self, request_id: u64, payload: WorkerPayload) {
+    pub fn apply_candidate_update(&mut self, request_id: RequestId, payload: WorkerPayload) {
         let active_id = self.active_request.as_ref().map(|h| h.id);
         match payload {
             WorkerPayload::Candidates(update) => {
                 if active_id != Some(request_id) {
                     tracing::trace!(
-                        request_id,
+                        request_id = %request_id,
                         ?active_id,
                         "discarding stale Candidates from worker (request_id mismatch)"
                     );
@@ -304,12 +305,12 @@ impl KotohaEngine {
             }
             WorkerPayload::Error(error) => {
                 let sanitized = sanitize_log_text(&error);
-                tracing::error!(request_id, error = %sanitized, "ranker worker error");
+                tracing::error!(request_id = %request_id, error = %sanitized, "ranker worker error");
                 if active_id == Some(request_id) {
                     self.degrade_to_idle();
                 } else {
                     tracing::trace!(
-                        request_id,
+                        request_id = %request_id,
                         ?active_id,
                         "ranker worker error is for stale request, no degrade"
                     );
@@ -904,7 +905,7 @@ mod apply_candidate_update_tests {
 
     /// 共通 helper:noop ranker / stub writer / host bridge で engine を組む。
     /// 各 test は active_request を手動で立てて apply_candidate_update を呼ぶ。
-    fn build_engine_with_active_request(active_id: u64) -> (KotohaEngine, MockHostBridge) {
+    fn build_engine_with_active_request(active_id: RequestId) -> (KotohaEngine, MockHostBridge) {
         struct NoopRanker;
         impl crate::Ranker for NoopRanker {
             fn rank(
@@ -962,9 +963,9 @@ mod apply_candidate_update_tests {
 
     #[test]
     fn candidates_with_matching_id_apply_buffer_and_notify_host_in_live() {
-        let (mut engine, host) = build_engine_with_active_request(42);
+        let (mut engine, host) = build_engine_with_active_request(RequestId::new(42));
         engine.apply_candidate_update(
-            42,
+            RequestId::new(42),
             WorkerPayload::Candidates(CandidateUpdate::Replace(vec![Candidate::new("蚊", -1.0)])),
         );
         assert_eq!(engine.candidate_count_for_test(), 1);
@@ -981,10 +982,10 @@ mod apply_candidate_update_tests {
 
     #[test]
     fn candidates_with_mismatched_id_are_silently_discarded() {
-        let (mut engine, host) = build_engine_with_active_request(42);
+        let (mut engine, host) = build_engine_with_active_request(RequestId::new(42));
         // 別 id の output:state 変化なし、host 通知なし。
         engine.apply_candidate_update(
-            999,
+            RequestId::new(999),
             WorkerPayload::Candidates(CandidateUpdate::Replace(vec![Candidate::new(
                 "stale", -1.0,
             )])),
@@ -1004,8 +1005,11 @@ mod apply_candidate_update_tests {
 
     #[test]
     fn worker_error_with_matching_id_degrades_to_idle() {
-        let (mut engine, host) = build_engine_with_active_request(42);
-        engine.apply_candidate_update(42, WorkerPayload::Error("timeout".to_string()));
+        let (mut engine, host) = build_engine_with_active_request(RequestId::new(42));
+        engine.apply_candidate_update(
+            RequestId::new(42),
+            WorkerPayload::Error("timeout".to_string()),
+        );
         assert_eq!(engine.state_for_test(), EngineState::Idle);
         assert_eq!(
             engine.preedit_for_test(),
@@ -1032,9 +1036,12 @@ mod apply_candidate_update_tests {
 
     #[test]
     fn worker_error_with_mismatched_id_does_not_degrade() {
-        let (mut engine, host) = build_engine_with_active_request(42);
+        let (mut engine, host) = build_engine_with_active_request(RequestId::new(42));
         let host_op_count_before = host.operations().len();
-        engine.apply_candidate_update(999, WorkerPayload::Error("stale".to_string()));
+        engine.apply_candidate_update(
+            RequestId::new(999),
+            WorkerPayload::Error("stale".to_string()),
+        );
         // state は LiveConverting のまま、preedit は維持される。
         assert_eq!(engine.state_for_test(), EngineState::LiveConverting);
         assert_eq!(engine.preedit_for_test(), "か");

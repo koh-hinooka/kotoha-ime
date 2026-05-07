@@ -33,6 +33,7 @@ pub mod key_event;
 pub mod learning_port;
 pub mod ranker;
 pub mod reactor;
+pub mod request_id;
 pub mod sanitize;
 
 #[cfg(feature = "test-helpers")]
@@ -51,3 +52,4 @@ pub use ranker::{
     CandidateUpdate, ConversionContext, ConversionMode, Ranker, RankerError, RankerOutput,
 };
 pub use reactor::{Event, EventReactor, IBusResetKind, WorkerPayload};
+pub use request_id::RequestId;

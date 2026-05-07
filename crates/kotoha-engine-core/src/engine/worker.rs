@@ -22,6 +22,7 @@ use kotoha_core::Candidate;
 use crate::cancel::CancellationToken;
 use crate::ranker::{CandidateUpdate, ConversionMode, RankerOutput};
 use crate::reactor::{Event, WorkerPayload};
+use crate::request_id::RequestId;
 
 use super::event::RankRequest;
 
@@ -91,9 +92,12 @@ pub(crate) fn spawn_worker(
 
 /// engine-loop receiver が drop された場合に worker_loop を即時終了させる helper。
 /// `tx_event.send` が `Err` を返したら debug log を残して `true` を返す。
-fn try_send_event(tx_event: &Sender<Event>, ev: Event, request_id: u64) -> bool {
+fn try_send_event(tx_event: &Sender<Event>, ev: Event, request_id: RequestId) -> bool {
     if tx_event.send(ev).is_err() {
-        tracing::debug!(request_id, "engine-loop receiver dropped; worker exiting");
+        tracing::debug!(
+            request_id = %request_id,
+            "engine-loop receiver dropped; worker exiting"
+        );
         return true;
     }
     false
@@ -129,7 +133,7 @@ fn worker_loop(rx_request: Receiver<RankRequest>, tx_event: Sender<Event>) {
             Err(payload) => {
                 let msg = panic_message_from(&payload);
                 tracing::error!(
-                    request_id,
+                    request_id = %request_id,
                     panic = %msg,
                     "worker_loop body panicked outside Ranker::rank"
                 );
@@ -188,7 +192,7 @@ fn handle_one_request(req: RankRequest, tx_event: &Sender<Event>) -> IterationOu
         Ok(Err(e)) => (Err(format!("ranker error: {e}")), false),
         Err(panic_payload) => {
             let msg = panic_message_from(&panic_payload);
-            tracing::error!(request_id, panic = %msg, "ranker panicked");
+            tracing::error!(request_id = %request_id, panic = %msg, "ranker panicked");
             (Err(format!("ranker panicked: {msg}")), true)
         }
     };
