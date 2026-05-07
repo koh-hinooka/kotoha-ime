@@ -284,8 +284,8 @@ fn run_ibus() -> anyhow::Result<()> {
     //     (IBusHostBridge は内部で別 connection を持つため独立)。
     let listener_connection = zbus::blocking::Connection::session()
         .context("open session bus for D-Bus listener thread")?;
-    let listener_shutdown = kotoha_engine_ibus::listener::ListenerShutdown::new();
-    let listener_observer = listener_shutdown.observer();
+    let (listener_shutdown, listener_observer) =
+        kotoha_engine_ibus::listener::ListenerShutdown::new();
 
     // 12. thread spawn(ADR 0020 §採択 Q4 4-thread topology)
     //     順序:dbus-listener → engine-loop。engine_loop に engine + reactor を

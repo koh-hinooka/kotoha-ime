@@ -34,27 +34,49 @@ use std::sync::Arc;
 use crossbeam_channel::Sender;
 use kotoha_engine_core::reactor::Event;
 
-/// Listener thread の shutdown signal handle。
+/// Listener thread の shutdown signal の **trigger 側** handle。
 ///
-/// main thread は `LinuxReactor` の `shutdown_tx` close で engine-loop を停止
-/// させた後、本 handle 経由で listener にも shutdown を伝える。
+/// main thread が保持し、`request()` で shutdown を発火する。観測側の
+/// [`ShutdownObserver`] は同一の atomic flag を共有し、`is_shutting_down()`
+/// で読み取り専用の view を提供する(crossbeam の `(Sender, Receiver)`
+/// split-handle pattern と同じ思想)。
+///
+/// # 旧 API からの移行(#187)
+///
+/// 旧版は `ListenerShutdown::new() -> Self` + `observer() -> Arc<AtomicBool>`
+/// で観測側に `Arc<AtomicBool>` を leak させていた。本版は
+/// [`ListenerShutdown::new`] が `(Self, ShutdownObserver)` を返す
+/// split-handle に変更し、newtype の中で flag に対する操作 (`store` /
+/// `load`) をカプセル化する。これにより observer 側からは `is_shutting_down()`
+/// しか呼べず、誤って `flag.store(false, ...)` で trigger 側を打ち消す事故を
+/// 構造的に防ぐ。
 pub struct ListenerShutdown {
     flag: Arc<AtomicBool>,
 }
 
-impl ListenerShutdown {
-    /// listener が観測する shutdown flag を生成する。
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            flag: Arc::new(AtomicBool::new(false)),
-        }
-    }
+/// Listener thread の shutdown signal の **観測側** handle。
+///
+/// listener thread が `move` で受け取り、`is_shutting_down()` を polling する
+/// 形で利用する。`Clone` を実装するので複数 observer に分配可能だが、本 PR
+/// 段階では単一 listener thread のみが消費する。
+///
+/// 本 newtype は内部 [`Arc<AtomicBool>`] への直接アクセスを公開しない:
+/// `Deref` も `as_inner()` も提供せず、`store` で flag を打ち消す手段を
+/// 構造的に塞ぐ。
+pub struct ShutdownObserver {
+    flag: Arc<AtomicBool>,
+}
 
-    /// listener thread が観測する flag handle を作る(thread に move する)。
+impl ListenerShutdown {
+    /// shutdown signal の trigger / observer ペアを生成する。
+    ///
+    /// 戻り値の `(trigger, observer)` は同一の atomic flag を共有する。
+    /// trigger は main thread が保持し、observer は listener thread に
+    /// `move` で渡す(典型 usage は本 module の test 参照)。
     #[must_use]
-    pub fn observer(&self) -> Arc<AtomicBool> {
-        self.flag.clone()
+    pub fn new() -> (Self, ShutdownObserver) {
+        let flag = Arc::new(AtomicBool::new(false));
+        (Self { flag: flag.clone() }, ShutdownObserver { flag })
     }
 
     /// shutdown を要求する。listener は次 poll サイクルで return する。
@@ -63,9 +85,19 @@ impl ListenerShutdown {
     }
 }
 
-impl Default for ListenerShutdown {
-    fn default() -> Self {
-        Self::new()
+impl ShutdownObserver {
+    /// listener thread の poll loop が呼ぶ read-only check。
+    #[must_use]
+    pub fn is_shutting_down(&self) -> bool {
+        self.flag.load(Ordering::SeqCst)
+    }
+}
+
+impl Clone for ShutdownObserver {
+    fn clone(&self) -> Self {
+        Self {
+            flag: self.flag.clone(),
+        }
     }
 }
 
@@ -121,7 +153,7 @@ pub struct ListenerStubRefused;
 pub fn run(
     _connection: zbus::blocking::Connection,
     bridge_tx: Sender<Event>,
-    shutdown: Arc<AtomicBool>,
+    shutdown: ShutdownObserver,
 ) -> anyhow::Result<()> {
     if !allow_listener_stub() {
         tracing::error!(
@@ -138,7 +170,7 @@ pub fn run(
          No D-Bus method calls will be decoded; the IME will NOT receive key events \
          until B6 lands. Production deployments must NOT export this env var."
     );
-    while !shutdown.load(Ordering::SeqCst) {
+    while !shutdown.is_shutting_down() {
         // bridge_tx が disconnected ならば engine-loop が落ちた合図。即時 exit。
         if bridge_tx.is_full() {
             // unbounded channel は is_full = false が普通。本 check は将来
@@ -176,8 +208,8 @@ mod tests {
         }
         let conn = dummy_connection();
         let (tx, _rx) = unbounded();
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let result = run(conn, tx, shutdown);
+        let (_trigger, observer) = ListenerShutdown::new();
+        let result = run(conn, tx, observer);
         assert!(
             result.is_err(),
             "run() should reject when env var unset, got Ok"
@@ -194,8 +226,7 @@ mod tests {
         }
         let conn = dummy_connection();
         let (tx, _rx) = unbounded();
-        let shutdown_handle = ListenerShutdown::new();
-        let observer = shutdown_handle.observer();
+        let (shutdown_handle, observer) = ListenerShutdown::new();
         let listener_thread = std::thread::spawn(move || run(conn, tx, observer));
 
         // 50ms poll cycle + 余裕で 80ms 後 request、150ms 待って exit を観測。
@@ -212,5 +243,33 @@ mod tests {
         unsafe {
             std::env::remove_var(KOTOHA_ALLOW_LISTENER_STUB_ENV);
         }
+    }
+
+    /// `ShutdownObserver::is_shutting_down()` は trigger からの `request()` を
+    /// 観測する。本 test は dbus session bus に依存せず実行可能。
+    #[test]
+    fn observer_reflects_trigger_state() {
+        let (trigger, observer) = ListenerShutdown::new();
+        assert!(
+            !observer.is_shutting_down(),
+            "fresh observer should not signal shutdown"
+        );
+        trigger.request();
+        assert!(
+            observer.is_shutting_down(),
+            "after trigger.request(), observer must signal shutdown"
+        );
+    }
+
+    /// `ShutdownObserver::clone()` は同一 atomic flag を共有する。
+    #[test]
+    fn cloned_observer_shares_state() {
+        let (trigger, observer1) = ListenerShutdown::new();
+        let observer2 = observer1.clone();
+        assert!(!observer1.is_shutting_down());
+        assert!(!observer2.is_shutting_down());
+        trigger.request();
+        assert!(observer1.is_shutting_down());
+        assert!(observer2.is_shutting_down());
     }
 }
