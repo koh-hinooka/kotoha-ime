@@ -11,6 +11,7 @@
 use std::time::{Duration, Instant};
 
 use kotoha_engine_core::reactor::{Event, EventReactor, IBusResetKind, ReactorError};
+use kotoha_engine_core::request_id::RequestId;
 use kotoha_engine_reactor_linux::{start, ReactorHandles};
 
 /// `shutdown_tx` を drop するだけで `Event::Shutdown` が `recv()` から
@@ -114,7 +115,7 @@ fn bursty_events_are_all_delivered() {
                 .expect("bridge send");
             worker_clone
                 .send(Event::WorkerOutput {
-                    request_id: i,
+                    request_id: RequestId::new(i),
                     payload: kotoha_engine_core::reactor::WorkerPayload::Error("bench".into()),
                 })
                 .expect("worker send");

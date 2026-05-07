@@ -12,10 +12,11 @@ use std::sync::Arc;
 
 use crate::cancel::StdCancellationToken;
 use crate::ranker::{ConversionContext, Ranker};
+use crate::request_id::RequestId;
 
 /// engine 主 thread から worker thread へ送る 1 RankRequest。
 pub(crate) struct RankRequest {
-    pub(crate) request_id: u64,
+    pub(crate) request_id: RequestId,
     pub(crate) kana: String,
     pub(crate) ctx: ConversionContext,
     pub(crate) cancel_token: Arc<StdCancellationToken>,

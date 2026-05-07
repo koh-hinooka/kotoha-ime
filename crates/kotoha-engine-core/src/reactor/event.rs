@@ -6,6 +6,7 @@
 
 use crate::key_event::KeyEvent;
 use crate::ranker::CandidateUpdate;
+use crate::request_id::RequestId;
 
 /// engine-loop thread が単一 thread で multiplex する全 event source の sum 型。
 ///
@@ -33,7 +34,7 @@ pub enum Event {
     /// ranker-worker thread が生成した候補 update + worker error。
     /// 旧 `EngineEvent::Candidates` / `EngineEvent::WorkerError` を統合した形。
     WorkerOutput {
-        request_id: u64,
+        request_id: RequestId,
         payload: WorkerPayload,
     },
 
