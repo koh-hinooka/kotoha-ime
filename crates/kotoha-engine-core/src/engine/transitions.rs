@@ -83,12 +83,14 @@ fn handle_typing(engine: &mut KotohaEngine, key: KeyEvent) -> KeyEventResult {
         if !engine.enabled {
             return KeyEventResult::Consumed;
         }
-        if !engine.candidates.items.is_empty() {
-            engine
-                .host
-                .update_candidates(CandidateUpdate::Replace(engine.candidates.items.clone()));
-            engine.host.show_candidate_window();
-        }
+        // Phase 3-B B0h-f rev3 (ADR 0020):旧 rev2 は dispatch 内 drain で候補が
+        // 揃った時のみ show_candidate_window を fire していたが、rev3 で dispatch
+        // が send-only 化したため、本 path では常に LiveConverting 入りと
+        // show_candidate_window を eager に発火する(handle_space の Commit
+        // 経路と同じ pattern)。実候補の `update_candidates` は worker output が
+        // engine-loop で `Event::WorkerOutput` として届き
+        // `KotohaEngine::apply_candidate_update` 経由で発火する。
+        engine.host.show_candidate_window();
         engine.state = EngineState::LiveConverting;
     } else {
         // pending romaji のみ(kana 出力なし)、状態は Idle 維持
@@ -129,12 +131,8 @@ fn handle_backspace(engine: &mut KotohaEngine) -> KeyEventResult {
                 engine.state = EngineState::Idle;
             } else {
                 engine.dispatch_rank_request(ConversionMode::Live);
-                if !engine.candidates.items.is_empty() {
-                    engine.host.update_candidates(CandidateUpdate::Replace(
-                        engine.candidates.items.clone(),
-                    ));
-                    engine.host.show_candidate_window();
-                }
+                // rev3 (ADR 0020):show_candidate_window を eager fire(handle_typing と同 pattern)。
+                engine.host.show_candidate_window();
                 engine.state = EngineState::LiveConverting;
             }
             KeyEventResult::Consumed
@@ -147,14 +145,14 @@ fn handle_backspace(engine: &mut KotohaEngine) -> KeyEventResult {
 /// spec §5.2 strict: `LiveConverting + space → CommitConverting`(候補未到着の中間状態)、
 /// `CommitConverting + RankerOutput → CandidatesShown`(候補到着で遷移)の 2 段。
 ///
-/// Phase 3-B B0d (ISSUE #140 / Critical 4 async path 修正):
-/// 1. state を即 `CommitConverting` に遷移し、`show_candidate_window` で
-///    user に「変換中」フィードバックを出す(内容は到着待ち)。
-/// 2. `dispatch_rank_request` 内 blocking で第 1 batch を待つ(同期 Mock 経路 + 速い
-///    実 Ranker は ここで populate される)。
-/// 3. 候補が間に合えば即 `CandidatesShown` に追加遷移。間に合わない場合は
-///    `CommitConverting` で抜け、後続 `process_key_event` 先頭の
-///    [`KotohaEngine::drain_pending_events`] が候補到着時に `CandidatesShown` 遷移を行う。
+/// Phase 3-B B0h-f rev3 (ADR 0020):旧 rev2 では `dispatch_rank_request` が
+/// 内部 blocking で第 1 batch を待ち、間に合えば即 `CandidatesShown` に遷移
+/// する fast-path を持っていた。rev3 では `dispatch_rank_request` は send-only
+/// に縮小され、worker output は engine-loop thread が `Event::WorkerOutput` を
+/// 受信した時点で [`KotohaEngine::apply_candidate_update`] 経由で
+/// [`KotohaEngine::maybe_promote_commit_to_candidates_shown`] を発火し
+/// `CandidatesShown` への遷移を行う。本関数は state 遷移と show_candidate_window
+/// の発火のみに専念する。
 fn handle_space(engine: &mut KotohaEngine) -> KeyEventResult {
     match engine.state {
         EngineState::Idle => KeyEventResult::Forwarded,
@@ -167,14 +165,6 @@ fn handle_space(engine: &mut KotohaEngine) -> KeyEventResult {
 
             engine.dispatch_rank_request(ConversionMode::Commit);
 
-            // 候補が dispatch 内 drain で間に合っていれば row 7 遷移を即適用。
-            // 間に合っていなければ後続 keystroke の drain_pending_events で対応。
-            if !engine.candidates.items.is_empty() {
-                engine
-                    .host
-                    .update_candidates(CandidateUpdate::Replace(engine.candidates.items.clone()));
-                engine.state = EngineState::CandidatesShown;
-            }
             KeyEventResult::Consumed
         }
         EngineState::CandidatesShown => {
@@ -268,12 +258,8 @@ fn handle_escape(engine: &mut KotohaEngine) -> KeyEventResult {
                 engine.state = EngineState::Idle;
             } else {
                 engine.dispatch_rank_request(ConversionMode::Live);
-                if !engine.candidates.items.is_empty() {
-                    engine.host.update_candidates(CandidateUpdate::Replace(
-                        engine.candidates.items.clone(),
-                    ));
-                    engine.host.show_candidate_window();
-                }
+                // rev3 (ADR 0020):show_candidate_window を eager fire(handle_typing と同 pattern)。
+                engine.host.show_candidate_window();
                 engine.state = EngineState::LiveConverting;
             }
             KeyEventResult::Consumed

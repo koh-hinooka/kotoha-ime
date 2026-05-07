@@ -34,5 +34,12 @@ kotoha-engine-adapter = { path = "../kotoha-engine-adapter" }
 # concrete Ranker adapter (SudachiDict + UserVocab + LearningCache + LLM)。
 kotoha-ranker-hybrid = { path = "../kotoha-ranker-hybrid" }
 kotoha-engine-ibus = { path = "../kotoha-engine-ibus" }
+# Phase 3-B B0h-f + B3 (ADR 0020):4-thread topology + EventReactor を提供。
+kotoha-engine-reactor-linux = { path = "../kotoha-engine-reactor-linux" }
 kotoha-storage = { path = "../kotoha-storage" }
 kotoha-core = { path = "../kotoha-core" }
+# Phase 3-B B0h-f + B3 (ADR 0020):engine-loop / dbus-listener thread 間の
+# channel + shutdown signal で利用。
+crossbeam-channel = { workspace = true }
+# Phase 3-B B3 (ADR 0020):listener thread に session bus connection を渡すため。
+zbus = { workspace = true }

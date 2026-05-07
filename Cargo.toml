@@ -7,6 +7,7 @@ members = [
     "crates/kotoha-engine-core",
     "crates/kotoha-engine-adapter",
     "crates/kotoha-ranker-hybrid",
+    "crates/kotoha-engine-reactor-linux",
     "crates/kotoha-engine-ibus",
     "crates/kotoha-bin",
 ]
@@ -67,3 +68,12 @@ zbus = "5"
 # は workspace dep として参照しない。将来 derive を再導入する場合は本 entry の
 # 再有効化と関連 crate の `serde = { workspace = true }` 復活を行う。
 # serde = { version = "1", features = ["derive"] }
+# crossbeam-channel pinned via P3-B B0h-f + B3 一体化 (2026-05-06、ADR 0020 §採択 Q2)。
+# Adopted reason: ADR 0017 rev2「core は tokio 非依存」原則を維持しつつ
+# multi-source event multiplex を select! macro で型安全に表現可能。
+# Alternatives rejected (ADR 0020 §採択 Q2 参照):
+#   - mio: source 数 3-4 で表現力過剰、Linux/BSD 限定
+#   - tokio: ADR 0017 全面 revise + std::thread 大量書換、scope 膨張
+#   - kanal 0.2.0-beta1: pre-1.0 で API 安定性懸念
+#   - flume 0.12: crossbeam ほど成熟していない
+crossbeam-channel = "0.5"

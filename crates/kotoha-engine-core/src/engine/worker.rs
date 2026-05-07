@@ -1,8 +1,9 @@
 //! `RankerWorker` — Phase 3-A spec §7 の dedicated background thread。
 //!
-//! engine 主 thread からの `RankRequest` を mpsc 経由で受け取り、
+//! engine 主 thread からの `RankRequest` を crossbeam channel で受け取り、
 //! `Ranker::rank` を起動。Ranker 内部の sink 受信を coalescing window で
-//! 集約し、`EngineEvent::Candidates` で engine に push する。
+//! 集約し、`Event::WorkerOutput { request_id, payload }` で engine-loop へ
+//! 直接送る(Phase 3-B B0h-f + B3 / ADR 0020、旧 `EngineEvent` enum は撤去)。
 //!
 //! coalescing window (spec §7.3):
 //! - Live: 7ms (5-10ms range の中央値、実装段階 empirical 確定)
@@ -15,12 +16,14 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crossbeam_channel::{Receiver, Sender};
 use kotoha_core::Candidate;
 
 use crate::cancel::CancellationToken;
 use crate::ranker::{CandidateUpdate, ConversionMode, RankerOutput};
+use crate::reactor::{Event, WorkerPayload};
 
-use super::event::{EngineEvent, RankRequest};
+use super::event::RankRequest;
 
 /// Live mode coalescing window(spec §7.3 暫定 7ms)。
 pub const LIVE_WINDOW: Duration = Duration::from_millis(7);
@@ -53,12 +56,18 @@ pub const COMMIT_SECOND_WINDOW: Duration = Duration::from_millis(150);
 /// loop continue で生存」と整合。
 const MAX_CONSECUTIVE_PANICS: u32 = 5;
 
-/// `RankerWorker` を spawn する。
+/// `RankerWorker` を spawn する(Phase 3-B B0h-f / ADR 0020)。
+///
+/// # Arguments
+///
+/// - `tx_event`: worker → engine-loop の `Event` 送信先(`Sender<Event>` の
+///   clone を caller `WorkerChannel::new` 経由で受け取る)。
 ///
 /// # Returns
 ///
-/// `(tx_request, rx_event, JoinHandle)`: engine 主 thread が tx_request に
-/// `RankRequest` を送り、rx_event から `EngineEvent` を受信する。
+/// `(tx_request, JoinHandle)`: engine 主 thread が `tx_request` に
+/// `RankRequest` を送る。`Event::WorkerOutput { request_id, payload }` は
+/// `tx_event` 経由で engine-loop が受信する。
 ///
 /// # Thread lifecycle
 ///
@@ -70,25 +79,21 @@ const MAX_CONSECUTIVE_PANICS: u32 = 5;
 /// - [`io::Error`] — OS が thread spawn を拒否した場合(thread resource 枯渇等)。
 ///   呼び出し側([`super::KotohaEngine::new`])で `Result` 経由 propagate し、
 ///   process 起動を中断させる(spec §9.1 row 5)。
-pub(crate) fn spawn_worker() -> io::Result<(
-    mpsc::Sender<RankRequest>,
-    mpsc::Receiver<EngineEvent>,
-    thread::JoinHandle<()>,
-)> {
-    let (tx_request, rx_request) = mpsc::channel::<RankRequest>();
-    let (tx_event, rx_event) = mpsc::channel::<EngineEvent>();
+pub(crate) fn spawn_worker(
+    tx_event: Sender<Event>,
+) -> io::Result<(Sender<RankRequest>, thread::JoinHandle<()>)> {
+    let (tx_request, rx_request) = crossbeam_channel::unbounded::<RankRequest>();
     let handle = thread::Builder::new()
         .name("kotoha-ranker-worker".into())
         .spawn(move || worker_loop(rx_request, tx_event))?;
-    Ok((tx_request, rx_event, handle))
+    Ok((tx_request, handle))
 }
 
-/// engine 主 thread の receiver が drop された場合に worker_loop を即時終了させる
-/// helper。`tx_event.send` が `Err` を返したら debug log を残して `true` を返す。
-/// 呼び出し側は `if try_send_event(...) { return; }` の pattern で抜ける。
-fn try_send_event(tx_event: &mpsc::Sender<EngineEvent>, ev: EngineEvent, request_id: u64) -> bool {
+/// engine-loop receiver が drop された場合に worker_loop を即時終了させる helper。
+/// `tx_event.send` が `Err` を返したら debug log を残して `true` を返す。
+fn try_send_event(tx_event: &Sender<Event>, ev: Event, request_id: u64) -> bool {
     if tx_event.send(ev).is_err() {
-        tracing::debug!(request_id, "engine receiver dropped; worker exiting");
+        tracing::debug!(request_id, "engine-loop receiver dropped; worker exiting");
         return true;
     }
     false
@@ -101,12 +106,12 @@ enum IterationOutcome {
     /// Ranker.rank が panic し WorkerError event を送信済。counter increment 対象
     /// (deterministic Ranker panic を I16 として検出する)。
     RankerPanicked,
-    /// `tx_event.send` が Err を返した(engine 主 thread 側 receiver drop)。
+    /// `tx_event.send` が Err を返した(engine-loop 側 receiver drop)。
     /// 即時 worker exit する。
     EngineDisconnected,
 }
 
-fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<EngineEvent>) {
+fn worker_loop(rx_request: Receiver<RankRequest>, tx_event: Sender<Event>) {
     let mut consecutive_panics: u32 = 0;
     while let Ok(req) = rx_request.recv() {
         let request_id = req.request_id;
@@ -130,9 +135,9 @@ fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<E
                 );
                 if try_send_event(
                     &tx_event,
-                    EngineEvent::WorkerError {
+                    Event::WorkerOutput {
                         request_id,
-                        error: format!("worker body panicked: {msg}"),
+                        payload: WorkerPayload::Error(format!("worker body panicked: {msg}")),
                     },
                     request_id,
                 ) {
@@ -159,26 +164,17 @@ fn worker_loop(rx_request: mpsc::Receiver<RankRequest>, tx_event: mpsc::Sender<E
 }
 
 /// 1 件の `RankRequest` を処理する。`worker_loop` から call される。
-///
-/// # Returns
-///
-/// - [`IterationOutcome::Clean`] — 通常終了
-/// - [`IterationOutcome::RankerPanicked`] — Ranker.rank が panic し WorkerError 送信済
-/// - [`IterationOutcome::EngineDisconnected`] — engine 主 thread の receiver drop
-///
-/// 本関数自体が panic した場合は `worker_loop` の outer catch_unwind が拾い、
-/// I9 として連続 panic counter に加算される。
-fn handle_one_request(req: RankRequest, tx_event: &mpsc::Sender<EngineEvent>) -> IterationOutcome {
+fn handle_one_request(req: RankRequest, tx_event: &Sender<Event>) -> IterationOutcome {
     let request_id = req.request_id;
     let mode = req.ctx.mode;
     let cancel = req.cancel_dyn();
 
+    // Ranker は std::sync::mpsc の sink を要求するため Ranker 入口は std で受ける。
+    // 本 channel は per-request で生成され、本 function 内に閉じる。
     let (tx_ranker, rx_ranker) = mpsc::channel::<RankerOutput>();
 
     // spec §9.1 row 2: Ranker::rank の panic を catch し WorkerError として
-    // 報告。worker thread 自体は loop continue で生存させる。`AssertUnwindSafe`
-    // は Ranker / kana / ctx / cancel / sink が panic 越しに不変である
-    // ことを caller(本 module)が引き受ける明示。
+    // 報告。worker thread 自体は loop continue で生存させる。
     let kana = req.kana.clone();
     let ctx = req.ctx.clone();
     let ranker = req.ranker.clone();
@@ -200,7 +196,10 @@ fn handle_one_request(req: RankRequest, tx_event: &mpsc::Sender<EngineEvent>) ->
     if let Err(error) = rank_outcome {
         if try_send_event(
             tx_event,
-            EngineEvent::WorkerError { request_id, error },
+            Event::WorkerOutput {
+                request_id,
+                payload: WorkerPayload::Error(error),
+            },
             request_id,
         ) {
             return IterationOutcome::EngineDisconnected;
@@ -221,14 +220,14 @@ fn handle_one_request(req: RankRequest, tx_event: &mpsc::Sender<EngineEvent>) ->
     drain_window(&rx_ranker, &cancel, window, &mut buffer);
 
     // Phase 3-B B0d (Important 8): cancel されていなければ buffer が空でも
-    // Replace を送る。engine 側は前回 dispatch の stale 候補を本 Replace で
-    // 確実に clear できる。spec §9.3「変換失敗で前回候補が画面に残る」を防ぐ。
+    // Replace を送る。engine-loop 側は前回 dispatch の stale 候補を本 Replace で
+    // 確実に clear できる(spec §9.3「変換失敗で前回候補が画面に残る」防止)。
     if !cancel.is_cancelled()
         && try_send_event(
             tx_event,
-            EngineEvent::Candidates {
+            Event::WorkerOutput {
                 request_id,
-                update: CandidateUpdate::Replace(buffer.clone()),
+                payload: WorkerPayload::Candidates(CandidateUpdate::Replace(buffer.clone())),
             },
             request_id,
         )
@@ -249,9 +248,9 @@ fn handle_one_request(req: RankRequest, tx_event: &mpsc::Sender<EngineEvent>) ->
             buffer.extend(second_buffer);
             if try_send_event(
                 tx_event,
-                EngineEvent::Candidates {
+                Event::WorkerOutput {
                     request_id,
-                    update: CandidateUpdate::Replace(buffer),
+                    payload: WorkerPayload::Candidates(CandidateUpdate::Replace(buffer)),
                 },
                 request_id,
             ) {
@@ -264,24 +263,7 @@ fn handle_one_request(req: RankRequest, tx_event: &mpsc::Sender<EngineEvent>) ->
 
 /// `catch_unwind` payload から表示用 message を best-effort で抽出する。
 ///
-/// B0g #148 / 第 2 回 review C4: 旧 impl は `&'static str` / `String` のみ
-/// downcast し、`panic_any(anyhow::Error)` や user-defined error 経由の
-/// payload が `(non-string panic payload)` で消失していた。本版では
-/// payload type id を含めて返し、`kotoha-bin` 側の panic_hook が捕捉した
-/// location 情報と組合わせて root cause を辿れるようにする。
-///
-/// `kotoha-engine-core` は domain crate のため `anyhow::Error` への downcast
-/// は実装しない(crate dependency を増やさない)。実際の `anyhow` 表示は
-/// `kotoha-bin::panic_message_from` 側で行う。
-///
-/// # Visibility
-///
-/// B0g-b self-review F3:本 helper は `engine/worker.rs` 内の Ranker.rank /
-/// worker body panic 解析だけでなく `ranker/hybrid.rs` の child thread / 別
-/// crate の `kotoha-engine-ibus/dispatcher.rs` `dispatch_key` 経由 panic でも
-/// 共有再利用する。`pub(crate)` で同 crate 内 module 群に開放、external crate
-/// (engine-ibus 等)からは `crate::engine::panic_message_from` 経由で呼べる
-/// よう lib.rs で再 export する。
+/// B0g #148 / 第 2 回 review C4 / B0g-b self-review F3 経緯は git blame で参照。
 pub fn panic_message_from(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         return (*s).to_string();
@@ -297,12 +279,6 @@ pub fn panic_message_from(payload: &Box<dyn std::any::Any + Send>) -> String {
 
 /// 指定 window 内に Ranker から届いた `RankerOutput` を `buffer` に集約する。
 /// cancel detect で即時 break。
-///
-/// 本 `rx_ranker` channel は **request 毎に新規作成** される(worker_loop 参照)
-/// 前提で、ここに来る output はすべて current request のものとして受け入れる。
-/// `RankerOutput` 自体に id は持たない設計(B0e で `request_id` field を撤去)。
-/// Stale response の discard は engine 主 thread 側の `RankRequest`/`active_request`
-/// ベース id 照合(spec §7.5)で実施する。
 fn drain_window(
     rx_ranker: &mpsc::Receiver<RankerOutput>,
     cancel: &Arc<dyn CancellationToken>,
@@ -367,9 +343,6 @@ mod tests {
 
     #[test]
     fn panic_message_includes_type_id_for_unknown_payload() {
-        // panic_any でカスタム型を投げる。`u32` 自体は std type だが
-        // `&'static str` / `String` のいずれにも該当しないため未知 type
-        // arm が発火し、type_id が message に含まれることを観測する。
         let payload = capture_panic(|| std::panic::panic_any(42_u32));
         let msg = panic_message_from(&payload);
         assert!(

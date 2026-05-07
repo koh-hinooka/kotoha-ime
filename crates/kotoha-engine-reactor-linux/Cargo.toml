@@ -1,0 +1,22 @@
+[package]
+name = "kotoha-engine-reactor-linux"
+description = "Linux event reactor implementation for Kotoha engine-loop (ADR 0020)"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# crossbeam-channel: select! macro による multi-source multiplex(ADR 0020 §採択 Q2)。
+crossbeam-channel = { workspace = true }
+kotoha-engine-core = { path = "../kotoha-engine-core" }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# integration test では engine-core の `MockReactor` 流儀に倣い、
+# `test-helpers` feature を有効化した engine-core を使う場合に備えて依存を追加。
+# 本 crate の reactor 実装自体の test では mock は不要だが、cross-crate な
+# shutdown ordering test を将来追加する余地として残す。
+kotoha-engine-core = { path = "../kotoha-engine-core", features = ["test-helpers"] }

@@ -19,6 +19,7 @@
 
 # Claude Code harness (local state)
 .claude/
+.superpowers/
 
 # Secrets / credentials
 .env

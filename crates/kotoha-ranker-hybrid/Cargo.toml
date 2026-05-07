@@ -29,6 +29,9 @@ proptest = { workspace = true }
 # Test-helpers feature exposed by engine-core/storage are required by some
 # integration tests (engine_wrap_hybrid.rs).
 kotoha-engine-core = { path = "../kotoha-engine-core", features = ["test-helpers"] }
+# Phase 3-B B0h-f rev3 (ADR 0020) で KotohaEngine::new が
+# `Sender<Event>` を要求するようになったため test 側で channel pair を作る。
+crossbeam-channel = { workspace = true }
 
 [features]
 default = []

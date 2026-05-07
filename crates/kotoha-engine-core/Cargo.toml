@@ -22,6 +22,11 @@ authors.workspace = true
 thiserror = { workspace = true }
 tracing = { workspace = true }
 bitflags = { workspace = true }
+# crossbeam-channel: Phase 3-B B0h-f + B3 (ADR 0020) で導入された
+# `EventReactor` trait + `Event` sum 型の Sender/Receiver 型として参照。
+# `select!` macro 自体は本 crate に持ち込まず、Linux 専用 reactor 実装
+# (`kotoha-engine-reactor-linux`)に閉じる。
+crossbeam-channel = { workspace = true }
 kotoha-core = { path = "../kotoha-core" }
 
 [dev-dependencies]

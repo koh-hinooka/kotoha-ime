@@ -19,6 +19,8 @@
 //! - [`ime_engine::IMEEngine`] — driving port(host → engine)
 //! - [`host_bridge::IMEHostBridge`] — driven port(engine → host)
 //! - [`key_event::KeyEvent`] / [`key_event::KeyEventResult`] / [`key_event::KeyModifiers`]
+//! - [`reactor::EventReactor`] — multi-source event multiplexer port(B0h-f / ADR 0020)
+//! - [`reactor::Event`] — engine-loop が dispatch する全 event source の sum 型
 //!
 //! 本 crate は Phase 3-A engine 本体(`KotohaEngine` 状態機械、`RankerWorker`)を
 //! Milestone 2 / 3 で追加する。
@@ -30,6 +32,7 @@ pub mod ime_engine;
 pub mod key_event;
 pub mod learning_port;
 pub mod ranker;
+pub mod reactor;
 pub mod sanitize;
 
 #[cfg(feature = "test-helpers")]
@@ -47,3 +50,4 @@ pub use learning_port::{
 pub use ranker::{
     CandidateUpdate, ConversionContext, ConversionMode, Ranker, RankerError, RankerOutput,
 };
+pub use reactor::{Event, EventReactor, IBusResetKind, WorkerPayload};
