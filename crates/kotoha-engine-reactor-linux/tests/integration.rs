@@ -10,8 +10,7 @@
 
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::RecvTimeoutError;
-use kotoha_engine_core::reactor::{Event, EventReactor, IBusResetKind};
+use kotoha_engine_core::reactor::{Event, EventReactor, IBusResetKind, ReactorError};
 use kotoha_engine_reactor_linux::{start, ReactorHandles};
 
 /// `shutdown_tx` を drop するだけで `Event::Shutdown` が `recv()` から
@@ -90,8 +89,8 @@ fn recv_timeout_returns_timeout_when_quiet() {
     } = start();
     let res = reactor.recv_timeout(Duration::from_millis(20));
     assert!(
-        matches!(res, Err(RecvTimeoutError::Timeout)),
-        "expected RecvTimeoutError::Timeout, got {res:?}"
+        matches!(res, Err(ReactorError::Timeout)),
+        "expected ReactorError::Timeout, got {res:?}"
     );
 }
 

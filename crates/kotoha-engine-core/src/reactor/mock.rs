@@ -10,9 +10,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use crossbeam_channel::{RecvError, RecvTimeoutError};
-
-use crate::reactor::{Event, EventReactor};
+use crate::reactor::{Event, EventReactor, ReactorError};
 
 /// queue ベースの `EventReactor` mock。
 ///
@@ -20,8 +18,8 @@ use crate::reactor::{Event, EventReactor};
 ///
 /// - queue が空かつ `closed = false` で `recv()` を呼ぶことは usage error。
 ///   real reactor とは異なり blocking しない(deterministic test 担保のため)。
-///   `debug_assert!` で検出し、release では `Err(RecvError)` を返す。
-/// - `close()` 後の `recv()` / `recv_timeout()` は `Disconnected` 相当を返す。
+///   `debug_assert!` で検出し、release では `Err(ReactorError::Disconnected)` を返す。
+/// - `close()` 後の `recv()` / `recv_timeout()` は `ReactorError::Disconnected` を返す。
 pub struct MockReactor {
     inner: Mutex<MockState>,
 }
@@ -72,30 +70,30 @@ impl Default for MockReactor {
 }
 
 impl EventReactor for MockReactor {
-    fn recv(&self) -> Result<Event, RecvError> {
+    fn recv(&self) -> Result<Event, ReactorError> {
         let mut s = self.lock();
         if let Some(ev) = s.queue.pop_front() {
             return Ok(ev);
         }
         if s.closed {
-            return Err(RecvError);
+            return Err(ReactorError::Disconnected);
         }
         debug_assert!(
             false,
             "MockReactor::recv called on empty queue without close(); \
              test should push events or close before recv"
         );
-        Err(RecvError)
+        Err(ReactorError::Disconnected)
     }
 
-    fn recv_timeout(&self, _timeout: Duration) -> Result<Event, RecvTimeoutError> {
+    fn recv_timeout(&self, _timeout: Duration) -> Result<Event, ReactorError> {
         let mut s = self.lock();
         if let Some(ev) = s.queue.pop_front() {
             Ok(ev)
         } else if s.closed {
-            Err(RecvTimeoutError::Disconnected)
+            Err(ReactorError::Disconnected)
         } else {
-            Err(RecvTimeoutError::Timeout)
+            Err(ReactorError::Timeout)
         }
     }
 }
