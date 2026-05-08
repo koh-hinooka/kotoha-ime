@@ -5,7 +5,7 @@ bounded_context: _uncategorized
 related_issues: ["#128", "#136", "#149"]
 related_prs: []
 glossary_refs: ["candidate","coalescing-window","event-reactor","event-loop","fan-in","hexagonal-architecture","hybrid-ranker","ime-engine","ime-host-bridge","kana","kotoha-engine","kotoha-storage","layer-3-smoke","lefthook","partial-input","phase3-ibus-engine-terms","preedit","ranker-worker","romaji"]
-last_reviewed: 2026-05-06
+last_reviewed: 2026-05-08
 ---
 
 # Phase 3-A: IBus engine integration design spec
@@ -453,7 +453,7 @@ Phase 3-B B0h-f + B3 一体化(ADR 0020)で、本 §6 / §7 の処理は以下�
 | Thread | 役割 | 既存 spec 参照 |
 |---|---|---|
 | `main` | DI wiring、thread spawn、SIGTERM/SIGINT 受領、join 順制御 | §3.3 |
-| `kotoha-dbus-listener` | zbus `blocking::MessageStream` で IBus method を受信、`Event::IBusKey` / `Event::IBusReset` に decode して bridge channel に送る | §6.1 step [1] / §6.4 入口 |
+| `kotoha-dbus-listener` | zbus `blocking::connection::Builder::serve_at + name` で `org.freedesktop.IBus.Engine.Kotoha` を publish し、`KotohaEngineService`(`#[interface]` macro)が IBus 1.5.x の 4 主要 method + 2 no-op stub を decode、`Event::IBusKey { event, respond }` / `Event::IBusReset` に変換して bridge channel に送る(B6-b #195、ADR 0021) | §6.1 step [1] / §6.4 入口 / `docs/specs/_uncategorized/p3-b-ibus-listener.md` |
 | `kotoha-engine-loop` | `KotohaEngine` を単独所有、`EventReactor::recv()` で multiplex、apply_candidate_update を実行 | §6 全体の dispatch 主体 |
 | `kotoha-ranker-worker` | 既存 `RankerWorker` パターン継承、`Event::WorkerOutput` で送信 | §7 worker 仕様 |
 
