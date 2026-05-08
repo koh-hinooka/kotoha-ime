@@ -17,7 +17,9 @@ Kotoha プロジェクトの開発フェーズと、各フェーズの到達目�
 |---|---|---|
 | [#174](https://github.com/std-koh-hinooka/kotoha-ime/issues/174) docs 構造改修と Obsidian vault 連携 | `docs/specs/_uncategorized/*` (8 spec frontmatter 整備) | [x] |
 | [#149](https://github.com/std-koh-hinooka/kotoha-ime/issues/149) P3-B B0h-f: I3 dispatch_rank_request async-ification | `docs/specs/_uncategorized/p3-a-ibus-engine.md` | [x] |
-| [#136](https://github.com/std-koh-hinooka/kotoha-ime/issues/136) P3-B B3 + B6: signal listener loop + L3 manual smoke | `docs/specs/_uncategorized/p3-a-ibus-engine.md` | [ ] |
+| [#197](https://github.com/std-koh-hinooka/kotoha-ime/issues/197) P3-B B6-a: SIGTERM/SIGINT shutdown hook | (spec 不要、kotoha-bin 局所変更) | [x] |
+| [#195](https://github.com/std-koh-hinooka/kotoha-ime/issues/195) P3-B B6-b: zbus MessageStream decode + IBus engine factory registration | `docs/specs/_uncategorized/p3-b-ibus-listener.md` | [x] |
+| [#136](https://github.com/std-koh-hinooka/kotoha-ime/issues/136) P3-B B6-c: L3 manual smoke (B6-a/B6-b 完了で残作業は manual 検証のみ) | `docs/specs/_uncategorized/p3-a-ibus-engine.md` | [ ] |
 
 <!--
 更新ルール: ~/.claude/CLAUDE.md §post-merge follow-up checklist 参照
@@ -36,7 +38,7 @@ ADR 0010 (`docs/adr/0010-kotoha-custom-romaji-base-model.md`) の決定により
 | 0 | Foundation | Cargo workspace + ローマ字→かな変換 + 入力モード管理 + CLI | 完了 |
 | 1 | Kana→Kanji conversion | llama.cpp + Gemma-2-2B-jpn-it baseline によるかな→漢字変換 (P1-2.5 follow-up で Layer 3 smoke 14/15 達成) | 完了 (14/15 PASS, P1-4 で close 2026-04-25) |
 | 2 | Dictionary and learning | システム辞書 + ユーザ辞書 + 学習キャッシュ + Hybrid Ranker | 完了 (P2-A〜P2-D 全 PR merge、最終 commit `be0fae9` 2026-05-02、test 416 PASS。follow-up backlog #92/#94/#100/#107 は OSS 公開前 triage) |
-| 3 | IBus integration | IBus engine(GNOME Mutter 用) | **進行中** (P3-A draft + P3-B B0/B0g/B0h 全/B1/B2/B3/B4/B5 完了。残 B6 = L3 manual smoke + zbus decode + SIGTERM hook) |
+| 3 | IBus integration | IBus engine(GNOME Mutter 用) | **進行中** (P3-A draft + P3-B B0/B0g/B0h 全/B1/B2/B3/B4/B5/B6-a/B6-b 完了。残 B6-c = L3 manual smoke #196 のみ) |
 | 4 | fcitx5 integration | fcitx5 addon(KDE / wlroots 用) | 未着手 |
 | 5 | **Kotoha custom romaji-base model** | raw romaji keystrokes を直接受理する Kotoha 専用 90〜180M parameter モデルの自作 (data pipeline + training + GGUF 推論統合 + evaluation)。row 3 類の ICL 限界 + typo robustness + partial-input 対応を同時解決する | 未着手 |
 | 6 | Advanced features | タイポ訂正 + 文脈リランキング (Phase 5 の romaji-base モデルを技術基盤とする) | 未着手 |
@@ -124,7 +126,9 @@ Phase 3「IBus integration」は P3-A(設計 + skeleton)と P3-B(production wiri
 | B5 (#139) | KotohaEngine + 実 `HybridRanker` end-to-end integration test | 完了(PR #139) |
 | **B2 (#170)** | IBus signal body marshalling(`proxy.rs` 5 method を実 D-Bus signal emit に置換、`IBusText` / `IBusLookupTable` wire-format 確定:`(sa{sv}sv)` / `(sa{sv}uubbiavav)`) | **完了**(PR #171 squash `4731c50`、test 536 / 547) |
 | **B0h-f + B3 (#149 + #136 一部)** | event-loop architecture 一体化(ADR 0020):4-thread lock-free topology + `EventReactor` trait + `kotoha-engine-reactor-linux` 新 crate + `drain_events_blocking` / `Arc<Mutex<dyn IMEEngine>>` 撤去 + zbus listener loop 実装 | **完了**(PR #183 squash `237eb38`、test 595 / 0、5dim self-review 12 findings 解消) |
-| **B6 (#136 残)** | L3 manual smoke on GNOME Wayland(Firefox / GNOME Text Editor / VS Code で典型変換 10 件)+ zbus `MessageStream` 完全 decode + SIGTERM/SIGINT hook(ADR 0020 §影響 rev2 で deferral 明記) | **未着手** |
+| **B6-a (#197)** | SIGTERM/SIGINT shutdown hook in kotoha-bin (`ctrlc` crate 採用、`ListenerShutdown::Clone` 追加) | **完了**(PR #198 squash `4ea777c`)|
+| **B6-b (#195)** | zbus `blocking::Builder` + `#[interface]` 経由の IBus engine method decode + `RequestName` factory registration、ADR 0021 起票 | **完了**(PR #<TBD>)|
+| **B6-c (#136 残)** | L3 manual smoke on GNOME Wayland(Firefox / GNOME Text Editor / VS Code で典型変換 10 件)、coalescing-window value empirical 確定 | **進行中**(B6-b merge 後、user-driven 実機検証)|
 
 ### Phase 3 受け入れ基準
 
@@ -219,6 +223,7 @@ v0.3.0 以降は §Milestone Specification 完了条件 (annotated tag + リリ�
 
 | 日付 | 改訂内容 |
 |------|----------|
+| 2026-05-08 | Phase 3-B B6-a(#197)+ B6-b(#195)merge 完了。listener stub から production 実装(zbus `#[interface]` + `blocking::Builder`)へ置換、ADR 0021 起票。Phase 3-B sub-milestone table を B6-a / B6-b / B6-c に分割記載。Phase 3 status row 更新(残 B6-c #196 manual smoke のみ)|
 | 2026-05-07 | Phase 3-B B0h-f + B3(#149 + #136 一部)merge 完了(PR #183 squash `237eb38`、test 595 / 0、5dim self-review 12 findings 解消)。Active マイルストーン v0.3.0 の #149 を `[x]`、Phase 3-B sub-milestone table の B0h-f + B3 entry を完了マーク。残作業は B6(L3 manual smoke + zbus decode + SIGTERM hook) |
 | 2026-05-06 | Phase 3-B B0h-f + B3 を一体化 entry に統合、ADR 0020(event-loop architecture)を起票し進行中マーク追加(branch `feature/149-p3b-b0hf-b3-event-loop`) |
 | 2026-05-05 | docs 構造移行 (PR #174): Active マイルストーン v0.3.0 table 化、完了済 v0.0.0/v0.1.0/v0.2.0 を SemVer マッピングで table 化、spec 参照を新パス (`docs/specs/_uncategorized/`) に更新 |

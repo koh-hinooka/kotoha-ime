@@ -52,6 +52,17 @@ use crate::types::{IBusLookupTable, IBusText};
 /// 対応する仕様: IBus 1.5.x `bus/inputcontext.c` の `BUS_INPUT_CONTEXT_GET_INTERFACE`。
 pub(crate) const IBUS_ENGINE_INTERFACE: &str = "org.freedesktop.IBus.Engine";
 
+/// Kotoha が `RequestName` で取得する IBus engine bus name(spec §7.1)。
+///
+/// 同 UID で同名 process が既に publish していると `Builder::name(...)` が `Err` を返し、
+/// listener thread の起動が失敗する。
+pub(crate) const IBUS_ENGINE_BUS_NAME: &str = "org.freedesktop.IBus.Engine.Kotoha";
+
+/// Kotoha engine service の D-Bus object path(spec §7.1)。
+///
+/// `Builder::serve_at(...)` でこの path に `KotohaEngineService` を登録する。
+pub(crate) const IBUS_ENGINE_OBJECT_PATH: &str = "/org/freedesktop/IBus/Engine/Kotoha";
+
 /// `UpdatePreeditText` signal member 名(IBus 1.5.x 仕様)。
 pub(crate) const MEMBER_UPDATE_PREEDIT_TEXT: &str = "UpdatePreeditText";
 /// `CommitText` signal member 名。

@@ -31,6 +31,7 @@ pub mod keysym;
 pub mod listener;
 pub mod lookup_table;
 pub(crate) mod proxy;
+pub(crate) mod service;
 pub(crate) mod types;
 
 /// `crates/kotoha-engine-ibus/src/types.rs` の wire-format type を doc test
