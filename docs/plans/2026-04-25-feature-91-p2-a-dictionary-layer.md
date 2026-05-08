@@ -6,7 +6,7 @@
 
 **Architecture:** `MorphologicalEngine` / `VocabularyLookup` の 2 trait を先出し(Clean Architecture DIP)、`DictionaryBackend` が両 trait の `Box<dyn>` を保持する形で engine 切替可能性を確保する。`BackendConfig::Dictionary { config }` を `#[non_exhaustive]` enum に追加(ADR 0011 拡張点)、SudachiDict-core を `KOTOHA_SYSTEM_DICT_PATH` 経由 manual placement で runtime load する。
 
-**Tech Stack:** Rust 1.80 / edition 2021、`sudachi.rs` (git rev `90fd6068c80c` = v0.6.11、Apache-2.0)、SudachiDict-core v20260116 (Apache-2.0、manual placement)、`dict` / `dict-smoke` Cargo features (default = []、ADR 0012 整合)、Python 3.12 + uv (fixture 生成 tooling)、bash + assert.sh (smoke script)
+**Tech Stack:** Rust 1.80 / edition 2021、`sudachi.rs` (git rev `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` = v0.6.11、Apache-2.0)、SudachiDict-core v20260116 (Apache-2.0、manual placement)、`dict` / `dict-smoke` Cargo features (default = []、ADR 0012 整合)、Python 3.12 + uv (fixture 生成 tooling)、bash + assert.sh (smoke script)
 
 ---
 
@@ -33,7 +33,7 @@
 #   - lindera: MeCab-IPADIC / UniDic 要求(UniDic は商用利用制約)
 #   - vibrato: SudachiDict native 非対応(short/middle/long unit 不可)
 #   - SudachiDict→MeCab 変換: WorksApplications 公式提供なし、精度保証なし
-sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "90fd6068c80c" }
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "90fd6068c80c2fc3b63e0dbab0e341475bad4d8f" }
 ```
 
 - [ ] **Step 2: `crates/kotoha-core/Cargo.toml` `[dependencies]` に optional sudachi を追加**

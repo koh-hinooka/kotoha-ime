@@ -76,7 +76,7 @@ P2-A brainstorming は以下 11 項目を empirical に確定した。各項目�
 
 ### 3.1 Q1: 形態素解析エンジンの選定
 
-P2-A は `sudachi.rs`(WorksApplications, Apache-2.0、git rev `90fd6068c80c` = v0.6.11)を採用する。
+P2-A は `sudachi.rs`(WorksApplications, Apache-2.0、git rev `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` = v0.6.11)を採用する。
 
 - **採用理由**: sudachi.rs は SudachiDict-core を native Rust で読込み可能であり、Phase 5 P5-A PoC が同辞書を採用済(語彙整合性が取れる)。Apache-2.0 licence は OSS 互換性を保つ
 - **lindera 棄却理由**: lindera は MeCab 互換 API を Rust で再実装したライブラリであり、辞書として MeCab-IPADIC または UniDic を要求する。UniDic は商用利用制約があるため採用不可(ADR 0014 C4 と整合)
@@ -181,9 +181,9 @@ pass rate は `category breakdown` + `length bucket breakdown` の 2 軸で集�
 
 ### 3.10 Q10: sudachi.rs version pin
 
-P2-A は sudachi.rs を `rev = "90fd6068c80c"`(v0.6.11)に pin する。
+P2-A は sudachi.rs を `rev = "90fd6068c80c2fc3b63e0dbab0e341475bad4d8f"`(v0.6.11)に pin する。
 
-- **pin 方法**: `Cargo.toml` の `[workspace.dependencies]` で git rev pin(`{ git = "https://github.com/WorksApplications/sudachi.rs", rev = "90fd6068c80c" }`)
+- **pin 方法**: `Cargo.toml` の `[workspace.dependencies]` で git rev pin(`{ git = "https://github.com/WorksApplications/sudachi.rs", rev = "90fd6068c80c2fc3b63e0dbab0e341475bad4d8f" }`)
 - **pin 理由**: sudachi.rs は crates.io 公開 version(0.6.x)が古く、最新の SudachiDict v20260116 と互換性に懸念がある。git rev pin で再現性を担保する。Phase 2 closure までは固定し、bump 必要時は別 ADR / ISSUE を起票する
 
 ### 3.11 Q11: SudachiDict-core version pin と配布方針
@@ -523,7 +523,7 @@ P2-A は workspace root の `[workspace.dependencies]` に sudachi.rs を git re
 
 ```toml
 [workspace.dependencies]
-sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "90fd6068c80c" }
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "90fd6068c80c2fc3b63e0dbab0e341475bad4d8f" }
 ```
 
 - **licence**: Apache-2.0(Kotoha OSS 互換)

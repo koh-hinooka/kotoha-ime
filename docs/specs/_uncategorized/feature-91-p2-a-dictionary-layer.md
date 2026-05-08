@@ -35,7 +35,7 @@ P2-A は Phase 2「Dictionary and learning」の最初の milestone である。
 
 - 6 module(`dict/{mod,backend,engine,vocab,sudachi_adapter,custom_vocab}.rs`)
 - `dict` / `dict-smoke` Cargo features(default = []、ADR 0012 D5)
-- `sudachi.rs` git rev pin(`90fd6068c80c` = v0.6.11、Apache-2.0)
+- `sudachi.rs` git rev pin(`90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` = v0.6.11、Apache-2.0)
 - Layer 1 unit tests + Layer 2 integration tests(計 47 tests 新規)
 - Python tool `tools/p2a-fixture-gen/`(530-case fixture 生成、530 cases 生成は #92 で実施)
 - ADR / spec / README / glossary 同期更新
