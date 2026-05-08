@@ -41,8 +41,11 @@ use kotoha_engine_core::reactor::{Event, EventReactor, IBusResetKind};
 pub(crate) fn run<R: EventReactor>(mut engine: KotohaEngine, reactor: R) -> anyhow::Result<()> {
     loop {
         match reactor.recv() {
-            Ok(Event::IBusKey(key)) => {
-                let _result = engine.process_key_event(key);
+            Ok(Event::IBusKey { event, respond }) => {
+                let result = engine.process_key_event(event);
+                // listener が timeout した場合 send Err は ignore
+                // (= keystroke は app に forward 済、spec §5.2 / p3-b-ibus-listener.md)
+                let _ = respond.send(result);
             }
             Ok(Event::IBusReset(kind)) => match kind {
                 IBusResetKind::FocusOut => engine.focus_out(),

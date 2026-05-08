@@ -4,7 +4,9 @@
 //! source(D-Bus / worker / shutdown / 将来の notification)を単一 sum 型に集約する。
 //! 詳細は spec `docs/specs/_uncategorized/p3-a-ibus-engine.md` §7.1 / ADR 0020 §採択 Q4。
 
-use crate::key_event::KeyEvent;
+use crossbeam_channel::Sender;
+
+use crate::key_event::{KeyEvent, KeyEventResult};
 use crate::ranker::CandidateUpdate;
 use crate::request_id::RequestId;
 
@@ -26,7 +28,15 @@ use crate::request_id::RequestId;
 pub enum Event {
     /// IBus session bus で受信した key event。
     /// `kotoha-dbus-listener` thread が `Sender<Event>::send` で engine-loop に届ける。
-    IBusKey(KeyEvent),
+    ///
+    /// `respond` は engine-loop が `KeyEventResult`(`Consumed` / `Forwarded`)を返す
+    /// bounded(1) channel。listener は recv_timeout(100ms) で待機し timeout 時は
+    /// `Forwarded` 相当として bool false を返す
+    /// (spec §6 / `docs/specs/_uncategorized/p3-b-ibus-listener.md`)。
+    IBusKey {
+        event: KeyEvent,
+        respond: Sender<KeyEventResult>,
+    },
 
     /// IBus focus_out / reset / disable 系の signal。
     IBusReset(IBusResetKind),
