@@ -51,7 +51,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # Test-only dev-deps for Layer 3 CLI integration (spec §10.3.1 / §10.6).
 tempfile = "3"
 assert_cmd = "2"
-serial_test = "3"
+serial_test = "3.4"
 # bitflags pinned via P3-A M1 (2026-05-02). KeyModifiers の bitflag 表現に使う。
 # Adopted reason: defacto standard、no_std 対応、P3-A spec §4.1 で明示要請。
 bitflags = "2.6"
