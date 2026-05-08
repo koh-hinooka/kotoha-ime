@@ -24,7 +24,6 @@ use crate::keysym;
 /// # 配置
 ///
 /// `pub(crate)` で crate 外部に export しない。`listener::run` 内で構築・登録される。
-#[allow(dead_code)] // Task 4 で listener::run から参照される
 pub(crate) struct KotohaEngineService {
     /// engine-loop thread に Event を送る単方向 channel。
     pub(crate) bridge_tx: Sender<Event>,
@@ -34,14 +33,8 @@ pub(crate) struct KotohaEngineService {
 ///
 /// 通常 ~1ms / heavy ~10ms / recovery ~50ms 全てを吸収しつつ、bug 状態 (>100ms) のみ
 /// fallback fire するように設定(spec §6.1)。
-#[allow(dead_code)] // Task 4 で listener から間接参照(本 module 内で process_key_event が利用)
 const PROCESS_KEY_EVENT_TIMEOUT: Duration = Duration::from_millis(100);
 
-// `#[interface]` macro は trait dispatch handler を生成する。本 impl の method は
-// macro 経由でのみ呼ばれるため、static dead_code analysis では不可視。Task 4 で
-// listener::run が本 service を Builder::serve_at に渡し production 経路が成立する
-// が、それでも Rust 側の lint は method を未使用扱いするため allow を維持する。
-#[allow(dead_code)]
 #[interface(name = "org.freedesktop.IBus.Engine")]
 impl KotohaEngineService {
     /// `ProcessKeyEvent(u keyval, u keycode, u state) -> b`

@@ -280,10 +280,10 @@ fn run_ibus() -> anyhow::Result<()> {
     )
     .context("spawn ranker worker thread")?;
 
-    // 11. listener thread 用の session bus connection を別途 open する
-    //     (IBusHostBridge は内部で別 connection を持つため独立)。
-    let listener_connection = zbus::blocking::Connection::session()
-        .context("open session bus for D-Bus listener thread")?;
+    // 11. listener shutdown handle pair を生成する。
+    //     listener::run は内部で `blocking::connection::Builder::session()` から
+    //     session bus connection を確立 + serve_at + name するため、main 側で
+    //     pre-built connection を渡す必要はない(Phase 3-B B6-b #195、ADR 0021)。
     let (listener_shutdown, listener_observer) =
         kotoha_engine_ibus::listener::ListenerShutdown::new();
 
@@ -315,9 +315,7 @@ fn run_ibus() -> anyhow::Result<()> {
     //     move し、engine 状態を完全所有させる。
     let listener_handle = std::thread::Builder::new()
         .name("kotoha-dbus-listener".into())
-        .spawn(move || {
-            kotoha_engine_ibus::listener::run(listener_connection, bridge_tx, listener_observer)
-        })
+        .spawn(move || kotoha_engine_ibus::listener::run(bridge_tx, listener_observer))
         .context("spawn dbus-listener thread")?;
 
     let engine_loop_handle = std::thread::Builder::new()
