@@ -4,10 +4,13 @@
 #
 # 検証対象 (本 hook の責務):
 #   - docs/plans/                  : <yyyy-MM-dd>-<branch>.md (現行維持)
-#   - docs/specs/                  : 配置・命名 + frontmatter 必須 7 キー存在
+#   - docs/specs/                  : 配置・命名 + frontmatter 必須 8 キー存在 (ADR 0036)
 #                                  + feature/bounded_context のファイル名/dir 名一致
 #                                  + status enum + last_reviewed 形式
-#   - docs/adr/                    : NNNN-<title>.md (現行維持)
+#                                  + <feature>.bugs.md sibling (/spec-reverse ADR 0001 生成物、
+#                                    frontmatter を持たない設計) は命名のみ許可し
+#                                    frontmatter 検証から除外。配置・dir 名検証は通常 spec と同じ
+#   - docs/adr/                    : NNNN-<title>.md (README.md = ADR 索引は許可)
 #   - CLAUDE.md (ルート/サブ)      : 進捗情報の直接記載がないこと (現行維持)
 #   - docs/superpowers/ 配下       : ファイル残存禁止 (廃止検証)
 #
@@ -17,6 +20,7 @@
 #   - vault → spec symlink の解決可能性
 #   - ADR 新規追加時の vault adr-index.md 反映
 #   - YAML 厳密構文検証 (yq parse)
+#   - <feature>.bugs.md は pre-push の YAML / glossary 検証からも除外 (両 hook で一貫)
 #
 # 詳細仕様: ~/.claude/CLAUDE.md §Documentation Structure
 #
@@ -88,6 +92,23 @@ _skip_special_spec_file() {
   return 1
 }
 
+# _skip_frontmatter_check は frontmatter 検証 (check_spec_frontmatter) の対象外ファイルを判定する。
+#   - .gitkeep / README.md: spec ではない
+#   - <feature>.bugs.md: /spec-reverse ADR 0001 生成物、frontmatter を持たない設計
+#     (命名・配置検証は check_spec_filename / check_spec_placement が別途担う)
+# .bugs.md の判定は check_spec_filename の許可 regex の .bugs.md 部分と厳密に一致させ、
+# 「除外集合 ⊋ 許可集合」の逆転 (PR #690 review L-1) を防ぐ。
+_skip_frontmatter_check() {
+  local fname="$1"
+  [[ "$fname" == ".gitkeep" ]] && return 0
+  [[ "$fname" == "README.md" ]] && return 0
+  [[ "$fname" =~ ^[a-z][a-z0-9-]*\.bugs\.md$ ]] && return 0
+  # <feature>.trace.md: trace-matrix.ts 生成物 (V-model trace、frontmatter を持たない設計)。
+  # pre-push の trace-matrix-freshness が要求する生成物のため命名のみ許可し frontmatter 検証から除外。
+  [[ "$fname" =~ ^[a-z][a-z0-9-]*\.trace\.md$ ]] && return 0
+  return 1
+}
+
 check_spec_placement() {
   [[ -z "$STAGED_FILES" ]] && return 0
   local spec_files
@@ -142,8 +163,10 @@ check_spec_filename() {
     dir_path=$(dirname "$file")
     _skip_special_spec_file "$fname" "$dir_path" && continue
     [[ "$dir_path" == "docs/specs" ]] && continue
-    if [[ ! "$fname" =~ ^[a-z][a-z0-9-]*\.md$ ]]; then
-      ERRORS+=("Spec 命名違反: $file (期待: kebab-case ^[a-z][a-z0-9-]*\\.md\$, アンダースコア prefix は予約)")
+    # <feature>.md (通常 spec)、<feature>.bugs.md (/spec-reverse ADR 0001 の bug sibling)、
+    # <feature>.trace.md (trace-matrix.ts の V-model trace 生成物) を許可。
+    if [[ ! "$fname" =~ ^[a-z][a-z0-9-]*(\.bugs|\.trace)?\.md$ ]]; then
+      ERRORS+=("Spec 命名違反: $file (期待: kebab-case ^[a-z][a-z0-9-]*(\\.bugs|\\.trace)?\\.md\$, アンダースコア prefix は予約)")
     fi
   done <<< "$spec_files"
 }
@@ -155,7 +178,9 @@ _extract_frontmatter() {
 
 _validate_required_keys() {
   local file="$1" fm="$2"
-  local required_keys=("feature" "status" "bounded_context" "related_issues" "related_prs" "glossary_refs" "last_reviewed")
+  # ADR 0036 (2026-05-12) で test_plan_status を 8 番目の必須 field として追加。
+  # hub ~/.claude/rules/testing.md §8 + spec-management.md 整合。
+  local required_keys=("feature" "status" "bounded_context" "related_issues" "related_prs" "glossary_refs" "last_reviewed" "test_plan_status")
   local missing=()
   local key
   for key in "${required_keys[@]}"; do
@@ -173,11 +198,14 @@ _validate_required_keys() {
 _validate_field_consistency() {
   local file="$1" fm="$2" slug="$3" bc_dir="$4"
   local valid_status=("draft" "reviewed" "implemented" "deprecated")
-  local feature_value bc_value status_value last_reviewed_value
+  # ADR 0036 (2026-05-12) で test_plan_status enum 検証追加。hub testing.md §8 整合。
+  local valid_test_plan_status=("draft" "designed" "executing" "evaluated")
+  local feature_value bc_value status_value last_reviewed_value test_plan_status_value
   feature_value=$(echo "$fm" | awk -F': *' '/^feature:/{print $2; exit}')
   bc_value=$(echo "$fm" | awk -F': *' '/^bounded_context:/{print $2; exit}')
   status_value=$(echo "$fm" | awk -F': *' '/^status:/{print $2; exit}')
   last_reviewed_value=$(echo "$fm" | awk -F': *' '/^last_reviewed:/{print $2; exit}')
+  test_plan_status_value=$(echo "$fm" | awk -F': *' '/^test_plan_status:/{print $2; exit}')
 
   if [[ "$feature_value" != "$slug" ]]; then
     ERRORS+=("Frontmatter 値不整合: $file (feature='$feature_value' ≠ ファイル名 '$slug')")
@@ -195,6 +223,13 @@ _validate_field_consistency() {
   if [[ ! "$last_reviewed_value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
     ERRORS+=("Frontmatter last_reviewed 形式違反: $file (期待: yyyy-MM-dd)")
   fi
+  local is_valid_tps=0
+  for v in "${valid_test_plan_status[@]}"; do
+    [[ "$test_plan_status_value" == "$v" ]] && is_valid_tps=1 && break
+  done
+  if [[ $is_valid_tps -eq 0 ]]; then
+    ERRORS+=("Frontmatter test_plan_status 値違反: $file (test_plan_status='$test_plan_status_value', 期待: draft|designed|executing|evaluated)")
+  fi
 }
 
 check_spec_frontmatter() {
@@ -206,8 +241,7 @@ check_spec_frontmatter() {
     local fname dir_path bc_dir slug
     fname=$(basename "$file")
     dir_path=$(dirname "$file")
-    [[ "$fname" == ".gitkeep" ]] && continue
-    [[ "$fname" == "README.md" ]] && continue
+    _skip_frontmatter_check "$fname" && continue
     bc_dir=$(basename "$dir_path")
     slug="${fname%.md}"
     [ -f "$file" ] || continue
@@ -241,6 +275,8 @@ check_adr_naming() {
     local fname
     fname=$(basename "$file")
     [[ "$fname" == ".gitkeep" ]] && continue
+    # README.md は ADR 索引 (docs/adr/README.md) として許可する (docs/specs/README.md と対称)。
+    [[ "$fname" == "README.md" ]] && continue
     if [[ ! "$fname" =~ $pattern ]]; then
       ERRORS+=("ADR 命名違反: $file (期待: NNNN-<title>.md)")
     fi

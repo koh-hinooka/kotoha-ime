@@ -11,12 +11,18 @@
 #   6. ADR 新規追加時の vault adr-index.md 反映 (index 不在も検出)
 #   7. orphan glossary (WARN)
 #
+# 対象外:
+#   - <feature>.bugs.md (/spec-reverse ADR 0001 生成物、frontmatter を持たない設計) は
+#     spec frontmatter / glossary 検証から除外する。pre-commit-doc-naming.sh と整合
+#   - <feature>.trace.md (trace-matrix.ts 生成物、frontmatter を持たない設計) も同様に除外。
+#     pre-commit-doc-naming.sh の _skip_frontmatter_check と整合
+#
 # 動作:
 #   - $OBSIDIAN_VAULT_DIR 未設定: silent skip exit 0
 #   - yq 未 install: error exit 1
 #   - yq 抽出失敗: silent ではなく ERROR
 #   - vault 構造異常 (glossary/ や README.md 不在): WARN
-#   - upstream/HEAD~1 解決不能 (初回 commit): WARN として可視化
+#   - origin/develop/main/HEAD~1 解決不能 (初回 commit): WARN として可視化
 #
 # 一時ファイル:
 #   /tmp/spec-fm.* を mktemp で作成、chmod 600。EXIT trap で全削除。
@@ -77,7 +83,9 @@ _yq_extract() {
 validate_spec_yaml_and_concepts() {
   [ ! -d docs/specs ] && return 0
   local spec_files
-  spec_files=$(find docs/specs -name "*.md" -type f | grep -vE '(README\.md|\.gitkeep)$' || true)
+  # <feature>.bugs.md (/spec-reverse ADR 0001 生成物) と <feature>.trace.md (trace-matrix.ts 生成物) は
+  # frontmatter を持たない設計のため除外。pre-commit-doc-naming.sh の _skip_frontmatter_check と整合。
+  spec_files=$(find docs/specs -name "*.md" -type f | grep -vE '(README\.md|\.gitkeep|\.bugs\.md|\.trace\.md)$' || true)
   while IFS= read -r file; do
     [ -z "$file" ] && continue
     local fm_file
@@ -107,6 +115,19 @@ validate_spec_yaml_and_concepts() {
       if ! date -d "$last_reviewed" >/dev/null 2>&1; then
         ERRORS+=("last_reviewed 妥当日付違反: $file (値: '$last_reviewed')")
       fi
+    fi
+
+    # test_plan_status: ADR 0036 (2026-05-12) で導入された 8 番目の必須 field。
+    # enum 検証は pre-commit-doc-naming.sh で実施済みだが、yq parse 整合 + キー存在を
+    # ここでも確認 (pre-commit を bypass した manual push 経路の防御)。
+    local test_plan_status
+    if test_plan_status=$(yq -e -r '.test_plan_status' "$fm_file" 2>/dev/null); then
+      case "$test_plan_status" in
+        draft|designed|executing|evaluated) ;;
+        *) ERRORS+=("test_plan_status 値違反: $file (値: '$test_plan_status', 期待: draft|designed|executing|evaluated)") ;;
+      esac
+    else
+      ERRORS+=("test_plan_status キー不在: $file (ADR 0036 8 fields 必須)")
     fi
 
     # related_issues / related_prs / glossary_refs: yq 抽出は明示的に rc を確認
@@ -191,6 +212,8 @@ validate_adr_index_entry() {
     local fname
     fname=$(basename "$adr")
     [[ "$fname" == ".gitkeep" ]] && continue
+    # README.md は ADR 索引そのものであり ADR 本体ではないため vault adr-index 反映検証から除外する。
+    [[ "$fname" == "README.md" ]] && continue
     if [ ! -f "$idx" ]; then
       ERRORS+=("ADR index ファイル不在: $idx (vault が壊れている可能性)")
       return 1
@@ -225,8 +248,12 @@ detect_orphan_glossary() {
     if ! grep -rqF "glossary_refs" docs/specs/ 2>/dev/null; then
       # docs/specs に glossary_refs 参照行が一切ない場合は orphan 判定 skip
       WARNINGS+=("Orphan glossary: $gloss はいずれの spec の glossary_refs からも参照されていません")
-    elif ! grep -r "glossary_refs:" docs/specs/ 2>/dev/null | grep -qF "$concept" && \
-         ! grep -rE "^- |^  - " docs/specs/ 2>/dev/null | grep -qF "$concept"; then
+    # set -euo pipefail 環境下では `grep -r ... | grep -qF ...` の右側が早期 exit で
+    # stdin を close すると左側 grep が SIGPIPE で 141 を返し、pipefail で pipe 全体が
+    # non-zero と判定されて false orphan を誤検出する (ISSUE #497)。
+    # 左側を `{ ... || true; }` で wrap して SIGPIPE / 非ゼロ exit を吸収する。
+    elif ! { grep -r "glossary_refs:" docs/specs/ 2>/dev/null || true; } | grep -qF "$concept" && \
+         ! { grep -rE "^- |^  - " docs/specs/ 2>/dev/null || true; } | grep -qF "$concept"; then
       WARNINGS+=("Orphan glossary: $gloss はいずれの spec の glossary_refs からも参照されていません")
     fi
   done <<< "$new_glossary"
