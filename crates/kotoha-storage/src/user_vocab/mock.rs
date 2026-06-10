@@ -90,15 +90,8 @@ impl UserVocabWriter for MockUserVocabStore {
         validate_score(record.score)?;
 
         let mut records = self.records.lock().unwrap();
-        // SqliteUserVocabStore と挙動を合わせるため、Mock 側でも行数上限を強制する
-        // (sec-M5 / spec §F6)。
-        let max_rows = crate::user_vocab::sqlite::effective_max_rows();
-        if records.len() >= max_rows {
-            return Err(StorageError::QuotaExceeded {
-                table: "user_vocab".to_string(),
-                max: max_rows,
-            });
-        }
+        // SqliteUserVocabStore と挙動を合わせ、重複検査 → 行数上限の順で検査する
+        // (ISSUE #203: 重複 insert は行数を増やさないため at-cap でも DuplicateEntry)。
         if records
             .iter()
             .any(|r| r.surface == record.surface && r.reading == record.reading)
@@ -106,6 +99,14 @@ impl UserVocabWriter for MockUserVocabStore {
             return Err(StorageError::DuplicateEntry {
                 surface: record.surface,
                 reading: record.reading,
+            });
+        }
+        // 行数上限の強制 (sec-M5 / spec §F6)。
+        let max_rows = crate::user_vocab::sqlite::effective_max_rows();
+        if records.len() >= max_rows {
+            return Err(StorageError::QuotaExceeded {
+                table: "user_vocab".to_string(),
+                max: max_rows,
             });
         }
         let mut next_id = self.next_id.lock().unwrap();
@@ -261,6 +262,23 @@ mod tests {
         assert!(matches!(
             err,
             StorageError::QuotaExceeded { ref table, max } if table == "user_vocab" && max == 3
+        ));
+    }
+
+    /// ISSUE #203: Mock 側でも重複 insert は at-cap 状態で `DuplicateEntry` を
+    /// 返す(duplicate 検査が quota 検査より先行、SqliteStore と挙動対称)。
+    #[test]
+    fn mock_insert_duplicate_at_cap_returns_duplicate_entry_not_quota() {
+        let _guard = crate::user_vocab::sqlite::QuotaOverrideGuard::new(1);
+        let store = MockUserVocabStore::new();
+        store
+            .insert(rec("dup", "あ", 0.0))
+            .expect("first insert under cap ok");
+        let err = store.insert(rec("dup", "あ", 0.0)).unwrap_err();
+        assert!(matches!(
+            err,
+            StorageError::DuplicateEntry { ref surface, ref reading }
+                if surface == "dup" && reading == "あ"
         ));
     }
 }

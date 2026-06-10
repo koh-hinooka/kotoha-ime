@@ -226,16 +226,35 @@ impl UserVocabWriter for SqliteUserVocabStore {
         };
 
         let conn = self.db.lock_conn();
-        // 行数上限チェック(sec-M5、spec §F6)。check + INSERT を同一 lock 下で
-        // 実行することで atomic な check-and-insert を保証する。
-        //
-        // perf-H2: `SELECT count(*)` は 50K 行の full-scan になるため、
-        // bounded existence check に置き換える。
-        // `EXISTS(SELECT 1 ... LIMIT 1 OFFSET (max - 1))` は
-        // 「max 行目(0-indexed で max-1 番目)が存在するか」を返す。
-        // 存在 ⇔ count >= max ⇔ at-cap、なので reject すべきケース。
-        // SQLite は OFFSET (max-1) で 1 行見つけた時点でスキャンを停止するため、
-        // 50K 行でも O(max) で済む(さらに primary key index 経由で実質 O(log n))。
+        // 重複検査は quota 検査より先に行う(ISSUE #203)。重複 insert は行数を
+        // 増やさない操作のため、at-cap 状態でも失敗の真因「既に存在する」を
+        // DuplicateEntry として返す。UNIQUE(surface, reading) 制約違反の mapping
+        // (末尾の match)は同一 lock 外の経路に対する backstop として残す。
+        {
+            let mut dup_stmt = conn.prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM user_vocab WHERE surface = ?1 AND reading = ?2)",
+            )?;
+            let duplicate_exists: i64 = dup_stmt
+                .query_row(rusqlite::params![record.surface, record.reading], |r| {
+                    r.get(0)
+                })?;
+            if duplicate_exists != 0 {
+                return Err(StorageError::DuplicateEntry {
+                    surface: record.surface,
+                    reading: record.reading,
+                });
+            }
+        } // dup_stmt はここで drop し、conn の borrow を解放する。
+          // 行数上限チェック(sec-M5、spec §F6)。check + INSERT を同一 lock 下で
+          // 実行することで atomic な check-and-insert を保証する。
+          //
+          // perf-H2: `SELECT count(*)` は 50K 行の full-scan になるため、
+          // bounded existence check に置き換える。
+          // `EXISTS(SELECT 1 ... LIMIT 1 OFFSET (max - 1))` は
+          // 「max 行目(0-indexed で max-1 番目)が存在するか」を返す。
+          // 存在 ⇔ count >= max ⇔ at-cap、なので reject すべきケース。
+          // SQLite は OFFSET (max-1) で 1 行見つけた時点でスキャンを停止するため、
+          // 50K 行でも O(max) で済む(さらに primary key index 経由で実質 O(log n))。
         let max_rows = effective_max_rows();
         {
             let mut count_stmt =
@@ -729,6 +748,30 @@ mod tests {
         assert!(matches!(
             err,
             StorageError::QuotaExceeded { ref table, max } if table == "user_vocab" && max == 1
+        ));
+    }
+
+    /// ISSUE #203: 重複 insert は at-cap 状態でも `QuotaExceeded` ではなく
+    /// `DuplicateEntry` を返す(duplicate 検査が quota 検査より先行する順序保証)。
+    #[test]
+    fn insert_duplicate_at_cap_returns_duplicate_entry_not_quota() {
+        let _guard = QuotaOverrideGuard::new(1);
+        let store = fresh_store();
+        let r = UserVocabRecord {
+            id: None,
+            surface: "dup".to_string(),
+            reading: "あ".to_string(),
+            pos: "名詞".to_string(),
+            score: 0.0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        store.insert(r.clone()).expect("first insert under cap ok");
+        let err = store.insert(r).unwrap_err();
+        assert!(matches!(
+            err,
+            StorageError::DuplicateEntry { ref surface, ref reading }
+                if surface == "dup" && reading == "あ"
         ));
     }
 
