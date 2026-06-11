@@ -16,10 +16,20 @@ use crate::dict::engine::{EngineCandidate, MorphologicalEngine};
 use crate::kanji::KanjiError;
 
 /// SudachiDict-core を runtime load する際の最大許容サイズ(bytes)。
-/// 200 MiB は v20260116 release の実サイズ(約 70 MB)に対し将来の dictionary 拡張を
-/// 見越した上限。これを超える file が指定された場合は CWE-400 / 資源枯渇防止のため
-/// load を reject する(P2-A hardening item 2)。
-const SYSTEM_DICT_MAX_BYTES: u64 = 200 * 1024 * 1024;
+/// v20260116 release の `system_core.dic` は展開後 217,203,456 bytes(約 207 MiB。
+/// zip download は約 70 MB)であり、256 MiB は同 release に対し約 24% の将来拡張
+/// 余地を持つ上限。SudachiDict-full(500 MB 超、p2-a spec §3 で棄却済)および
+/// 異常 file は引き続き reject し、CWE-400 / 資源枯渇防止の意図を保つ
+/// (P2-A hardening item 2、ISSUE #206)。
+const SYSTEM_DICT_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// README が pin する SudachiDict-core v20260116 の展開後サイズ(bytes)。
+const SUDACHI_CORE_V20260116_BYTES: u64 = 217_203_456;
+
+// size cap が pin 済み辞書の展開後サイズを下回ると、サポート対象の辞書そのものが
+// load 不能になる(ISSUE #206 の regression)。cap を引き下げる変更は compile error
+// で機械的に block する。
+const _: () = assert!(SYSTEM_DICT_MAX_BYTES >= SUDACHI_CORE_V20260116_BYTES);
 
 /// sudachi.rs の engine_id() で返す固定 label。Layer 3 golden test から
 /// 同一文字列でアサートするため、module スコープの `pub(crate)` const として
