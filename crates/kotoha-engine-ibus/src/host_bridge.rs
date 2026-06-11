@@ -14,7 +14,8 @@ use crate::proxy::IBusEngineSignals;
 ///
 /// # Construction
 ///
-/// [`Self::new`] で session bus 接続 + engine object path を保持する。
+/// [`Self::new`] で IBus private bus connection(listener と共有、#208)+
+/// engine object path を保持する。
 ///
 /// # Thread safety
 ///
@@ -26,16 +27,17 @@ pub struct IBusHostBridge {
 }
 
 impl IBusHostBridge {
-    /// session bus + engine object path で adapter を構築する。
+    /// private bus connection(listener と共有、#208 / spec §7.4)+ engine
+    /// object path で adapter を構築する。connection は main の DI wiring が
+    /// `listener::build_connection` で確立し、clone を注入する(spec §3.3)。
     ///
     /// # Errors
     ///
-    /// - zbus connection 確立失敗(`DBUS_SESSION_BUS_ADDRESS` 不設定等)
     /// - object_path 不正(D-Bus path syntax 違反)
-    pub fn new(object_path: &str) -> zbus::Result<Self> {
+    pub fn new(connection: zbus::blocking::Connection, object_path: &str) -> zbus::Result<Self> {
         Ok(Self {
             lookup_table: LookupTable::new(),
-            signals: IBusEngineSignals::new(object_path)?,
+            signals: IBusEngineSignals::new(connection, object_path)?,
         })
     }
 }

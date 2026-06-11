@@ -2,7 +2,7 @@
 
 | 項目 | 値 |
 |------|----|
-| Status | Accepted |
+| Status | Accepted (Amended 2026-06-11, #208) |
 | Date | 2026-05-08 |
 | Phase | Phase 3-B B6-b (#195) |
 | 関連 spec | `docs/specs/_uncategorized/p3-b-ibus-listener.md` |
@@ -61,7 +61,29 @@ zbus 5 の async API 主導であり、blocking 系から `MessageStream` を直
 
 - IBus engine factory registration の正規経路(`/usr/share/ibus/component/<name>.xml`)は本 ADR scope 外。packaging task として別 ISSUE で扱う。
 
+## Amendment 2026-06-11(ISSUE #208)
+
+B6-c L3 manual smoke(2026-06-11、Ubuntu 24.04 / GNOME 46 / IBus 1.5.29-rc2)で、採択 1 の session bus 接続では ibus-daemon との handshake が成立しないことが実機確定した(`ibus engine kotoha` が `SetGlobalEngine: Timeout`。診断詳細: ISSUE #208)。以下のとおり採択を変更・追加する:
+
+1. **接続先**(採択 1 変更): `blocking::connection::Builder::session()` → `Builder::address(<IBus private bus address>)`。address は `KOTOHA_IBUS_ADDRESS` env → `IBUS_ADDRESS` env → address file(`$XDG_CONFIG_HOME/ibus/bus/<machine-id>-<hostname>-<display>`)の 3 段 fallback で解決する(IBus client library `ibus_get_address()` 互換、spec §7.1)。
+2. **Factory interface**(採択追加): `org.freedesktop.IBus.Factory` を `/org/freedesktop/IBus/Factory` で serve し、`CreateEngine(s) -> o` で静的 engine path を返す(spec §4.5)。daemon の engine 生成 protocol はこの経路を必須とする。
+3. **signal connection 共有**(採択追加): `IBusEngineSignals` の独自 `Connection::session()` を廃止し、listener と同一の private bus connection(`Clone` handle)を共有する(spec §7.4)。connection 構築は main thread の DI wiring に移す(spec §3.3)。
+4. **engine object serve 方式**: 静的単一 path `/org/freedesktop/IBus/Engine/Kotoha` を維持する(GNOME global engine mode 前提、spec §7.3)。
+
+採択 2(respond channel + 100ms timeout)・採択 3(threading)・採択 4(stub safety net 削除)は変更しない。
+
+### Deferred in this amendment
+
+- **per-CreateEngine 動的 path**: IBus 本来の semantics だが、`IBusEngineSignals` 側の path 同期機構を要し global engine mode では複雑性が見合わない。Phase 6 multi-context で再評価する(rejected ではなく deferred、spec §13.4)。
+
+### Amendment consequences
+
+- Positive: 実機 GNOME 環境で daemon handshake が成立する設計となり、B6-c smoke の前提が回復する
+- Negative: address discovery が環境依存(machine-id file / `DISPLAY` env)の入力を持つため、純関数分離 + `KOTOHA_IBUS_ADDRESS` override で test 可能性を確保する(spec §10.1)
+- Neutral: L1/L2 test では daemon handshake を完全には再現できない(fake daemon による L2 + 実機 L3 smoke の併用、spec §10.1)
+
 ## Future revisit triggers
 
 - Phase 5 custom romaji-base model の inference latency が増えた場合、100ms timeout 値の引き上げ / `Event::IBusKey` への deadline 拡張 / `async fn` method 化 + smol::unblock を再評価する
 - Phase 4 fcitx5 adapter で異なる protocol への generalization が必要な場合、`KotohaEngineService` を trait 化する余地
+- Phase 6 multi-context で per-CreateEngine 動的 path 化を再評価する(Amendment 2026-06-11 §Deferred)

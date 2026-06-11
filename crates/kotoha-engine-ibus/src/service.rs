@@ -99,6 +99,30 @@ impl KotohaEngineService {
     fn enable(&self) {
         tracing::debug!("KotohaEngineService::enable (no-op)");
     }
+
+    /// `SetCapabilities(u caps)` — daemon が engine 生成直後に呼ぶ capability 通知。
+    /// Phase 3-B では未使用(no-op stub、spec §2.1 #208 改訂)。
+    fn set_capabilities(&self, caps: u32) {
+        tracing::debug!(caps, "KotohaEngineService::set_capabilities (no-op)");
+    }
+
+    /// `SetCursorLocation(i x, i y, i w, i h)` — 候補 window 配置用 cursor 座標通知。
+    /// Phase 3-B では未使用(no-op stub、spec §2.1 #208 改訂)。
+    fn set_cursor_location(&self, x: i32, y: i32, w: i32, h: i32) {
+        tracing::debug!(
+            x,
+            y,
+            w,
+            h,
+            "KotohaEngineService::set_cursor_location (no-op)"
+        );
+    }
+
+    /// `Destroy()` — `org.freedesktop.IBus.Service.Destroy` 互換。静的単一 path
+    /// 採択(spec §7.3)のため object 解放は行わない(no-op stub)。
+    fn destroy(&self) {
+        tracing::debug!("KotohaEngineService::destroy (no-op)");
+    }
 }
 
 #[cfg(test)]
@@ -220,6 +244,16 @@ mod tests {
     fn enable_does_not_panic_or_send() {
         let (service, rx) = setup();
         service.enable();
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn daemon_compat_stubs_do_not_panic_or_send() {
+        // #208 改訂で追加した no-op stub 3 method(spec §2.1)
+        let (service, rx) = setup();
+        service.set_capabilities(9);
+        service.set_cursor_location(0, 0, 10, 20);
+        service.destroy();
         assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
     }
 }

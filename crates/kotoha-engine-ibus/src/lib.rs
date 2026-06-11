@@ -11,11 +11,9 @@
 //! - [`lookup_table::LookupTable`] — `Mutex<Vec<Candidate>>` 内部 buffer + IBus mapping
 //! - [`listener::run`] — D-Bus method call → `Event::IBusKey` / `Event::IBusReset`
 //!   decode + bridge channel forward(B0h-f + B3 / ADR 0020、driving listener thread)
-//! - `dispatcher::IBusEventDispatcher` — Phase 3-A M5 / B0h-d で導入された
-//!   `Arc<Mutex<dyn IMEEngine>>` 経由 dispatcher。Phase 3-B B0h-f + B3(ADR 0020)
-//!   で 4-thread topology に移行したため production からは未使用となった。
-//!   keysym decode 経路の test 資産として一時残置、follow-up で削除予定。
 //! - `keysym` — IBus keysym → `KeyEvent` 変換 helper(M5 で追加)
+//! - `discovery` / `factory` — IBus private bus address discovery と
+//!   `org.freedesktop.IBus.Factory` service(#208 / ADR 0021 Amendment)
 //!
 //! # Boundary 原則
 //!
@@ -26,6 +24,8 @@
 // Phase 3-B B0h-f rev3 (ADR 0020) review fix:旧 `dispatcher::IBusEventDispatcher`
 // (`Arc<Mutex<dyn IMEEngine>>` ベース)は本 PR で完全削除された。listener.rs が
 // keysym decode 経路を継承する。
+pub(crate) mod discovery;
+pub(crate) mod factory;
 pub mod host_bridge;
 pub mod keysym;
 pub mod listener;
