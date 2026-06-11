@@ -358,10 +358,17 @@ fn run_ibus() -> anyhow::Result<()> {
         .spawn(move || engine_loop::run(engine, reactor))
         .context("spawn engine-loop thread")?;
 
+    // stub mode(listener 不在)では 3-thread になるため、実 topology を log に出す
+    let thread_topology = if listener_handle.is_some() {
+        "main / dbus-listener / engine-loop / ranker-worker"
+    } else {
+        "main / engine-loop / ranker-worker (stub mode: no dbus-listener)"
+    };
     tracing::info!(
         ranker_backend,
         host_bridge_backend,
-        "kotoha-bin event loop entered (4-thread topology: main / dbus-listener / engine-loop / ranker-worker)"
+        thread_topology,
+        "kotoha-bin event loop entered (ADR 0020 topology)"
     );
 
     // 14. join 順は engine-loop → dbus-listener。

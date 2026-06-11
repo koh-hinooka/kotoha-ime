@@ -18,7 +18,8 @@
 //! # Security
 //!
 //! IBus private bus 上の signal は session bus 同様 **同 UID で動作する全プロセス**
-//! が接続・subscribe 可能である(bus socket の権限は user 単位)。`org.freedesktop.IBus.Engine` の `UpdatePreeditText` /
+//! が接続・subscribe 可能である(bus socket の権限は user 単位)。
+//! `org.freedesktop.IBus.Engine` の `UpdatePreeditText` /
 //! `CommitText` を subscribe する任意 process(browser extension の subprocess、
 //! malicious npm postinstall、Electron app 等)が user の打鍵内容を
 //! 取得可能。これは IBus protocol の根本前提であり、Kotoha は
@@ -84,8 +85,8 @@ pub(crate) const MEMBER_HIDE_LOOKUP_TABLE: &str = "HideLookupTable";
 
 /// IBus engine が host(`InputContext`)に発する signal の helper 群。
 ///
-/// Phase 3-B B2 完了後は 5 method すべてが session bus に実 D-Bus signal を
-/// 発信する。
+/// Phase 3-B B2 完了後は 5 method すべてが実 D-Bus signal を発信する。#208 改訂で
+/// connection は session bus から IBus private bus(listener と共有)に変更された。
 pub(crate) struct IBusEngineSignals {
     /// zbus blocking connection(listener と共有する IBus private bus、#208)。
     connection: Connection,

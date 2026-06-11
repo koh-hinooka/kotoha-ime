@@ -26,7 +26,7 @@ use crate::request_id::RequestId;
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum Event {
-    /// IBus session bus で受信した key event。
+    /// IBus private bus で受信した key event(#208 で session bus 前提から改訂)。
     /// `kotoha-dbus-listener` thread が `Sender<Event>::send` で engine-loop に届ける。
     ///
     /// `respond` は engine-loop が `KeyEventResult`(`Consumed` / `Forwarded`)を返す

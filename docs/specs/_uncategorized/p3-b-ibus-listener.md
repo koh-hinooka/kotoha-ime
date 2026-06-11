@@ -398,7 +398,7 @@ IBus 1.5.x では engine 登録の正規経路は component XML ファイル配�
 | address file parse 失敗(`IBUS_ADDRESS=` 行欠落 / 不正形式)(#208) | 同上 | 同上 |
 | `CreateEngine` に未知 engine_name(#208) | `fdo::Error::InvalidArgs` 返却、connection 維持 | `error_id = "factory.create_engine.unknown_engine"` warn |
 | `RequestName` 失敗(他 process が同名占有)| `run()` Err で main thread に伝播 → process exit | `tracing::error!` + `?` propagation |
-| service method 内 panic | `&self` impl で field なし、panic 起こりにくい。万一発生時は zbus が catch して daemon に Err 返却、connection は維持 | zbus 標準 |
+| service method 内 panic | **zbus 5 は handler panic を catch しない**(2026-06-11 に zbus 5.16 vendored source で検証: `catch_unwind` 不在。panic は dispatch task を黙殺し、以後の全 method dispatch が無 log で停止する)。このため `#[interface]` handler 本体は panic-free を規約とし、panic しうる前処理(path validate 等)は `build_connection` 段階に移して Err propagate させる | handler 内 panic site 禁止(code review で gate) |
 | bridge_tx.send Err(engine_loop drop)| `false` 返却 + `error_id = "listener.process_key_event.bridge_disconnected"` | tracing::warn |
 | respond.recv timeout(>100ms)| `false` 返却 + `error_id = "listener.process_key_event.timeout"` | tracing::warn |
 | ShutdownObserver `is_shutting_down() == true` | poll loop 抜ける、Connection drop | `tracing::info!` |
@@ -420,7 +420,7 @@ IBus 1.5.x では engine 登録の正規経路は component XML ファイル配�
 | L1 unit | `KotohaEngineService::process_key_event` の正常 / timeout / disconnect 経路 | `crates/kotoha-engine-ibus/src/service.rs` `#[cfg(test)]` | 無条件(mock bridge_tx) |
 | L1 unit | `KotohaEngineService::{focus_out, reset, disable, focus_in, enable}` の Event 送信 | 同上 | 同上 |
 | L1 unit | `Event::IBusKey { event, respond }` の destructure と engine_loop 経路 | `crates/kotoha-bin/src/engine_loop.rs` `#[cfg(test)]` または既存 integration test | mock reactor + mock host |
-| L1 unit (#208) | `parse_address_file` / `discover_ibus_address` の正常 / `IBUS_ADDRESS=` 行欠落 / 不正入力 | `crates/kotoha-engine-ibus/src/discovery.rs` `#[cfg(test)]` | 無条件(純関数) |
+| L1 unit (#208) | discovery 純関数 4 つ(`parse_address_file` / `display_number` / `resolve_config_dir` / `compose_address_file_path`)の正常 / 欠落 / 不正入力(`discover_ibus_address` の env+file 結合経路は L2 の priority-1 注入と L3 実機 priority-3 で検証) | `crates/kotoha-engine-ibus/src/discovery.rs` `#[cfg(test)]` | 無条件(純関数) |
 | L1 unit (#208) | `KotohaFactoryService::create_engine` の known("kotoha")/ unknown engine_name | `crates/kotoha-engine-ibus/src/factory.rs` `#[cfg(test)]` | 無条件 |
 | L2 integration | listener thread + engine_loop + dummy bridge channel 経路で `process_key_event` が `true`(= Consumed)を返す | `crates/kotoha-engine-ibus/tests/integration.rs`(新規) | `#[ignore]`(#208 改訂: `KOTOHA_IBUS_ADDRESS` で注入した使い捨て bus を使用)|
 | L2 integration (#208) | 使い捨て `dbus-daemon --session --print-address` を private bus に見立て(`KOTOHA_IBUS_ADDRESS` で注入)、test が fake daemon として `CreateEngine` → `ProcessKeyEvent` を呼ぶ handshake 経路 | `crates/kotoha-engine-ibus/tests/integration.rs` | `#[ignore]`(`dbus-daemon` binary 必要)|

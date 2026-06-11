@@ -120,6 +120,12 @@ pub fn build_connection(bridge_tx: Sender<Event>) -> anyhow::Result<zbus::blocki
     use crate::service::KotohaEngineService;
 
     let address = discover_ibus_address()?;
+    // factory handler は panic-free 規約(spec §9.1: zbus は handler panic を
+    // catch しない)のため、engine path はここで事前 validate して field 注入する。
+    let engine_path: zbus::zvariant::OwnedObjectPath =
+        zbus::zvariant::ObjectPath::try_from(IBUS_ENGINE_OBJECT_PATH)
+            .map(Into::into)
+            .map_err(|e| anyhow::anyhow!("invalid IBUS_ENGINE_OBJECT_PATH constant: {e}"))?;
     tracing::info!(
         bus_name = IBUS_ENGINE_BUS_NAME,
         engine_path = IBUS_ENGINE_OBJECT_PATH,
@@ -127,7 +133,10 @@ pub fn build_connection(bridge_tx: Sender<Event>) -> anyhow::Result<zbus::blocki
         "connecting to IBus private bus (zbus blocking::Builder + #[interface] dispatcher)"
     );
     let connection = zbus::blocking::connection::Builder::address(address.as_str())?
-        .serve_at(IBUS_FACTORY_OBJECT_PATH, KotohaFactoryService)?
+        .serve_at(
+            IBUS_FACTORY_OBJECT_PATH,
+            KotohaFactoryService { engine_path },
+        )?
         .serve_at(IBUS_ENGINE_OBJECT_PATH, KotohaEngineService { bridge_tx })?
         .name(IBUS_ENGINE_BUS_NAME)?
         .build()?;
@@ -160,7 +169,11 @@ pub fn run(
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     tracing::info!("dbus-listener received shutdown signal, dropping connection and exiting");
-    drop(connection); // zbus releases bus name + stops dispatching (last handle).
+    // 本 thread の handle を drop する。bus name release / dispatch 停止は
+    // engine-loop 側の `IBusEngineSignals` clone も drop された時点(全 handle
+    // drop 後)に起こる(SIGTERM 経路では engine-loop が drain 中でも本 drop が
+    // 先行しうる)。
+    drop(connection);
     Ok(())
 }
 
