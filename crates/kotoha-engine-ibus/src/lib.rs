@@ -26,6 +26,8 @@
 // Phase 3-B B0h-f rev3 (ADR 0020) review fix:旧 `dispatcher::IBusEventDispatcher`
 // (`Arc<Mutex<dyn IMEEngine>>` ベース)は本 PR で完全削除された。listener.rs が
 // keysym decode 経路を継承する。
+pub(crate) mod discovery;
+pub(crate) mod factory;
 pub mod host_bridge;
 pub mod keysym;
 pub mod listener;

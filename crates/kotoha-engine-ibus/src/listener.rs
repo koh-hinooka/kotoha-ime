@@ -1,8 +1,12 @@
 //! D-Bus signal listener loop(Phase 3-B B3 + B6-b / ADR 0020 + ADR 0021)。
 //!
-//! `kotoha-dbus-listener` thread の main を担う。zbus 5 `blocking::connection::Builder`
-//! 経由で `org.freedesktop.IBus.Engine` interface に [`crate::service::KotohaEngineService`]
-//! を登録し、IBus daemon からの method 呼び出しを 6 method に分岐 dispatch する。
+//! `kotoha-dbus-listener` thread の main を担う。[`build_connection`] が
+//! IBus private bus(address discovery 経由、#208 / spec §7.1)への
+//! `blocking::Connection` を確立し、`org.freedesktop.IBus.Factory` と
+//! `org.freedesktop.IBus.Engine` の 2 interface を serve する。connection は
+//! main thread の DI wiring が構築し、clone を signal 発信側
+//! (`IBusEngineSignals`)と共有する(spec §3.3 / §7.4)。
+//! [`run`] は connection を受領して dispatch 稼働を保持し、shutdown を監視する。
 //!
 //! # Decoded methods
 //!
@@ -88,49 +92,75 @@ impl Clone for ShutdownObserver {
     }
 }
 
-/// D-Bus listener thread の main loop。
+/// IBus private bus への connection を確立し、Factory + Engine service を
+/// serve する(#208 / spec §7.2)。
+///
+/// main thread の DI wiring が呼び、clone を `IBusEngineSignals` へ、本体を
+/// [`run`] へ配布する(spec §3.3)。
 ///
 /// # Preconditions
 ///
 /// - `bridge_tx` は engine-loop thread の `EventReactor` bridge channel
+/// - ibus-daemon が起動済みで private bus address が解決可能であること
+///   (env override または address file、spec §7.1)
+///
+/// # Postconditions
+///
+/// - private bus への connection 確立、Factory + Engine service publish、
+///   bus name `RequestName` 完了(daemon が component 起動完了を検知する)
+///
+/// # Errors
+///
+/// - [`crate::discovery::DiscoveryError`] — address discovery 失敗(spec §9.1)
+/// - `zbus::Error` — private bus 接続 / `serve_at` / `RequestName` 失敗
+pub fn build_connection(bridge_tx: Sender<Event>) -> anyhow::Result<zbus::blocking::Connection> {
+    use crate::discovery::discover_ibus_address;
+    use crate::factory::KotohaFactoryService;
+    use crate::proxy::{IBUS_ENGINE_BUS_NAME, IBUS_ENGINE_OBJECT_PATH, IBUS_FACTORY_OBJECT_PATH};
+    use crate::service::KotohaEngineService;
+
+    let address = discover_ibus_address()?;
+    tracing::info!(
+        bus_name = IBUS_ENGINE_BUS_NAME,
+        engine_path = IBUS_ENGINE_OBJECT_PATH,
+        factory_path = IBUS_FACTORY_OBJECT_PATH,
+        "connecting to IBus private bus (zbus blocking::Builder + #[interface] dispatcher)"
+    );
+    let connection = zbus::blocking::connection::Builder::address(address.as_str())?
+        .serve_at(IBUS_FACTORY_OBJECT_PATH, KotohaFactoryService)?
+        .serve_at(IBUS_ENGINE_OBJECT_PATH, KotohaEngineService { bridge_tx })?
+        .name(IBUS_ENGINE_BUS_NAME)?
+        .build()?;
+    Ok(connection)
+}
+
+/// D-Bus listener thread の main loop。
+///
+/// # Preconditions
+///
+/// - `connection` は [`build_connection`] で構築済み(main thread の DI wiring、
+///   #208 / spec §3.3)
 /// - `shutdown` は main thread が `ListenerShutdown::request()` で停止指示する
 ///   observer handle(#187 split-handle、#197 SIGTERM hook 経由でも request される)
 ///
 /// # Postconditions
 ///
-/// - `shutdown.is_shutting_down()` を観測したら Connection を drop して `Ok(())`
-///   で return する(Connection drop で zbus internal smol executor が exit、
-///   bus name が release)
-/// - Connection 構築失敗(session bus 不在、bus name 占有等)時は Err propagate
-///
-/// # Errors
-///
-/// - `zbus::Error` — session bus 接続 / `serve_at` / `RequestName` 失敗
+/// - `shutdown.is_shutting_down()` を観測したら保持 handle を drop して `Ok(())`
+///   で return する(`IBusEngineSignals` 側 clone を含む全 handle drop で zbus
+///   internal smol executor が exit、bus name が release)
 ///
 /// 詳細仕様: `docs/specs/_uncategorized/p3-b-ibus-listener.md` §3 / §7。
-pub fn run(bridge_tx: Sender<Event>, shutdown: ShutdownObserver) -> anyhow::Result<()> {
-    use crate::proxy::{IBUS_ENGINE_BUS_NAME, IBUS_ENGINE_OBJECT_PATH};
-    use crate::service::KotohaEngineService;
-
-    tracing::info!(
-        bus_name = IBUS_ENGINE_BUS_NAME,
-        object_path = IBUS_ENGINE_OBJECT_PATH,
-        "dbus-listener starting (zbus blocking::Builder + #[interface] dispatcher)"
-    );
-
-    let service = KotohaEngineService { bridge_tx };
-    let _connection = zbus::blocking::connection::Builder::session()?
-        .serve_at(IBUS_ENGINE_OBJECT_PATH, service)?
-        .name(IBUS_ENGINE_BUS_NAME)?
-        .build()?;
-
+pub fn run(
+    connection: zbus::blocking::Connection,
+    shutdown: ShutdownObserver,
+) -> anyhow::Result<()> {
     // Connection's internal smol executor dispatches incoming method calls in a
     // background thread. We just hold the connection alive and poll shutdown.
     while !shutdown.is_shutting_down() {
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     tracing::info!("dbus-listener received shutdown signal, dropping connection and exiting");
-    // _connection drops here: zbus releases bus name + stops dispatching.
+    drop(connection); // zbus releases bus name + stops dispatching (last handle).
     Ok(())
 }
 

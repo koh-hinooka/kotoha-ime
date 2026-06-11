@@ -12,13 +12,15 @@
 //!    `StubRanker` fallback 許可)
 //! 7. `HybridRanker::new(sudachi, user_vocab, learning)` を構築
 //!    (LLM 統合は Phase 3-B B2+ で詳細化、現段階では dict-only)
-//! 8. `IBusHostBridge::new(object_path)` で session bus 接続
-//!    (`KOTOHA_ALLOW_STUB=1` 時のみ `StubHostBridge` fallback 許可)
-//! 9. `KotohaEngine::new(host, ranker, learning_writer)` (Result)
-//! 10. `IBusEventDispatcher::new(engine)` で event loop 起動 stub
-//!
-//! 実 D-Bus event loop(`zbus::blocking::MessageStream` 経由の signal
-//! receive + dispatch)は Phase 3-B B3 / spec §13 Open Q 9 で詳細化する。
+//! 8. reactor 起動(`ReactorHandles`、ADR 0020 4-thread topology)
+//! 9. `listener::build_connection(bridge_tx)` で IBus private bus 接続
+//!    (address discovery + Factory/Engine serve、#208 / ADR 0021 Amendment。
+//!    `KOTOHA_ALLOW_STUB=1` 時のみ stub fallback 許可)
+//! 10. `IBusHostBridge::new(connection.clone(), object_path)` で signal 経路を
+//!     listener と同一 connection に統一(spec §7.4)
+//! 11. `KotohaEngine::new(host, ranker, learning_writer)` (Result)
+//! 12. listener shutdown handle pair + SIGTERM/SIGINT hook
+//! 13. dbus-listener / engine-loop thread spawn
 //!
 //! # Panic recovery (spec §9.1 row 5)
 //!
@@ -237,31 +239,12 @@ fn run_ibus() -> anyhow::Result<()> {
             }
         };
 
-    // 8. host bridge: session bus 接続。
-    let (host_bridge, host_bridge_backend): (
-        Box<dyn kotoha_engine_core::IMEHostBridge>,
-        &'static str,
-    ) = match kotoha_engine_ibus::IBusHostBridge::new(ENGINE_OBJECT_PATH) {
-        Ok(b) => (Box::new(b), "IBusHostBridge"),
-        #[cfg(feature = "dev-stubs")]
-        Err(e) if allow_stub => {
-            tracing::error!(
-                error = ?e,
-                "IBus session bus connect failed; using StubHostBridge (KOTOHA_ALLOW_STUB=1)"
-            );
-            (Box::new(StubHostBridge), "StubHostBridge")
-        }
-        Err(e) => {
-            return Err(anyhow::Error::new(e)).with_context(|| {
-                format!("IBusHostBridge connect failed and {KOTOHA_ALLOW_STUB_ENV} is not set")
-            });
-        }
-    };
-
-    // 9. reactor (Phase 3-B B0h-f + B3 / ADR 0020):4-thread topology の core。
+    // 8. reactor (Phase 3-B B0h-f + B3 / ADR 0020):4-thread topology の core。
     //    main は `ReactorHandles` を保持し、bridge_tx / worker_tx を各 thread に
     //    move、shutdown_tx を `Drop` で発火させる。SIGTERM/SIGINT は #197 で
     //    `ctrlc::set_handler` 経由で listener_shutdown + shutdown_tx を駆動する。
+    //    #208: connection 構築(step 9)が bridge_tx を要するため host bridge より
+    //    先に起動する。
     let kotoha_engine_reactor_linux::ReactorHandles {
         reactor,
         bridge_tx,
@@ -269,7 +252,48 @@ fn run_ibus() -> anyhow::Result<()> {
         shutdown_tx,
     } = kotoha_engine_reactor_linux::start();
 
-    // 10. engine(spec §9.1 row 5: spawn 失敗は Result 経由 propagate)
+    // 9. IBus private bus connection(#208 / ADR 0021 Amendment):main が構築し、
+    //    clone を host bridge(signal 経路)へ、本体を listener thread へ配布する
+    //    (spec §3.3)。stub fallback 時は listener thread 自体を spawn しない。
+    let connection = match kotoha_engine_ibus::listener::build_connection(bridge_tx) {
+        Ok(c) => Some(c),
+        #[cfg(feature = "dev-stubs")]
+        Err(e) if allow_stub => {
+            tracing::error!(
+                error = ?e,
+                "IBus private bus connect failed; using StubHostBridge without listener \
+                 (KOTOHA_ALLOW_STUB=1)"
+            );
+            None
+        }
+        Err(e) => {
+            return Err(e.context(format!(
+                "IBus private bus connect failed (is ibus-daemon running?) and \
+                 {KOTOHA_ALLOW_STUB_ENV} is not set"
+            )));
+        }
+    };
+
+    // 10. host bridge: listener と同一 connection(clone)で signal を発信する
+    //     (spec §7.4)。
+    let (host_bridge, host_bridge_backend): (
+        Box<dyn kotoha_engine_core::IMEHostBridge>,
+        &'static str,
+    ) = match &connection {
+        Some(c) => (
+            Box::new(
+                kotoha_engine_ibus::IBusHostBridge::new(c.clone(), ENGINE_OBJECT_PATH)
+                    .context("IBusHostBridge construction failed (invalid object path)")?,
+            ),
+            "IBusHostBridge",
+        ),
+        #[cfg(feature = "dev-stubs")]
+        None => (Box::new(StubHostBridge), "StubHostBridge"),
+        #[cfg(not(feature = "dev-stubs"))]
+        None => unreachable!("connection is always Some when dev-stubs is disabled"),
+    };
+
+    // 11. engine(spec §9.1 row 5: spawn 失敗は Result 経由 propagate)
     //     adapter 経由で `Arc<dyn LearningRecorder>` を engine に注入し、
     //     worker thread が生成する `Event::WorkerOutput` の送信先 (`worker_tx`) を渡す。
     let engine = kotoha_engine_core::engine::KotohaEngine::new(
@@ -280,14 +304,14 @@ fn run_ibus() -> anyhow::Result<()> {
     )
     .context("spawn ranker worker thread")?;
 
-    // 11. listener shutdown handle pair を生成する。
-    //     listener::run は内部で `blocking::connection::Builder::session()` から
-    //     session bus connection を確立 + serve_at + name するため、main 側で
-    //     pre-built connection を渡す必要はない(Phase 3-B B6-b #195、ADR 0021)。
+    // 12. listener shutdown handle pair を生成する。
+    //     connection は step 9 で main が構築済み(#208 / ADR 0021 Amendment)。
+    //     listener::run は connection を受領して dispatch 稼働の保持 + shutdown
+    //     監視のみを担う。
     let (listener_shutdown, listener_observer) =
         kotoha_engine_ibus::listener::ListenerShutdown::new();
 
-    // 11.5. SIGTERM/SIGINT shutdown hook (#197):signal 受信時に
+    // 12.5. SIGTERM/SIGINT shutdown hook (#197):signal 受信時に
     //       (a) listener_shutdown.request() で listener thread に shutdown 通知
     //       (b) shutdown_tx.send(()) で engine-loop の reactor に Event::Shutdown
     //       を駆動する。`ctrlc` crate は内部で `nix::sys::signal` を使い、
@@ -310,13 +334,24 @@ fn run_ibus() -> anyhow::Result<()> {
         .context("install SIGTERM/SIGINT signal handler")?;
     }
 
-    // 12. thread spawn(ADR 0020 §採択 Q4 4-thread topology)
+    // 13. thread spawn(ADR 0020 §採択 Q4 4-thread topology)
     //     順序:dbus-listener → engine-loop。engine_loop に engine + reactor を
-    //     move し、engine 状態を完全所有させる。
-    let listener_handle = std::thread::Builder::new()
-        .name("kotoha-dbus-listener".into())
-        .spawn(move || kotoha_engine_ibus::listener::run(bridge_tx, listener_observer))
-        .context("spawn dbus-listener thread")?;
+    //     move し、engine 状態を完全所有させる。stub fallback 時(connection
+    //     None)は listener thread を spawn しない(#208)。
+    let listener_handle = match connection {
+        Some(connection) => Some(
+            std::thread::Builder::new()
+                .name("kotoha-dbus-listener".into())
+                .spawn(move || kotoha_engine_ibus::listener::run(connection, listener_observer))
+                .context("spawn dbus-listener thread")?,
+        ),
+        None => {
+            tracing::warn!(
+                "dbus-listener thread not spawned (stub mode: no IBus private bus connection)"
+            );
+            None
+        }
+    };
 
     let engine_loop_handle = std::thread::Builder::new()
         .name("kotoha-engine-loop".into())
@@ -329,14 +364,13 @@ fn run_ibus() -> anyhow::Result<()> {
         "kotoha-bin event loop entered (4-thread topology: main / dbus-listener / engine-loop / ranker-worker)"
     );
 
-    // 13. join 順は engine-loop → dbus-listener。
+    // 14. join 順は engine-loop → dbus-listener。
     //     - engine-loop は `Event::Shutdown` 受信(SIGTERM/SIGINT 経路または
-    //       下記 step 14 の `drop(shutdown_tx)`)、または `EventReactor::recv` Err
+    //       下記の `drop(shutdown_tx)`)、または `EventReactor::recv` Err
     //       (全 Sender drop)で抜ける。
     //     - dbus-listener は `listener_shutdown.request()`(SIGTERM/SIGINT 経路
-    //       または下記 step 14 の明示 request)、もしくは engine-loop drop
-    //       による bridge_tx close で抜ける。
-    //     SIGTERM/SIGINT hook は step 11.5 の `ctrlc::set_handler` で wire 済。
+    //       または下記の明示 request)で抜ける。
+    //     SIGTERM/SIGINT hook は step 12.5 の `ctrlc::set_handler` で wire 済。
     let engine_result = engine_loop_handle
         .join()
         .map_err(panic_to_anyhow)
@@ -344,10 +378,13 @@ fn run_ibus() -> anyhow::Result<()> {
     // engine-loop が exit したら listener にも shutdown を伝え、listener join。
     listener_shutdown.request();
     drop(shutdown_tx); // reactor 側の shutdown 経路も明示閉鎖
-    let listener_result = listener_handle
-        .join()
-        .map_err(panic_to_anyhow)
-        .context("dbus-listener thread panicked")?;
+    let listener_result = match listener_handle {
+        Some(handle) => handle
+            .join()
+            .map_err(panic_to_anyhow)
+            .context("dbus-listener thread panicked")?,
+        None => Ok(()),
+    };
 
     engine_result.context("engine-loop returned an error")?;
     listener_result.context("dbus-listener returned an error")?;

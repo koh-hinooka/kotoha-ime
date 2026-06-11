@@ -3,7 +3,8 @@
 //! [`IBusEngineSignals`] は IBus engine が host(`InputContext`)に発する
 //! signal の helper 群。Phase 3-B B2 で 5 method すべてが
 //! `Message::signal(...)?.build(&body)?` + `connection.send(&signal)` の形で
-//! 実 D-Bus signal を session bus に発信する。
+//! 実 D-Bus signal を発信する。#208 改訂で発信先は listener と共有する
+//! **IBus private bus connection** に統一された(spec §7.4)。
 //!
 //! signal の wire-format type は [`crate::types`] module で定義(spec §4.2 r3)。
 //!
@@ -16,8 +17,8 @@
 //!
 //! # Security
 //!
-//! D-Bus session bus 上の signal はすべて **同 UID で動作する全プロセス** に
-//! 配信される。`org.freedesktop.IBus.Engine` の `UpdatePreeditText` /
+//! IBus private bus 上の signal は session bus 同様 **同 UID で動作する全プロセス**
+//! が接続・subscribe 可能である(bus socket の権限は user 単位)。`org.freedesktop.IBus.Engine` の `UpdatePreeditText` /
 //! `CommitText` を subscribe する任意 process(browser extension の subprocess、
 //! malicious npm postinstall、Electron app 等)が user の打鍵内容を
 //! 取得可能。これは IBus protocol の根本前提であり、Kotoha は
@@ -58,10 +59,17 @@ pub(crate) const IBUS_ENGINE_INTERFACE: &str = "org.freedesktop.IBus.Engine";
 /// listener thread の起動が失敗する。
 pub(crate) const IBUS_ENGINE_BUS_NAME: &str = "org.freedesktop.IBus.Engine.Kotoha";
 
-/// Kotoha engine service の D-Bus object path(spec §7.1)。
+/// Kotoha engine service の D-Bus object path(spec §7.2)。
 ///
 /// `Builder::serve_at(...)` でこの path に `KotohaEngineService` を登録する。
+/// 静的単一 path 採択(spec §7.3、#208): `CreateEngine` は常にこの path を返す。
 pub(crate) const IBUS_ENGINE_OBJECT_PATH: &str = "/org/freedesktop/IBus/Engine/Kotoha";
+
+/// IBus 1.5.x factory の固定 object path(spec §7.2、#208)。
+///
+/// `Builder::serve_at(...)` でこの path に `KotohaFactoryService` を登録する。
+/// daemon の engine 生成 protocol はこの path への `CreateEngine` call を必須とする。
+pub(crate) const IBUS_FACTORY_OBJECT_PATH: &str = "/org/freedesktop/IBus/Factory";
 
 /// `UpdatePreeditText` signal member 名(IBus 1.5.x 仕様)。
 pub(crate) const MEMBER_UPDATE_PREEDIT_TEXT: &str = "UpdatePreeditText";
@@ -79,25 +87,26 @@ pub(crate) const MEMBER_HIDE_LOOKUP_TABLE: &str = "HideLookupTable";
 /// Phase 3-B B2 完了後は 5 method すべてが session bus に実 D-Bus signal を
 /// 発信する。
 pub(crate) struct IBusEngineSignals {
-    /// zbus blocking connection(session bus)。
+    /// zbus blocking connection(listener と共有する IBus private bus、#208)。
     connection: Connection,
     /// engine object path(`/org/freedesktop/IBus/Engine/Kotoha` 等)。
     object_path: zbus::zvariant::OwnedObjectPath,
 }
 
 impl IBusEngineSignals {
-    /// Session bus に接続し、engine object path で signal emit を準備する。
+    /// listener と共有する private bus connection を受け取り、engine object path
+    /// で signal emit を準備する(#208 / spec §7.4)。
+    ///
+    /// 初版は `Connection::session()` で独自接続していたが、daemon は signal の
+    /// 発信元 peer を engine の serve 元 connection で識別するため、別 connection
+    /// からの signal は `InputContext` に routing されない。connection は main の
+    /// DI wiring が構築する(spec §3.3)。
     ///
     /// # Errors
     ///
-    /// - zbus connection 確立失敗(`DBUS_SESSION_BUS_ADDRESS` 不設定等)
     /// - object_path 不正(D-Bus path syntax 違反)
-    pub(crate) fn new(object_path: &str) -> Result<Self> {
-        // path validation を session bus 接続より前に実行する(test から
-        // session 不要で path validation を exercise できるように、構造
-        // 分離は build_object_path で実施)。
+    pub(crate) fn new(connection: Connection, object_path: &str) -> Result<Self> {
         let path = build_object_path(object_path)?;
-        let connection = Connection::session()?;
         Ok(Self {
             connection,
             object_path: path,
