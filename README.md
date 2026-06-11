@@ -103,7 +103,7 @@ Phase 0 の canonical smoke test として `scripts/phase0-smoke.sh` を提供�
 
 ## Phase 2 P2-A: SudachiDict-core の取得と配置
 
-Phase 2 P2-A の Dictionary backend は SudachiDict-core(v20260116、約 70MB、Apache-2.0)を runtime load で使用する。Kotoha は辞書を bundle しないため、ユーザー側で手動配置する必要がある(Phase 1 の `KOTOHA_LLAMA_MODEL_PATH` と同一 pattern の運用)。
+Phase 2 P2-A の Dictionary backend は SudachiDict-core(v20260116、zip download 約 70MB / 展開後 `system_core.dic` 約 217MB、Apache-2.0)を runtime load で使用する。Kotoha は辞書を bundle しないため、ユーザー側で手動配置する必要がある(Phase 1 の `KOTOHA_LLAMA_MODEL_PATH` と同一 pattern の運用)。
 
 ### 取得手順
 

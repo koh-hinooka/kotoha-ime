@@ -16,10 +16,23 @@ use crate::dict::engine::{EngineCandidate, MorphologicalEngine};
 use crate::kanji::KanjiError;
 
 /// SudachiDict-core を runtime load する際の最大許容サイズ(bytes)。
-/// 200 MiB は v20260116 release の実サイズ(約 70 MB)に対し将来の dictionary 拡張を
-/// 見越した上限。これを超える file が指定された場合は CWE-400 / 資源枯渇防止のため
-/// load を reject する(P2-A hardening item 2)。
-const SYSTEM_DICT_MAX_BYTES: u64 = 200 * 1024 * 1024;
+/// v20260116 release の `system_core.dic` は展開後 217,203,456 bytes(約 207 MiB。
+/// zip download は約 70 MB)であり、256 MiB は同 release に対し約 24% の将来拡張
+/// 余地を持つ上限。SudachiDict-full(500 MB 超、p2-a spec §3 で棄却済)および
+/// 異常 file は引き続き reject し、CWE-400 / 資源枯渇防止の意図を保つ
+/// (P2-A hardening item 2、ISSUE #206)。
+const SYSTEM_DICT_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// README が pin する SudachiDict-core v20260116 の展開後サイズ(bytes)。
+///
+/// size cap が pin 済み辞書の展開後サイズを下回ると、サポート対象の辞書そのものが
+/// load 不能になる(ISSUE #206 の regression)。下の compile-time assertion が
+/// cap を引き下げる変更を compile error で機械的に block する。
+/// dict release tag 更新時の同期手順は [`SUDACHI_ENGINE_ID_LABEL`] の
+/// `# 同期義務` を参照。
+const SUDACHI_CORE_V20260116_BYTES: u64 = 217_203_456;
+
+const _: () = assert!(SYSTEM_DICT_MAX_BYTES >= SUDACHI_CORE_V20260116_BYTES);
 
 /// sudachi.rs の engine_id() で返す固定 label。Layer 3 golden test から
 /// 同一文字列でアサートするため、module スコープの `pub(crate)` const として
@@ -32,6 +45,9 @@ const SYSTEM_DICT_MAX_BYTES: u64 = 200 * 1024 * 1024;
 /// - `sudachi-X.Y.Z` 部分を新 sudachi.rs release tag に揃える
 /// - `sudachidict-core:vYYYYMMDD` 部分を `README.md` 配置手順で参照している
 ///   SudachiDict-core release tag に揃える
+/// - [`SUDACHI_CORE_V20260116_BYTES`] の const 名・値・doc-comment を新 release の
+///   展開後サイズに更新し、[`SYSTEM_DICT_MAX_BYTES`] が同サイズ + 将来余地を
+///   満たすか再評価する(ISSUE #206)
 ///
 /// build-time 自動化は YAGNI として見送り、PR review チェックリストで担保する。
 pub(crate) const SUDACHI_ENGINE_ID_LABEL: &str = "sudachi-0.6.11+sudachidict-core:v20260116";
@@ -278,6 +294,43 @@ mod tests {
     fn sudachi_engine_id_label_constant_is_stable() {
         assert!(SUDACHI_ENGINE_ID_LABEL.contains("sudachi"));
         assert!(SUDACHI_ENGINE_ID_LABEL.contains("0.6"));
+    }
+
+    fn unique_tmp_path(suffix: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "kotoha-p2a-sudachi-test-{}-{}{}",
+            std::process::id(),
+            nanos,
+            suffix,
+        ))
+    }
+
+    /// size cap 超過 file の reject 経路(ISSUE #206 で修正した branch)を
+    /// 実 file で検証する。`custom_vocab_load_rejects_oversized_file` と対称の
+    /// sparse file パターン(set_len のみ、実 disk 消費は数 KB)。
+    #[test]
+    fn sudachi_adapter_load_rejects_oversized_file() {
+        let path = unique_tmp_path("-large.dic");
+        let f = std::fs::File::create(&path).expect("create tmp dic");
+        f.set_len(SYSTEM_DICT_MAX_BYTES + 1)
+            .expect("set len above cap");
+        drop(f);
+        let err = SudachiAdapter::load(&path).expect_err("oversized file must reject");
+        let _ = std::fs::remove_file(&path);
+        match err {
+            KanjiError::Backend { reason } => {
+                assert!(
+                    reason.contains("size cap"),
+                    "error must mention size cap: {reason}"
+                );
+            }
+            other => panic!("expected Backend, got: {other:?}"),
+        }
     }
 
     // ======================================================================
